@@ -15,3 +15,10 @@ Welcome to the Gigatrader automated trading platform scaffold.
 - Ensure tooling support via Makefile, CI hooks (ruff, mypy, pytest), and example scripts/notebooks for backtesting and paper trading workflows.
 
 Future contributors should reference this file for high-level objectives and constraints when making changes within the repository.
+
+## UI Development Conventions
+- Streamlit UI work lives entirely under `/ui`. New pages belong in `/ui/pages`, widgets in `/ui/components`, fixtures in `/ui/fixtures`, and chart helpers in `/ui/utils`.
+- Prefer functional, composable widgets with clear docstrings and type hints. Avoid side effects outside of Streamlit session state.
+- Use the `BrokerAPI` abstraction from `ui/services/backend.py` for all data access. Pages should remain backend-agnostic so mock fixtures and real APIs stay interchangeable.
+- Keep mock fixtures rich enough for meaningful local workflows (hundreds of log rows, full option chains, realistic equity curves). Update tests when fixture schemas change.
+- Cache expensive data fetches with `st.cache_data` where appropriate and surface clear inline errors with retry affordances when backend calls fail.

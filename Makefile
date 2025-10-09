@@ -23,3 +23,9 @@ poetry run trade backtest --config config.example.yaml
 
 report:
 poetry run trade report --run-id latest
+
+ui-dev:
+	streamlit run ui/app.py --server.runOnSave=true
+
+ui-test:
+	pytest ui/tests

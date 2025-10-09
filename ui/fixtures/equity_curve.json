@@ -1,0 +1,362 @@
+[
+  {
+    "timestamp": "2024-01-02T14:30:00Z",
+    "equity": 100055.38,
+    "drawdown": 0.0,
+    "exposure": 45.85
+  },
+  {
+    "timestamp": "2024-01-02T14:31:00Z",
+    "equity": 100193.16,
+    "drawdown": 0.0,
+    "exposure": 86.29
+  },
+  {
+    "timestamp": "2024-01-02T14:32:00Z",
+    "equity": 100248.63,
+    "drawdown": 0.0,
+    "exposure": 50.94
+  },
+  {
+    "timestamp": "2024-01-02T14:33:00Z",
+    "equity": 100210.28,
+    "drawdown": -0.04,
+    "exposure": 48.89
+  },
+  {
+    "timestamp": "2024-01-02T14:34:00Z",
+    "equity": 100578.5,
+    "drawdown": 0.0,
+    "exposure": 90.73
+  },
+  {
+    "timestamp": "2024-01-02T14:35:00Z",
+    "equity": 100923.43,
+    "drawdown": 0.0,
+    "exposure": 72.94
+  },
+  {
+    "timestamp": "2024-01-02T14:36:00Z",
+    "equity": 100965.84,
+    "drawdown": 0.0,
+    "exposure": 46.15
+  },
+  {
+    "timestamp": "2024-01-02T14:37:00Z",
+    "equity": 100919.49,
+    "drawdown": -0.05,
+    "exposure": 94.19
+  },
+  {
+    "timestamp": "2024-01-02T14:38:00Z",
+    "equity": 101186.66,
+    "drawdown": 0.0,
+    "exposure": 53.17
+  },
+  {
+    "timestamp": "2024-01-02T14:39:00Z",
+    "equity": 101053.71,
+    "drawdown": -0.13,
+    "exposure": 71.2
+  },
+  {
+    "timestamp": "2024-01-02T14:40:00Z",
+    "equity": 100806.26,
+    "drawdown": -0.38,
+    "exposure": 80.25
+  },
+  {
+    "timestamp": "2024-01-02T14:41:00Z",
+    "equity": 101079.67,
+    "drawdown": -0.11,
+    "exposure": 93.79
+  },
+  {
+    "timestamp": "2024-01-02T14:42:00Z",
+    "equity": 101153.35,
+    "drawdown": -0.03,
+    "exposure": 46.92
+  },
+  {
+    "timestamp": "2024-01-02T14:43:00Z",
+    "equity": 101317.04,
+    "drawdown": 0.0,
+    "exposure": 92.08
+  },
+  {
+    "timestamp": "2024-01-02T14:44:00Z",
+    "equity": 101130.2,
+    "drawdown": -0.18,
+    "exposure": 69.02
+  },
+  {
+    "timestamp": "2024-01-02T14:45:00Z",
+    "equity": 101256.22,
+    "drawdown": -0.06,
+    "exposure": 93.04
+  },
+  {
+    "timestamp": "2024-01-02T14:46:00Z",
+    "equity": 101610.86,
+    "drawdown": 0.0,
+    "exposure": 81.54
+  },
+  {
+    "timestamp": "2024-01-02T14:47:00Z",
+    "equity": 101796.72,
+    "drawdown": 0.0,
+    "exposure": 79.21
+  },
+  {
+    "timestamp": "2024-01-02T14:48:00Z",
+    "equity": 101775.64,
+    "drawdown": -0.02,
+    "exposure": 76.94
+  },
+  {
+    "timestamp": "2024-01-02T14:49:00Z",
+    "equity": 101736.35,
+    "drawdown": -0.06,
+    "exposure": 89.48
+  },
+  {
+    "timestamp": "2024-01-02T14:50:00Z",
+    "equity": 101752.67,
+    "drawdown": -0.04,
+    "exposure": 53.63
+  },
+  {
+    "timestamp": "2024-01-02T14:51:00Z",
+    "equity": 101493.01,
+    "drawdown": -0.3,
+    "exposure": 41.16
+  },
+  {
+    "timestamp": "2024-01-02T14:52:00Z",
+    "equity": 101582.07,
+    "drawdown": -0.21,
+    "exposure": 72.36
+  },
+  {
+    "timestamp": "2024-01-02T14:53:00Z",
+    "equity": 101282.43,
+    "drawdown": -0.51,
+    "exposure": 78.93
+  },
+  {
+    "timestamp": "2024-01-02T14:54:00Z",
+    "equity": 101020.33,
+    "drawdown": -0.76,
+    "exposure": 43.71
+  },
+  {
+    "timestamp": "2024-01-02T14:55:00Z",
+    "equity": 100739.48,
+    "drawdown": -1.04,
+    "exposure": 58.17
+  },
+  {
+    "timestamp": "2024-01-02T14:56:00Z",
+    "equity": 100799.83,
+    "drawdown": -0.98,
+    "exposure": 55.32
+  },
+  {
+    "timestamp": "2024-01-02T14:57:00Z",
+    "equity": 100839.94,
+    "drawdown": -0.94,
+    "exposure": 69.66
+  },
+  {
+    "timestamp": "2024-01-02T14:58:00Z",
+    "equity": 101048.02,
+    "drawdown": -0.74,
+    "exposure": 88.53
+  },
+  {
+    "timestamp": "2024-01-02T14:59:00Z",
+    "equity": 101152.45,
+    "drawdown": -0.63,
+    "exposure": 53.36
+  },
+  {
+    "timestamp": "2024-01-02T15:00:00Z",
+    "equity": 101183.89,
+    "drawdown": -0.6,
+    "exposure": 62.39
+  },
+  {
+    "timestamp": "2024-01-02T15:01:00Z",
+    "equity": 100947.15,
+    "drawdown": -0.83,
+    "exposure": 76.24
+  },
+  {
+    "timestamp": "2024-01-02T15:02:00Z",
+    "equity": 100894.67,
+    "drawdown": -0.89,
+    "exposure": 62.61
+  },
+  {
+    "timestamp": "2024-01-02T15:03:00Z",
+    "equity": 101202.08,
+    "drawdown": -0.58,
+    "exposure": 42.98
+  },
+  {
+    "timestamp": "2024-01-02T15:04:00Z",
+    "equity": 101361.39,
+    "drawdown": -0.43,
+    "exposure": 75.54
+  },
+  {
+    "timestamp": "2024-01-02T15:05:00Z",
+    "equity": 101100.31,
+    "drawdown": -0.68,
+    "exposure": 80.05
+  },
+  {
+    "timestamp": "2024-01-02T15:06:00Z",
+    "equity": 101363.59,
+    "drawdown": -0.43,
+    "exposure": 46.01
+  },
+  {
+    "timestamp": "2024-01-02T15:07:00Z",
+    "equity": 101195.44,
+    "drawdown": -0.59,
+    "exposure": 69.5
+  },
+  {
+    "timestamp": "2024-01-02T15:08:00Z",
+    "equity": 100991.16,
+    "drawdown": -0.79,
+    "exposure": 50.09
+  },
+  {
+    "timestamp": "2024-01-02T15:09:00Z",
+    "equity": 101015.23,
+    "drawdown": -0.77,
+    "exposure": 88.1
+  },
+  {
+    "timestamp": "2024-01-02T15:10:00Z",
+    "equity": 100765.49,
+    "drawdown": -1.01,
+    "exposure": 84.44
+  },
+  {
+    "timestamp": "2024-01-02T15:11:00Z",
+    "equity": 101066.96,
+    "drawdown": -0.72,
+    "exposure": 45.38
+  },
+  {
+    "timestamp": "2024-01-02T15:12:00Z",
+    "equity": 101225.13,
+    "drawdown": -0.56,
+    "exposure": 69.73
+  },
+  {
+    "timestamp": "2024-01-02T15:13:00Z",
+    "equity": 100931.91,
+    "drawdown": -0.85,
+    "exposure": 45.13
+  },
+  {
+    "timestamp": "2024-01-02T15:14:00Z",
+    "equity": 101161.53,
+    "drawdown": -0.62,
+    "exposure": 53.0
+  },
+  {
+    "timestamp": "2024-01-02T15:15:00Z",
+    "equity": 101145.84,
+    "drawdown": -0.64,
+    "exposure": 66.47
+  },
+  {
+    "timestamp": "2024-01-02T15:16:00Z",
+    "equity": 101454.59,
+    "drawdown": -0.34,
+    "exposure": 89.63
+  },
+  {
+    "timestamp": "2024-01-02T15:17:00Z",
+    "equity": 101267.15,
+    "drawdown": -0.52,
+    "exposure": 40.12
+  },
+  {
+    "timestamp": "2024-01-02T15:18:00Z",
+    "equity": 101240.11,
+    "drawdown": -0.55,
+    "exposure": 90.96
+  },
+  {
+    "timestamp": "2024-01-02T15:19:00Z",
+    "equity": 101492.79,
+    "drawdown": -0.3,
+    "exposure": 55.69
+  },
+  {
+    "timestamp": "2024-01-02T15:20:00Z",
+    "equity": 101683.21,
+    "drawdown": -0.11,
+    "exposure": 80.18
+  },
+  {
+    "timestamp": "2024-01-02T15:21:00Z",
+    "equity": 101935.74,
+    "drawdown": 0.0,
+    "exposure": 76.4
+  },
+  {
+    "timestamp": "2024-01-02T15:22:00Z",
+    "equity": 101977.2,
+    "drawdown": 0.0,
+    "exposure": 50.44
+  },
+  {
+    "timestamp": "2024-01-02T15:23:00Z",
+    "equity": 101826.67,
+    "drawdown": -0.15,
+    "exposure": 43.22
+  },
+  {
+    "timestamp": "2024-01-02T15:24:00Z",
+    "equity": 102045.61,
+    "drawdown": 0.0,
+    "exposure": 43.35
+  },
+  {
+    "timestamp": "2024-01-02T15:25:00Z",
+    "equity": 101963.49,
+    "drawdown": -0.08,
+    "exposure": 42.76
+  },
+  {
+    "timestamp": "2024-01-02T15:26:00Z",
+    "equity": 101997.9,
+    "drawdown": -0.05,
+    "exposure": 90.57
+  },
+  {
+    "timestamp": "2024-01-02T15:27:00Z",
+    "equity": 102071.13,
+    "drawdown": 0.0,
+    "exposure": 43.13
+  },
+  {
+    "timestamp": "2024-01-02T15:28:00Z",
+    "equity": 102127.76,
+    "drawdown": 0.0,
+    "exposure": 86.82
+  },
+  {
+    "timestamp": "2024-01-02T15:29:00Z",
+    "equity": 101870.36,
+    "drawdown": -0.25,
+    "exposure": 43.74
+  }
+]

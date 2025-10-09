@@ -1,0 +1,10 @@
+{
+  "run_id": "paper-1234",
+  "daily_loss_pct": -1.8,
+  "max_exposure": 420000,
+  "open_positions": 8,
+  "leverage": 2.4,
+  "breached": {
+    "drawdown": -4.2
+  }
+}

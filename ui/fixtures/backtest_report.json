@@ -1,0 +1,250 @@
+{
+  "run_id": "bt-000",
+  "sharpe": 1.42,
+  "sortino": 2.05,
+  "max_drawdown": -6.7,
+  "win_rate": 58.0,
+  "turnover": 3.1,
+  "equity_curve": [
+    {
+      "timestamp": "2023-11-01T00:00:00Z",
+      "equity": 100447.03,
+      "drawdown": 0.0,
+      "exposure": 55.91
+    },
+    {
+      "timestamp": "2023-11-02T00:00:00Z",
+      "equity": 100659.7,
+      "drawdown": 0.0,
+      "exposure": 69.64
+    },
+    {
+      "timestamp": "2023-11-03T00:00:00Z",
+      "equity": 100334.7,
+      "drawdown": -0.32,
+      "exposure": 67.12
+    },
+    {
+      "timestamp": "2023-11-04T00:00:00Z",
+      "equity": 100654.01,
+      "drawdown": -0.01,
+      "exposure": 72.79
+    },
+    {
+      "timestamp": "2023-11-05T00:00:00Z",
+      "equity": 100325.71,
+      "drawdown": -0.33,
+      "exposure": 39.25
+    },
+    {
+      "timestamp": "2023-11-06T00:00:00Z",
+      "equity": 100567.0,
+      "drawdown": -0.09,
+      "exposure": 68.03
+    },
+    {
+      "timestamp": "2023-11-07T00:00:00Z",
+      "equity": 100834.2,
+      "drawdown": 0.0,
+      "exposure": 49.0
+    },
+    {
+      "timestamp": "2023-11-08T00:00:00Z",
+      "equity": 100527.56,
+      "drawdown": -0.3,
+      "exposure": 30.31
+    },
+    {
+      "timestamp": "2023-11-09T00:00:00Z",
+      "equity": 100404.35,
+      "drawdown": -0.43,
+      "exposure": 51.6
+    },
+    {
+      "timestamp": "2023-11-10T00:00:00Z",
+      "equity": 100246.51,
+      "drawdown": -0.58,
+      "exposure": 37.95
+    },
+    {
+      "timestamp": "2023-11-11T00:00:00Z",
+      "equity": 100014.59,
+      "drawdown": -0.81,
+      "exposure": 56.93
+    },
+    {
+      "timestamp": "2023-11-12T00:00:00Z",
+      "equity": 100113.87,
+      "drawdown": -0.71,
+      "exposure": 54.48
+    },
+    {
+      "timestamp": "2023-11-13T00:00:00Z",
+      "equity": 99737.08,
+      "drawdown": -1.09,
+      "exposure": 51.23
+    },
+    {
+      "timestamp": "2023-11-14T00:00:00Z",
+      "equity": 99421.67,
+      "drawdown": -1.4,
+      "exposure": 65.88
+    },
+    {
+      "timestamp": "2023-11-15T00:00:00Z",
+      "equity": 99314.28,
+      "drawdown": -1.51,
+      "exposure": 53.11
+    },
+    {
+      "timestamp": "2023-11-16T00:00:00Z",
+      "equity": 99177.88,
+      "drawdown": -1.64,
+      "exposure": 53.27
+    },
+    {
+      "timestamp": "2023-11-17T00:00:00Z",
+      "equity": 98856.77,
+      "drawdown": -1.96,
+      "exposure": 84.07
+    },
+    {
+      "timestamp": "2023-11-18T00:00:00Z",
+      "equity": 99266.72,
+      "drawdown": -1.55,
+      "exposure": 88.69
+    },
+    {
+      "timestamp": "2023-11-19T00:00:00Z",
+      "equity": 99380.64,
+      "drawdown": -1.44,
+      "exposure": 40.17
+    },
+    {
+      "timestamp": "2023-11-20T00:00:00Z",
+      "equity": 99323.66,
+      "drawdown": -1.5,
+      "exposure": 38.33
+    },
+    {
+      "timestamp": "2023-11-21T00:00:00Z",
+      "equity": 99195.55,
+      "drawdown": -1.63,
+      "exposure": 59.59
+    },
+    {
+      "timestamp": "2023-11-22T00:00:00Z",
+      "equity": 98855.25,
+      "drawdown": -1.96,
+      "exposure": 56.08
+    },
+    {
+      "timestamp": "2023-11-23T00:00:00Z",
+      "equity": 98834.48,
+      "drawdown": -1.98,
+      "exposure": 59.05
+    },
+    {
+      "timestamp": "2023-11-24T00:00:00Z",
+      "equity": 98507.56,
+      "drawdown": -2.31,
+      "exposure": 45.1
+    },
+    {
+      "timestamp": "2023-11-25T00:00:00Z",
+      "equity": 98332.15,
+      "drawdown": -2.48,
+      "exposure": 67.5
+    },
+    {
+      "timestamp": "2023-11-26T00:00:00Z",
+      "equity": 98464.34,
+      "drawdown": -2.35,
+      "exposure": 41.73
+    },
+    {
+      "timestamp": "2023-11-27T00:00:00Z",
+      "equity": 98165.28,
+      "drawdown": -2.65,
+      "exposure": 48.28
+    },
+    {
+      "timestamp": "2023-11-28T00:00:00Z",
+      "equity": 98610.89,
+      "drawdown": -2.2,
+      "exposure": 49.93
+    },
+    {
+      "timestamp": "2023-11-29T00:00:00Z",
+      "equity": 98766.86,
+      "drawdown": -2.05,
+      "exposure": 78.24
+    },
+    {
+      "timestamp": "2023-11-30T00:00:00Z",
+      "equity": 98664.73,
+      "drawdown": -2.15,
+      "exposure": 50.08
+    },
+    {
+      "timestamp": "2023-12-01T00:00:00Z",
+      "equity": 98994.2,
+      "drawdown": -1.82,
+      "exposure": 81.57
+    },
+    {
+      "timestamp": "2023-12-02T00:00:00Z",
+      "equity": 99466.2,
+      "drawdown": -1.36,
+      "exposure": 38.17
+    },
+    {
+      "timestamp": "2023-12-03T00:00:00Z",
+      "equity": 99355.4,
+      "drawdown": -1.47,
+      "exposure": 86.84
+    },
+    {
+      "timestamp": "2023-12-04T00:00:00Z",
+      "equity": 99137.58,
+      "drawdown": -1.68,
+      "exposure": 48.85
+    },
+    {
+      "timestamp": "2023-12-05T00:00:00Z",
+      "equity": 99601.66,
+      "drawdown": -1.22,
+      "exposure": 88.12
+    },
+    {
+      "timestamp": "2023-12-06T00:00:00Z",
+      "equity": 99464.51,
+      "drawdown": -1.36,
+      "exposure": 71.7
+    },
+    {
+      "timestamp": "2023-12-07T00:00:00Z",
+      "equity": 99506.19,
+      "drawdown": -1.32,
+      "exposure": 64.55
+    },
+    {
+      "timestamp": "2023-12-08T00:00:00Z",
+      "equity": 99325.27,
+      "drawdown": -1.5,
+      "exposure": 52.56
+    },
+    {
+      "timestamp": "2023-12-09T00:00:00Z",
+      "equity": 99657.86,
+      "drawdown": -1.17,
+      "exposure": 53.58
+    },
+    {
+      "timestamp": "2023-12-10T00:00:00Z",
+      "equity": 99361.37,
+      "drawdown": -1.46,
+      "exposure": 63.83
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "symbol": "AAPL",
+  "atr": 2.14,
+  "rsi": 54.2,
+  "z_score": 0.83,
+  "orb": 1.3,
+  "updated_at": "2025-10-09T19:20:42.644704Z",
+  "series": [
+    {
+      "label": "ATR",
+      "value": 0.73,
+      "trend": "flat"
+    },
+    {
+      "label": "RSI",
+      "value": 2.81,
+      "trend": "flat"
+    },
+    {
+      "label": "Z-SCORE",
+      "value": 1.69,
+      "trend": "down"
+    },
+    {
+      "label": "ORB",
+      "value": 0.59,
+      "trend": "down"
+    }
+  ]
+}
