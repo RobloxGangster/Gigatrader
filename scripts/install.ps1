@@ -7,16 +7,18 @@ if ($policy -eq 'Restricted') {
     exit 1
 }
 
-$pythonCmd = $null
+$pythonExe = $null
+$pythonArgs = @()
 try {
     $pyVersion = & py -3.11 -V 2>$null
     if ($LASTEXITCODE -eq 0 -and $pyVersion -match '3\.11') {
-        $pythonCmd = 'py -3.11'
+        $pythonExe = 'py'
+        $pythonArgs = @('-3.11')
     }
 } catch {
 }
 
-if (-not $pythonCmd) {
+if (-not $pythonExe) {
     try {
         $pyVersion = & python -V 2>$null
         if ($LASTEXITCODE -eq 0) {
@@ -24,7 +26,7 @@ if (-not $pythonCmd) {
                 $maj = [int]$Matches['maj']
                 $min = [int]$Matches['min']
                 if ($maj -gt 3 -or ($maj -eq 3 -and $min -ge 11)) {
-                    $pythonCmd = 'python'
+                    $pythonExe = 'python'
                 }
             }
         }
@@ -32,7 +34,7 @@ if (-not $pythonCmd) {
     }
 }
 
-if (-not $pythonCmd) {
+if (-not $pythonExe) {
     Write-Host "Python 3.11 is required. Install it from https://www.python.org/downloads/windows/ or enable the 'py -3.11' launcher." -ForegroundColor Red
     exit 1
 }
@@ -40,7 +42,7 @@ if (-not $pythonCmd) {
 $venvPath = Join-Path $RepoRoot '.venv'
 if (-not (Test-Path $venvPath)) {
     Write-Host "Creating virtual environment at $venvPath" -ForegroundColor Cyan
-    & $pythonCmd -m venv $venvPath
+    & $pythonExe @pythonArgs -m venv $venvPath
 }
 
 $activate = Join-Path $venvPath 'Scripts\Activate.ps1'
