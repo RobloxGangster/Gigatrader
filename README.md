@@ -9,14 +9,56 @@ Gigatrader is a production-grade scaffold for an automated US equities and equit
 - Configurable risk presets with pre-trade checks for equities and options.
 - Event-driven backtester with placeholders for realistic execution modelling.
 - Streamlit dashboard tailored for non-technical operators.
-- CLI for orchestrating backtests, paper runs, live runs (guarded), reporting, and kill switch activation.
+- Typer-based CLI for orchestrating paper runs, backtests (with HTML reports), and guarded live stubs.
 
-## Getting Started
-1. Copy `.env.example` (if provided) and populate Alpaca credentials.
-2. Install dependencies using `poetry install`.
-3. Adjust `config.example.yaml` or create your own configuration.
-4. Use `make setup` to bootstrap formatting hooks and virtual environment.
-5. Run `make run-paper` to start a paper session once orchestration is implemented.
+## Installation & Quickstart
+
+### Windows (PowerShell)
+1. Ensure **Python 3.11** is installed and available via the `py` launcher (`py -3.11 -V`).
+2. Open **Windows PowerShell** in the repository root and run:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+   ```
+   The installer creates a `.venv` virtual environment, installs dependencies, and scaffolds missing config files.
+3. To verify the setup, launch the paper-trading stub:
+   ```bat
+   scripts\run_paper.bat
+   ```
+4. Optional: run a sample backtest report
+   ```bat
+   scripts\run_backtest.bat --days 2 --universe AAPL,MSFT
+   ```
+
+### macOS / Linux (manual)
+1. Install **Python 3.11** and create a virtual environment at the repo root:
+   ```bash
+   python3.11 -m venv .venv
+   source .venv/bin/activate
+   ```
+2. Install dependencies and the CLI in editable mode:
+   ```bash
+   pip install -U pip setuptools wheel
+   pip install -r requirements.txt
+   pip install -e .
+   ```
+3. Copy configuration templates if they do not exist:
+   ```bash
+   cp .env.example .env        # then add your Alpaca keys
+   cp config.example.yaml config.yaml
+   ```
+4. Run the CLI directly:
+   ```bash
+   trade paper --config config.yaml
+   ```
+
+### Environment Variables
+- Update `.env` with your Alpaca credentials; the CLI will warn when keys are missing.
+- Live trading requires `LIVE_TRADING=true` at runtime and remains disabled by default for safety.
+
+## CLI Usage
+- `trade paper` — loads configuration and runs a cancellable heartbeat loop for paper trading simulations.
+- `trade backtest --days N --universe SYMBOLS` — generates a timestamped HTML report under `./reports/`.
+- `trade live` — refuses to execute unless `LIVE_TRADING=true`, failing closed with exit code 2 otherwise.
 
 ## Directory Layout
 ```

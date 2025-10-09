@@ -1,44 +1,8 @@
 profile: paper
-risk_profile: safe
-data:
-  symbols: [AAPL, MSFT, SPY]
-  timeframes: [1Min, 5Min]
-  cache_path: data/cache
+universe: [AAPL, MSFT]
+timeframe: "1Min"
+risk:
+  daily_loss_limit_pct: 3
+  max_positions: 5
 execution:
-  venue: alpaca
-  time_in_force: day
-  allow_extended_hours: false
-  default_bracket:
-    take_profit: 0.01
-    stop_loss: 0.005
-risk_presets:
-  safe:
-    daily_loss_limit: 1000
-    per_trade_loss_limit: 200
-    max_exposure: 10000
-    max_positions: 5
-    options_max_notional_per_expiry: 5000
-    min_option_liquidity: 50
-    delta_bounds: [0.3, 0.35]
-    vega_limit: 0.5
-    theta_limit: 0.5
-  balanced:
-    daily_loss_limit: 2000
-    per_trade_loss_limit: 400
-    max_exposure: 20000
-    max_positions: 10
-    options_max_notional_per_expiry: 10000
-    min_option_liquidity: 40
-    delta_bounds: [0.25, 0.4]
-    vega_limit: 0.8
-    theta_limit: 0.8
-  high_risk:
-    daily_loss_limit: 4000
-    per_trade_loss_limit: 800
-    max_exposure: 40000
-    max_positions: 15
-    options_max_notional_per_expiry: 20000
-    min_option_liquidity: 30
-    delta_bounds: [0.2, 0.45]
-    vega_limit: 1.0
-    theta_limit: 1.0
+  tif: day
