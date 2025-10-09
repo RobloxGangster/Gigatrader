@@ -1,0 +1,54 @@
+{
+  "symbol": "AAPL",
+  "expiry": "2024-02-16T00:00:00",
+  "rows": [
+    {
+      "strike": "145",
+      "bid": "5.2",
+      "ask": "5.4",
+      "mid": "5.3",
+      "iv": "0.24",
+      "delta": "0.35",
+      "gamma": "0.02",
+      "theta": "-0.04",
+      "vega": "0.10",
+      "oi": 1234,
+      "volume": 567,
+      "expiry": "2024-02-16T00:00:00",
+      "option_type": "call",
+      "is_liquid": true
+    },
+    {
+      "strike": "150",
+      "bid": "3.2",
+      "ask": "3.5",
+      "mid": "3.35",
+      "iv": "0.26",
+      "delta": "0.42",
+      "gamma": "0.03",
+      "theta": "-0.05",
+      "vega": "0.12",
+      "oi": 980,
+      "volume": 420,
+      "expiry": "2024-02-16T00:00:00",
+      "option_type": "call",
+      "is_liquid": true
+    },
+    {
+      "strike": "155",
+      "bid": "1.5",
+      "ask": "2.0",
+      "mid": "1.75",
+      "iv": "0.28",
+      "delta": "0.25",
+      "gamma": "0.015",
+      "theta": "-0.03",
+      "vega": "0.09",
+      "oi": 300,
+      "volume": 80,
+      "expiry": "2024-02-16T00:00:00",
+      "option_type": "call",
+      "is_liquid": false
+    }
+  ]
+}

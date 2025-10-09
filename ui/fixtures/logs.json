@@ -1,0 +1,4002 @@
+[
+  {
+    "timestamp": "2024-01-02T14:00:06Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00000",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:00:50Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00001",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:01:02Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00002",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:01:23Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00003",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:02:06Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00004",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:02:30Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00005",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:03:11Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00006",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:03:28Z",
+    "level": "DEBUG",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00007",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:03:52Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00008",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:04:33Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00009",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:05:05Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00010",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:05:31Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00011",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:05:42Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00012",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:06:16Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00013",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:06:54Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00014",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:07:33Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00015",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:08:15Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00016",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:08:37Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00017",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:09:18Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00018",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:09:24Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00019",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:10:00Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00020",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:10:22Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00021",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:10:27Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00022",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:10:47Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00023",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:11:07Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00024",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:11:13Z",
+    "level": "DEBUG",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00025",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:11:33Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00026",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:12:08Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00027",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:12:48Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00028",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:13:12Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00029",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:13:29Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00030",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:13:45Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00031",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:14:27Z",
+    "level": "ERROR",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00032",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:14:50Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00033",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:15:09Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00034",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:15:48Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00035",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:16:28Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00036",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:17:04Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00037",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:17:27Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00038",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:17:43Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00039",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:17:55Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00040",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:18:04Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00041",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:18:18Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00042",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:18:38Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00043",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:19:21Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00044",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:19:50Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00045",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:20:32Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00046",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:21:16Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00047",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:22:01Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00048",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:22:21Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00049",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:22:26Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00050",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:22:49Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00051",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:23:12Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00052",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:23:31Z",
+    "level": "ERROR",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00053",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:23:48Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00054",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:24:02Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00055",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:24:10Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00056",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:24:51Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00057",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:25:25Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00058",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:26:02Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00059",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:26:45Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00060",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:27:10Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00061",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:27:29Z",
+    "level": "ERROR",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00062",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:27:35Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00063",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:27:42Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00064",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:28:20Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00065",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:29:02Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00066",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:29:37Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00067",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:29:48Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00068",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:30:24Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00069",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:30:31Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00070",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:30:56Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00071",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:31:01Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00072",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:31:32Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00073",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:32:16Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00074",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:32:34Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00075",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:33:07Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00076",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:33:13Z",
+    "level": "ERROR",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00077",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:33:28Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00078",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:33:59Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00079",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:34:11Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00080",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:34:34Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00081",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:35:09Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00082",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:35:49Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00083",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:36:26Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00084",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:36:48Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00085",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:37:25Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00086",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:37:49Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00087",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:38:25Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00088",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:39:00Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00089",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:39:29Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00090",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:39:49Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00091",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:39:56Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00092",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:40:25Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00093",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:40:32Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00094",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:40:43Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00095",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:41:21Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00096",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:41:35Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00097",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:42:10Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00098",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:42:54Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00099",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:43:33Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00100",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:44:09Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00101",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:44:18Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00102",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:44:28Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00103",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:44:39Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00104",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:44:46Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00105",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:45:13Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00106",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:45:51Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00107",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:46:07Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00108",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:46:27Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00109",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:46:46Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00110",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:47:07Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00111",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:47:46Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00112",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:48:28Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00113",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:48:49Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00114",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:49:18Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00115",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:49:47Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00116",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:50:10Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00117",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:50:15Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00118",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:50:51Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00119",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:51:34Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00120",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:51:51Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00121",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:52:02Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00122",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:52:35Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00123",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:52:48Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00124",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:53:19Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00125",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:53:47Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00126",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:54:08Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00127",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:54:34Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00128",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:54:48Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00129",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:55:18Z",
+    "level": "ERROR",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00130",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:55:28Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00131",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:56:07Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00132",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:56:28Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00133",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:56:47Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00134",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:57:12Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00135",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:57:21Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00136",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T14:57:45Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00137",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T14:57:52Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00138",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T14:58:04Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00139",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T14:58:33Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00140",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T14:59:15Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00141",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T14:59:26Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00142",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T14:59:48Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00143",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:00:21Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00144",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:00:32Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00145",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:00:59Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00146",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:01:11Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00147",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:01:29Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00148",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:01:37Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00149",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:02:18Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00150",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:03:00Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00151",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:03:14Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00152",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:03:36Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00153",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:04:15Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00154",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:04:21Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00155",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:05:03Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00156",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:05:11Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00157",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:05:23Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00158",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:05:51Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00159",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:06:28Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00160",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:07:06Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00161",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:07:41Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00162",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:07:52Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00163",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:08:02Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00164",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:08:15Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00165",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:08:40Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00166",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:09:03Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00167",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:09:14Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00168",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:09:54Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00169",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:10:27Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00170",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:11:01Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00171",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:11:33Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00172",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:11:47Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00173",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:11:57Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00174",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:12:08Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00175",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:12:48Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00176",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:13:14Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00177",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:13:46Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00178",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:14:29Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00179",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:15:06Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00180",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:15:17Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00181",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:15:29Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00182",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:16:01Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00183",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:16:41Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00184",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:16:57Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00185",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:17:24Z",
+    "level": "DEBUG",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00186",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:17:54Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00187",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:18:32Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00188",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:18:58Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00189",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:19:23Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00190",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:19:33Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00191",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:20:17Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00192",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:20:50Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00193",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:21:23Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00194",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:21:35Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00195",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:22:17Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00196",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:22:36Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00197",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:22:41Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00198",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:23:02Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00199",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:23:38Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00200",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:24:07Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00201",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:24:47Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00202",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:25:17Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00203",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:25:23Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00204",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:26:04Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00205",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:26:49Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00206",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:26:55Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00207",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:27:29Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00208",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:28:01Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00209",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:28:43Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00210",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:29:07Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00211",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:29:22Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00212",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:29:59Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00213",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:30:13Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00214",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:30:30Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00215",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:30:39Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00216",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:31:20Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00217",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:32:01Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00218",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:32:46Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00219",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:33:21Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00220",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:34:03Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00221",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:34:27Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00222",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:34:55Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00223",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:35:05Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00224",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:35:39Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00225",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:36:20Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00226",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:36:55Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00227",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:37:06Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00228",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:37:16Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00229",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:37:36Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00230",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:38:14Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00231",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:38:37Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00232",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:39:20Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00233",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:39:46Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00234",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:40:07Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00235",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:40:33Z",
+    "level": "DEBUG",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00236",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:40:57Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00237",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:41:40Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00238",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:42:20Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00239",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:42:58Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00240",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:43:26Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00241",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:43:44Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00242",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:44:03Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00243",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:44:26Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00244",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:45:05Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00245",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:45:31Z",
+    "level": "ERROR",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00246",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:46:14Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00247",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:46:58Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00248",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:47:31Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00249",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:47:51Z",
+    "level": "ERROR",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00250",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:48:24Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00251",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:48:59Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00252",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:49:40Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00253",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:50:09Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00254",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:50:26Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00255",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:50:34Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00256",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:50:45Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00257",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:51:08Z",
+    "level": "DEBUG",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00258",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:51:41Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00259",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:51:51Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00260",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:52:18Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00261",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:52:48Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00262",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:52:58Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00263",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:53:09Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00264",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:53:22Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00265",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:53:35Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00266",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:54:19Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00267",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:54:40Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00268",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:55:23Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00269",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:55:43Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00270",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:56:14Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00271",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:56:23Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00272",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:57:02Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00273",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T15:57:22Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00274",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T15:57:27Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00275",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T15:57:58Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00276",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T15:58:26Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00277",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T15:59:03Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00278",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T15:59:09Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00279",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T15:59:54Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00280",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:00:00Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00281",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:00:20Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00282",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:00:46Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00283",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:01:12Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00284",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:01:46Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00285",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:02:02Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00286",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:02:36Z",
+    "level": "DEBUG",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00287",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:02:53Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00288",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:03:30Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00289",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:03:51Z",
+    "level": "DEBUG",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00290",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:04:18Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00291",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:04:44Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00292",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:05:14Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00293",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:05:30Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00294",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:06:08Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00295",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:06:40Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00296",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:07:19Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00297",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:07:44Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00298",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:08:27Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00299",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:09:00Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00300",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:09:27Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00301",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:10:12Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00302",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:10:57Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00303",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:11:12Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00304",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:11:45Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00305",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:12:13Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00306",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:12:56Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00307",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:13:24Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00308",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:13:37Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00309",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:13:59Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00310",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:14:15Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00311",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:14:27Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00312",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:15:00Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00313",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:15:36Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00314",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:16:09Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00315",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:16:34Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00316",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:17:13Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00317",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:17:58Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00318",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:18:17Z",
+    "level": "DEBUG",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00319",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:18:37Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00320",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:19:17Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00321",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:19:30Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00322",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:19:54Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00323",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:20:25Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00324",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:20:38Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00325",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:21:12Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00326",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:21:52Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00327",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:22:24Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00328",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:23:02Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00329",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:23:27Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00330",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:24:05Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00331",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:24:22Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00332",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:24:35Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00333",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:24:45Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00334",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:25:27Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00335",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:26:10Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00336",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:26:16Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00337",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:26:34Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00338",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:27:19Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00339",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:27:43Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00340",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:28:17Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00341",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:28:50Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00342",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:29:16Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00343",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:29:41Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00344",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:29:54Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00345",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:30:05Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00346",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:30:27Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00347",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:30:35Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00348",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:31:06Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00349",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:31:47Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00350",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:32:23Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00351",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:32:47Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00352",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:33:24Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00353",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:34:06Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00354",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:34:42Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00355",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:35:21Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00356",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:35:34Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00357",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:36:02Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00358",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:36:42Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00359",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:36:51Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00360",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:37:13Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00361",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:37:57Z",
+    "level": "DEBUG",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00362",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:38:25Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00363",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:38:53Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00364",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:39:30Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00365",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:39:37Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00366",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:40:15Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00367",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:40:28Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00368",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:40:43Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00369",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:41:07Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00370",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:41:46Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00371",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:42:21Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00372",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:42:33Z",
+    "level": "ERROR",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00373",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:43:18Z",
+    "level": "DEBUG",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00374",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:44:00Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00375",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:44:35Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00376",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:44:49Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00377",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:45:30Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00378",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:45:36Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00379",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:46:07Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00380",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:46:51Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00381",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:47:04Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00382",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:47:39Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00383",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:48:13Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00384",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:48:40Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00385",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:49:15Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00386",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:49:55Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00387",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:50:13Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00388",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:50:48Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00389",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:51:00Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00390",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:51:30Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00391",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:51:37Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00392",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:52:10Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00393",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:52:27Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "latency spike detected",
+    "trace_id": "trace-00394",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:52:49Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00395",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:53:31Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00396",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:54:09Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00397",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:54:20Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00398",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:54:33Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00399",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:55:04Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00400",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:55:21Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00401",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:55:44Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00402",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T16:56:25Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00403",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T16:56:56Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00404",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T16:57:26Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00405",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T16:57:49Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00406",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T16:58:30Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00407",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T16:59:04Z",
+    "level": "ERROR",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00408",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T16:59:40Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00409",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:00:14Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00410",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:00:29Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00411",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:00:45Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00412",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:01:26Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00413",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:02:10Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00414",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:02:47Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00415",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:02:58Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00416",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:03:23Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "risk check passed",
+    "trace_id": "trace-00417",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:03:52Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00418",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:04:16Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00419",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:04:37Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00420",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:04:49Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00421",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:05:26Z",
+    "level": "ERROR",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00422",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:05:38Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00423",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:06:22Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00424",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:06:36Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "risk check passed",
+    "trace_id": "trace-00425",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:07:07Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00426",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:07:25Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00427",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:08:03Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00428",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:08:44Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00429",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:09:01Z",
+    "level": "WARN",
+    "component": "risk",
+    "message": "order routed",
+    "trace_id": "trace-00430",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:09:26Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00431",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:09:44Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00432",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:10:21Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00433",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:10:34Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00434",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:10:42Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00435",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:10:48Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00436",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:11:06Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00437",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:11:33Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00438",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:11:42Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00439",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:12:05Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00440",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:12:36Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00441",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:13:05Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00442",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:13:32Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00443",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:14:10Z",
+    "level": "DEBUG",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00444",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:14:16Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00445",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:14:55Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00446",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:15:15Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00447",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:15:32Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00448",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:16:03Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00449",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:16:21Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00450",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:16:54Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00451",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:17:01Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00452",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:17:19Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00453",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:17:56Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00454",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:18:37Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00455",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:19:02Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00456",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:19:40Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00457",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:19:48Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00458",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:20:04Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00459",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:20:40Z",
+    "level": "DEBUG",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00460",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:21:09Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00461",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:21:40Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "throttle engaged",
+    "trace_id": "trace-00462",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:21:56Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00463",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:22:15Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00464",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:22:23Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "latency spike detected",
+    "trace_id": "trace-00465",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:23:01Z",
+    "level": "DEBUG",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00466",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:23:19Z",
+    "level": "INFO",
+    "component": "engine",
+    "message": "throttle engaged",
+    "trace_id": "trace-00467",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:23:47Z",
+    "level": "DEBUG",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00468",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:24:09Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00469",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:24:16Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00470",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:24:56Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00471",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:25:20Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "order routed",
+    "trace_id": "trace-00472",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:25:37Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00473",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:26:12Z",
+    "level": "ERROR",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00474",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:26:30Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "latency spike detected",
+    "trace_id": "trace-00475",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:26:55Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00476",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:27:34Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00477",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:28:02Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00478",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:28:13Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "risk check passed",
+    "trace_id": "trace-00479",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:28:31Z",
+    "level": "INFO",
+    "component": "options",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00480",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:29:12Z",
+    "level": "ERROR",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00481",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:29:33Z",
+    "level": "INFO",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00482",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:30:04Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "risk check passed",
+    "trace_id": "trace-00483",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:30:23Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "throttle engaged",
+    "trace_id": "trace-00484",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:31:03Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "risk check passed",
+    "trace_id": "trace-00485",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:31:39Z",
+    "level": "ERROR",
+    "component": "options",
+    "message": "throttle engaged",
+    "trace_id": "trace-00486",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:31:54Z",
+    "level": "WARN",
+    "component": "data",
+    "message": "order routed",
+    "trace_id": "trace-00487",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:32:07Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00488",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:32:46Z",
+    "level": "ERROR",
+    "component": "engine",
+    "message": "latency spike detected",
+    "trace_id": "trace-00489",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:32:53Z",
+    "level": "WARN",
+    "component": "engine",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00490",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:33:01Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00491",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:33:46Z",
+    "level": "INFO",
+    "component": "risk",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00492",
+    "correlation_id": "run-02"
+  },
+  {
+    "timestamp": "2024-01-02T17:34:04Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00493",
+    "correlation_id": "run-03"
+  },
+  {
+    "timestamp": "2024-01-02T17:34:48Z",
+    "level": "WARN",
+    "component": "broker",
+    "message": "throttle engaged",
+    "trace_id": "trace-00494",
+    "correlation_id": "run-04"
+  },
+  {
+    "timestamp": "2024-01-02T17:35:24Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "latency spike detected",
+    "trace_id": "trace-00495",
+    "correlation_id": "run-05"
+  },
+  {
+    "timestamp": "2024-01-02T17:35:55Z",
+    "level": "DEBUG",
+    "component": "broker",
+    "message": "option chain refreshed",
+    "trace_id": "trace-00496",
+    "correlation_id": "run-06"
+  },
+  {
+    "timestamp": "2024-01-02T17:36:17Z",
+    "level": "INFO",
+    "component": "data",
+    "message": "heartbeat ok",
+    "trace_id": "trace-00497",
+    "correlation_id": "run-00"
+  },
+  {
+    "timestamp": "2024-01-02T17:36:54Z",
+    "level": "WARN",
+    "component": "options",
+    "message": "order routed",
+    "trace_id": "trace-00498",
+    "correlation_id": "run-01"
+  },
+  {
+    "timestamp": "2024-01-02T17:37:05Z",
+    "level": "ERROR",
+    "component": "broker",
+    "message": "order routed",
+    "trace_id": "trace-00499",
+    "correlation_id": "run-02"
+  }
+]

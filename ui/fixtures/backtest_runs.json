@@ -1,0 +1,37 @@
+[
+  {
+    "run_id": "bt-000",
+    "started_at": "2023-12-01T00:00:00Z",
+    "ended_at": "2023-12-05T00:00:00Z",
+    "preset": "balanced",
+    "profile": "backtest"
+  },
+  {
+    "run_id": "bt-001",
+    "started_at": "2023-12-06T00:00:00Z",
+    "ended_at": "2023-12-10T00:00:00Z",
+    "preset": "balanced",
+    "profile": "backtest"
+  },
+  {
+    "run_id": "bt-002",
+    "started_at": "2023-12-11T00:00:00Z",
+    "ended_at": "2023-12-15T00:00:00Z",
+    "preset": "safe",
+    "profile": "backtest"
+  },
+  {
+    "run_id": "bt-003",
+    "started_at": "2023-12-16T00:00:00Z",
+    "ended_at": "2023-12-20T00:00:00Z",
+    "preset": "balanced",
+    "profile": "backtest"
+  },
+  {
+    "run_id": "bt-004",
+    "started_at": "2023-12-21T00:00:00Z",
+    "ended_at": "2023-12-25T00:00:00Z",
+    "preset": "high_risk",
+    "profile": "backtest"
+  }
+]

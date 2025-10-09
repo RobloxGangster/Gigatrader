@@ -1,0 +1,38 @@
+[
+  {
+    "symbol": "AAPL",
+    "qty": 120,
+    "avg_price": 233.53,
+    "unrealized": 679.01,
+    "realized": 273.51,
+    "leverage": 3.35,
+    "delta": -31.15,
+    "gamma": -0.7139,
+    "theta": -1.6,
+    "vega": 7.73
+  },
+  {
+    "symbol": "MSFT",
+    "qty": 75,
+    "avg_price": 194.78,
+    "unrealized": -224.84,
+    "realized": 61.48,
+    "leverage": 3.69,
+    "delta": 17.56,
+    "gamma": 2.5201,
+    "theta": -2.02,
+    "vega": 8.78
+  },
+  {
+    "symbol": "SPY",
+    "qty": 50,
+    "avg_price": 217.58,
+    "unrealized": 473.73,
+    "realized": -158.33,
+    "leverage": 4.34,
+    "delta": -8.0,
+    "gamma": -4.3138,
+    "theta": -0.51,
+    "vega": 5.6
+  }
+]
