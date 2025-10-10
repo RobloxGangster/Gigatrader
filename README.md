@@ -58,12 +58,16 @@ Gigatrader is a production-grade scaffold for an automated US equities and equit
    against the configured preset.
 
 ### Environment Variables
-- Update `.env` with your Alpaca credentials; the CLI will warn when keys are missing.
+- Update `.env` with your Alpaca credentials; the CLI accepts `ALPACA_KEY_ID` and
+  `ALPACA_SECRET_KEY` (or the legacy `ALPACA_API_KEY` / `APCA_API_KEY_ID` pairs) and will
+  warn when they are missing.
 - Live trading requires `LIVE_TRADING=true` at runtime and remains disabled by default for safety.
 
 ## CLI Usage
 - `trade paper` — loads configuration, initialises the kill switch + risk manager, and
-  runs a cancellable paper session with simulated fills.
+  runs a cancellable paper session with simulated fills. When `ALPACA_KEY_ID` and
+  `ALPACA_SECRET_KEY` are provided (and `alpaca-py` is installed) the session forwards
+  generated orders to the Alpaca paper endpoint instead of simulating fills locally.
 - `trade backtest --config CONFIG` — validates configuration and (stub) initialises the
   backtest engine; full integration is pending.
 - `trade live` — refuses to execute unless `LIVE_TRADING=true`, failing closed with exit code 2 otherwise.
