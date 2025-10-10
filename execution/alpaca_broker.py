@@ -5,7 +5,11 @@ import logging
 from typing import Dict
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import OrderRequest
+
+try:
+    from alpaca.trading.requests import OrderRequest
+except (ImportError, ModuleNotFoundError):  # pragma: no cover - env guard
+    OrderRequest = None  # type: ignore[assignment]
 
 from core.interfaces import Broker
 from core.utils import idempotency_key
@@ -24,6 +28,8 @@ class AlpacaBroker(Broker):
         self._client = client
 
     async def submit(self, order: Dict) -> Dict:
+        if OrderRequest is None:  # pragma: no cover - defensive guard
+            raise RuntimeError("alpaca-py OrderRequest class is unavailable")
         request = OrderRequest(**order)
         idem = idempotency_key(order)
         if getattr(request, "client_order_id", None) is None:
@@ -35,6 +41,8 @@ class AlpacaBroker(Broker):
         await self._client.cancel_order_by_id_async(order_id)
 
     async def replace(self, order_id: str, order: Dict) -> Dict:
+        if OrderRequest is None:  # pragma: no cover - defensive guard
+            raise RuntimeError("alpaca-py OrderRequest class is unavailable")
         response = await self._client.replace_order_by_id_async(order_id, OrderRequest(**order))
         return response.dict()
 
