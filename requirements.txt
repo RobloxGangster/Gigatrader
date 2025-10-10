@@ -3,3 +3,6 @@ pydantic>=2
 python-dotenv>=1
 rich>=13
 alpaca-py>=0.19
+streamlit>=1.36
+pandas>=2.2
+plotly>=5.22
