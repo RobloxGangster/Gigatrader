@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import logging
 import os
 import pathlib
 import sys
@@ -31,11 +32,14 @@ for candidate in (REPO_ROOT, REPO_ROOT / "src"):
         sys.path.insert(0, candidate_str)
 
 from core.config import AppConfig, RiskPresetConfig, get_alpaca_settings, load_config
+from core.clock import MarketClock
 from core.kill_switch import KillSwitch
 from core.interfaces import Broker
 from core.utils import ensure_paper_mode
 from risk.manager import ConfiguredRiskManager
 from strategies.equities_momentum import EquitiesMomentumStrategy
+from app.data.quality import FeedHealth, get_data_staleness_seconds
+from app import streaming
 
 app = typer.Typer(add_completion=False, help="Gigatrader trading CLI")
 trade_app = typer.Typer(help="Direct trading utilities")
@@ -44,6 +48,7 @@ console = Console()
 DEFAULT_CONFIG = REPO_ROOT / "config.yaml"
 FALLBACK_CONFIG = REPO_ROOT / "config.example.yaml"
 DEFAULT_KILL_FILE = REPO_ROOT / ".kill_switch"
+LOGGER = logging.getLogger(__name__)
 
 
 def _load_env() -> bool:
@@ -92,6 +97,90 @@ def _warn_missing_keys() -> None:
                 ", ".join(missing)
             )
         )
+
+
+def _parse_symbols(raw: str) -> list[str]:
+    """Normalise a comma-delimited symbol string."""
+
+    return [token.strip().upper() for token in raw.split(",") if token.strip()]
+
+
+def _fetch_market_clock() -> Optional[MarketClock]:
+    """Return the broker clock when credentials and alpaca-py are available."""
+
+    try:
+        from alpaca.trading.client import TradingClient  # type: ignore
+    except ModuleNotFoundError:
+        return None
+
+    settings = get_alpaca_settings()
+    if not settings.key_id or not settings.secret_key:
+        return None
+    paper = ensure_paper_mode(default=True) != "live"
+    client = TradingClient(settings.key_id, settings.secret_key, paper=paper)
+    try:
+        clock = client.get_clock()
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("Failed to fetch broker clock: %s", exc)
+        return None
+    return MarketClock(
+        timestamp=clock.timestamp,
+        is_open=clock.is_open,
+        next_open=clock.next_open,
+        next_close=clock.next_close,
+    )
+
+
+def _format_ts(value: Optional[dt.datetime]) -> str:
+    if value is None:
+        return "—"
+    return value.astimezone(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_latency(latency: dict) -> str:
+    p50 = latency.get("p50")
+    p95 = latency.get("p95")
+    if p50 is None or p95 is None:
+        return "n/a"
+    return f"{p50:.3f}s / {p95:.3f}s"
+
+
+def _render_feed_summary(feed_health: FeedHealth, header: str) -> None:
+    table = Table(title=header)
+    table.add_column("Symbol", style="cyan", justify="left")
+    table.add_column("Status", justify="left")
+    table.add_column("Last Event (UTC)")
+    table.add_column("Latency p50/p95")
+    for entry in feed_health.snapshot():
+        table.add_row(
+            entry["symbol"],
+            entry["status"],
+            _format_ts(entry["last_event_ts"]),
+            _format_latency(entry["latency"]),
+        )
+    console.print(table)
+
+
+def _render_mismatches(mismatches: list[dict]) -> None:
+    if not mismatches:
+        return
+    table = Table(title="Snapshot vs stream mismatches")
+    table.add_column("Symbol", style="cyan")
+    table.add_column("Time Δ (s)")
+    table.add_column("Stream TS")
+    table.add_column("Snapshot TS")
+    table.add_column("Price Δ")
+    for item in mismatches:
+        price_delta = item.get("price_delta")
+        price_cell = f"{price_delta:.4f}" if price_delta is not None else "n/a"
+        table.add_row(
+            item["symbol"],
+            f"{item['delta_seconds']:.3f}",
+            _format_ts(item.get("stream_timestamp")),
+            _format_ts(item.get("snapshot_timestamp")),
+            price_cell,
+        )
+    console.print(table)
 
 
 def _extract_order_id(order: object) -> Optional[str]:
@@ -154,12 +243,18 @@ def place_test_order(
         console.print("[red]alpaca-py is required for this command. Install it and retry.[/red]")
         raise typer.Exit(code=1) from None
 
-    client = TradingClient(
-        settings.key_id,
-        settings.secret_key,
-        paper=True,
-        url_override=settings.paper_endpoint,
-    )
+    try:
+        client = TradingClient(
+            settings.key_id,
+            settings.secret_key,
+            paper=True,
+            url_override=settings.paper_endpoint,
+        )
+    except TypeError as exc:  # pragma: no cover - stub fallback
+        console.print(
+            f"[yellow]alpaca-py TradingClient stub detected ({exc}); install alpaca-py for live connectivity.[/yellow]"
+        )
+        raise typer.Exit(code=1) from exc
 
     client_order_id = f"test-{uuid.uuid4().hex[:12]}"
     order_request = build_market_order(
@@ -203,6 +298,111 @@ def place_test_order(
     exit_code = asyncio.run(_place_and_cancel())
     if exit_code:
         raise typer.Exit(code=exit_code)
+
+
+@app.command("verify-data")
+def verify_data(
+    symbols: str = typer.Option("AAPL,MSFT", "--symbols", help="Comma-separated tickers to monitor"),
+    minutes: int = typer.Option(5, "--minutes", min=1, help="Duration to stream in minutes"),
+    staleness_sec: Optional[int] = typer.Option(
+        None, "--staleness-sec", help="Override DATA_STALENESS_SEC for this run"
+    ),
+) -> None:
+    """Stream live bars and report feed health diagnostics."""
+
+    _load_env()
+    _warn_missing_keys()
+    symbol_list = _parse_symbols(symbols)
+    if not symbol_list:
+        console.print("[red]Provide at least one symbol via --symbols.[/red]")
+        raise typer.Exit(code=1)
+
+    feed_health = FeedHealth()
+    clock = _fetch_market_clock()
+    if clock:
+        feed_health.set_market_open(clock.is_open)
+        if not clock.is_open:
+            console.print(
+                "[yellow]Market appears closed; staleness watchdog is paused until next open.[/yellow]"
+            )
+    else:
+        feed_health.set_market_open(True)
+        console.print("[yellow]Broker clock unavailable; assuming market open.[/yellow]")
+
+    staleness = staleness_sec or get_data_staleness_seconds()
+    try:
+        asyncio.run(_run_stream_session(symbol_list, minutes * 60, feed_health, staleness))
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    _render_feed_summary(feed_health, f"Feed verification ({minutes} minutes)")
+    mismatches = []
+    try:
+        mismatches = feed_health.crosscheck_snapshot(symbol_list)
+    except RuntimeError as exc:
+        console.print(f"[yellow]Snapshot cross-check skipped: {exc}[/yellow]")
+    else:
+        _render_mismatches(mismatches)
+
+    stale_symbols = [row["symbol"] for row in feed_health.snapshot() if row["status"] == "STALE"]
+    if stale_symbols:
+        console.print(
+            "[red]Feed reported as STALE for: {}[/red]".format(", ".join(sorted(stale_symbols)))
+        )
+        raise typer.Exit(code=2)
+
+
+@app.command("feed-latency")
+def feed_latency(
+    symbols: str = typer.Option("AAPL,MSFT", "--symbols", help="Comma-separated tickers to monitor"),
+    seconds: int = typer.Option(30, "--seconds", min=5, help="Duration to stream in seconds"),
+    staleness_sec: Optional[int] = typer.Option(
+        None, "--staleness-sec", help="Override DATA_STALENESS_SEC for this run"
+    ),
+) -> None:
+    """Report latency statistics for the configured feed."""
+
+    _load_env()
+    symbol_list = _parse_symbols(symbols)
+    if not symbol_list:
+        console.print("[red]Provide at least one symbol via --symbols.[/red]")
+        raise typer.Exit(code=1)
+
+    feed_health = FeedHealth()
+    clock = _fetch_market_clock()
+    if clock:
+        feed_health.set_market_open(clock.is_open)
+        if not clock.is_open:
+            console.print(
+                "[yellow]Market appears closed; latency stats may reflect idle feed conditions.[/yellow]"
+            )
+    staleness = staleness_sec or get_data_staleness_seconds()
+    try:
+        asyncio.run(_run_stream_session(symbol_list, seconds, feed_health, staleness))
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    _render_feed_summary(feed_health, f"Feed latency ({seconds} seconds)")
+    stale_symbols = [row["symbol"] for row in feed_health.snapshot() if row["status"] == "STALE"]
+    if stale_symbols:
+        console.print(
+            "[red]Feed reported as STALE for: {}[/red]".format(", ".join(sorted(stale_symbols)))
+        )
+        raise typer.Exit(code=2)
+
+
+async def _run_stream_session(
+    symbols: list[str], duration_seconds: int, feed_health: FeedHealth, staleness_sec: int
+) -> None:
+    await streaming.monitor_feed(
+        symbols,
+        duration_seconds,
+        feed_health=feed_health,
+        staleness_sec=staleness_sec,
+    )
+
 
 @dataclass(slots=True)
 class PaperRuntimeContext:
@@ -331,12 +531,18 @@ class PaperTradingSession:
 
         paper_env = ensure_paper_mode(default=True) == "paper"
         endpoint = settings.paper_endpoint if paper_env else settings.live_endpoint
-        client = TradingClient(
-            settings.key_id,
-            settings.secret_key,
-            paper=paper_env,
-            url_override=endpoint,
-        )
+        try:
+            client = TradingClient(
+                settings.key_id,
+                settings.secret_key,
+                paper=paper_env,
+                url_override=endpoint,
+            )
+        except TypeError as exc:  # pragma: no cover - stub fallback
+            console.print(
+                f"[yellow]alpaca-py TradingClient stub detected ({exc}); continuing with simulated fills.[/yellow]"
+            )
+            return None
         console.print("[green]Forwarding paper orders to Alpaca {} trading.[/green]".format("paper" if paper_env else "live"))
         return AlpacaBroker(client)
 
