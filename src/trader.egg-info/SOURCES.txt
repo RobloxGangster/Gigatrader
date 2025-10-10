@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+src/app/__init__.py
+src/app/cli.py
+src/trader.egg-info/PKG-INFO
+src/trader.egg-info/SOURCES.txt
+src/trader.egg-info/dependency_links.txt
+src/trader.egg-info/entry_points.txt
+src/trader.egg-info/requires.txt
+src/trader.egg-info/top_level.txt

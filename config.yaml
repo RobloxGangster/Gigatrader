@@ -1,0 +1,8 @@
+profile: paper
+universe: [AAPL, MSFT]
+timeframe: "1Min"
+risk:
+  daily_loss_limit_pct: 3
+  max_positions: 5
+execution:
+  tif: day
