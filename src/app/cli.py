@@ -13,6 +13,7 @@ import asyncio
 import datetime as dt
 import os
 import pathlib
+import sys
 from dataclasses import dataclass
 from typing import Optional
 
@@ -22,6 +23,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+for candidate in (REPO_ROOT, REPO_ROOT / "src"):
+    candidate_str = str(candidate)
+    if candidate_str not in sys.path:
+        sys.path.insert(0, candidate_str)
+
 from core.config import AppConfig, RiskPresetConfig, load_config
 from core.kill_switch import KillSwitch
 from risk.manager import ConfiguredRiskManager
@@ -29,8 +36,6 @@ from strategies.equities_momentum import EquitiesMomentumStrategy
 
 app = typer.Typer(add_completion=False, help="Gigatrader trading CLI")
 console = Console()
-
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = REPO_ROOT / "config.yaml"
 FALLBACK_CONFIG = REPO_ROOT / "config.example.yaml"
 DEFAULT_KILL_FILE = REPO_ROOT / ".kill_switch"
