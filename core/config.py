@@ -26,11 +26,30 @@ class AlpacaSettings:
 
     @classmethod
     def from_env(cls) -> "AlpacaSettings":
+        key_id = (
+            os.getenv("ALPACA_KEY_ID")
+            or os.getenv("ALPACA_API_KEY")
+            or os.getenv("APCA_API_KEY_ID")
+            or ""
+        )
+        secret_key = (
+            os.getenv("ALPACA_SECRET_KEY")
+            or os.getenv("ALPACA_API_SECRET")
+            or os.getenv("APCA_API_SECRET_KEY")
+            or ""
+        )
+        paper_endpoint = os.getenv(
+            "ALPACA_PAPER_ENDPOINT", os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+        )
+        live_endpoint = os.getenv(
+            "ALPACA_LIVE_ENDPOINT", os.getenv("APCA_API_BASE_URL", "https://api.alpaca.markets")
+        )
+
         return cls(
-            key_id=os.getenv("ALPACA_KEY_ID", ""),
-            secret_key=os.getenv("ALPACA_SECRET_KEY", ""),
-            paper_endpoint=os.getenv("ALPACA_PAPER_ENDPOINT", "https://paper-api.alpaca.markets"),
-            live_endpoint=os.getenv("ALPACA_LIVE_ENDPOINT", "https://api.alpaca.markets"),
+            key_id=key_id,
+            secret_key=secret_key,
+            paper_endpoint=paper_endpoint,
+            live_endpoint=live_endpoint,
         )
 
 

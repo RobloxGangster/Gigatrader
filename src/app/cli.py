@@ -29,8 +29,10 @@ for candidate in (REPO_ROOT, REPO_ROOT / "src"):
     if candidate_str not in sys.path:
         sys.path.insert(0, candidate_str)
 
-from core.config import AppConfig, RiskPresetConfig, load_config
+from core.config import AppConfig, RiskPresetConfig, get_alpaca_settings, load_config
 from core.kill_switch import KillSwitch
+from core.interfaces import Broker
+from core.utils import ensure_paper_mode
 from risk.manager import ConfiguredRiskManager
 from strategies.equities_momentum import EquitiesMomentumStrategy
 
@@ -75,10 +77,12 @@ def _pick_config(explicit: Optional[str]) -> pathlib.Path:
 def _warn_missing_keys() -> None:
     """Warn when expected Alpaca keys are absent from the environment."""
 
+    settings = get_alpaca_settings()
     missing: list[str] = []
-    for key in ("ALPACA_API_KEY", "ALPACA_API_SECRET", "ALPACA_BASE_URL"):
-        if not os.getenv(key):
-            missing.append(key)
+    if not settings.key_id:
+        missing.append("ALPACA_KEY_ID")
+    if not settings.secret_key:
+        missing.append("ALPACA_SECRET_KEY")
     if missing:
         console.print(
             "[yellow]Missing env keys: {}. Paper mode works without them, but add them later in .env.[/yellow]".format(
@@ -96,6 +100,7 @@ class PaperRuntimeContext:
     risk_manager: ConfiguredRiskManager
     strategy: EquitiesMomentumStrategy
     kill_switch: KillSwitch
+    broker: Optional[Broker] = None
 
 
 class PaperTradingSession:
@@ -160,6 +165,7 @@ class PaperTradingSession:
         kill_switch = KillSwitch(path=DEFAULT_KILL_FILE)
         risk_manager = ConfiguredRiskManager(risk_preset.model_dump(), kill_switch)
         strategy = EquitiesMomentumStrategy(config.data.symbols)
+        broker = self._maybe_create_broker(config)
 
         return PaperRuntimeContext(
             config=config,
@@ -167,7 +173,59 @@ class PaperTradingSession:
             risk_manager=risk_manager,
             strategy=strategy,
             kill_switch=kill_switch,
+            broker=broker,
         )
+
+    def _maybe_create_broker(self, config: AppConfig) -> Optional[Broker]:
+        venue = config.execution.venue.lower()
+        if venue != "alpaca":
+            return None
+
+        settings = get_alpaca_settings()
+        missing: list[str] = []
+        if not settings.key_id:
+            missing.append("ALPACA_KEY_ID")
+        if not settings.secret_key:
+            missing.append("ALPACA_SECRET_KEY")
+        if missing:
+            console.print(
+                "[yellow]Alpaca credentials missing ({}); continuing with simulated fills.[/yellow]".format(
+                    ", ".join(missing)
+                )
+            )
+            return None
+
+        try:
+            from alpaca.trading.client import TradingClient
+        except ModuleNotFoundError:
+            console.print(
+                "[yellow]alpaca-py not installed; install alpaca-py to forward paper orders to Alpaca.[/yellow]"
+            )
+            return None
+        except Exception as exc:  # pragma: no cover - defensive guard
+            console.print(
+                f"[yellow]Unable to initialise Alpaca client ({exc!r}); continuing with simulated fills.[/yellow]"
+            )
+            return None
+
+        try:
+            from execution.alpaca_broker import AlpacaBroker
+        except ModuleNotFoundError:
+            console.print(
+                "[yellow]Alpaca broker adapter unavailable; continuing with simulated fills.[/yellow]"
+            )
+            return None
+
+        paper_env = ensure_paper_mode(default=True) == "paper"
+        endpoint = settings.paper_endpoint if paper_env else settings.live_endpoint
+        client = TradingClient(
+            settings.key_id,
+            settings.secret_key,
+            paper=paper_env,
+            url_override=endpoint,
+        )
+        console.print("[green]Forwarding paper orders to Alpaca {} trading.[/green]".format("paper" if paper_env else "live"))
+        return AlpacaBroker(client)
 
     def _session_panel(self, context: PaperRuntimeContext) -> Panel:
         preset = context.risk_preset
@@ -252,6 +310,28 @@ class PaperTradingSession:
                             enriched, self._portfolio_state
                         )
                         if decision.allow:
+                            broker = context.broker
+                            if broker is not None:
+                                try:
+                                    broker_payload = dict(enriched)
+                                    broker_payload.pop("notional", None)
+                                    response = await broker.submit(broker_payload)
+                                except Exception as exc:  # pragma: no cover - network/runtime errors
+                                    console.print(
+                                        f"[yellow]Failed to forward order to Alpaca ({exc!r}); falling back to simulated fill.[/yellow]"
+                                    )
+                                else:
+                                    order_id = response.get("id", "?")
+                                    console.print(
+                                        "[green]Submitted to Alpaca[/green] {symbol} {side} {qty} -> id {order_id}".format(
+                                            symbol=symbol,
+                                            side=enriched.get("side", "?").upper(),
+                                            qty=enriched.get("qty", 0),
+                                            order_id=order_id,
+                                        )
+                                    )
+                                    continue
+
                             console.print(
                                 "[cyan]Simulated fill[/cyan] {symbol} {side} {qty} @ {price:.2f}".format(
                                     symbol=symbol,
