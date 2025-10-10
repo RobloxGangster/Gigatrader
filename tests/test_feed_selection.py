@@ -1,16 +1,27 @@
-from app.data.quality import resolve_data_feed_name
+import os
+from importlib import reload
 
 
-def test_defaults_to_iex(monkeypatch):
-    monkeypatch.delenv("ALPACA_DATA_FEED", raising=False)
-    assert resolve_data_feed_name() == "iex"
+def test_probe_fallback(monkeypatch):
+    monkeypatch.delenv("STRICT_SIP", raising=False)
+    import app.data.entitlement as entitlement
+    reload(entitlement)
+    entitlement.sip_entitled = lambda symbol="SPY": False  # type: ignore[assignment]
+    import app.streaming as streaming
+    reload(streaming)
+    feed = streaming._select_feed_with_probe()
+    assert str(feed).endswith("IEX")
 
 
-def test_sip_when_env_set(monkeypatch):
-    monkeypatch.setenv("ALPACA_DATA_FEED", "SIP")
-    assert resolve_data_feed_name() == "sip"
-
-
-def test_unknown_value_falls_back_to_iex(monkeypatch):
-    monkeypatch.setenv("ALPACA_DATA_FEED", "custom")
-    assert resolve_data_feed_name() == "iex"
+def test_strict_sip(monkeypatch):
+    monkeypatch.setenv("STRICT_SIP", "true")
+    import app.data.entitlement as entitlement
+    reload(entitlement)
+    entitlement.sip_entitled = lambda symbol="SPY": False  # type: ignore[assignment]
+    import app.streaming as streaming
+    reload(streaming)
+    try:
+        streaming._select_feed_with_probe()
+    except RuntimeError:
+        return
+    assert False, "STRICT_SIP should raise when SIP entitlement missing"

@@ -1,180 +1,321 @@
-"""Streaming helpers for Alpaca market data."""
 from __future__ import annotations
 
 import asyncio
-import datetime as dt
 import logging
+import math
 import os
-from contextlib import suppress
-from typing import Callable, Optional, Sequence
+import time
+from collections import deque
+import inspect
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Callable, Deque, Dict, Iterable, List, Optional
 
-from core.config import get_alpaca_settings
-from core.utils import ensure_paper_mode
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from app.data.quality import FeedHealth
 
-from app.data.quality import FeedHealth, get_data_staleness_seconds, resolve_data_feed_name
+from app.data.entitlement import sip_entitled
+
+try:  # pragma: no cover - allow operation without alpaca-py
+    from alpaca.common.exceptions import APIError
+except ModuleNotFoundError:  # pragma: no cover - testing environment fallback
+    class APIError(Exception):  # type: ignore
+        """Fallback APIError when alpaca-py is unavailable."""
+
+try:  # pragma: no cover - allow import when alpaca-py missing
+    from alpaca.data.enums import DataFeed
+except ModuleNotFoundError:  # pragma: no cover - provide lightweight stand-in
+    from enum import Enum
+
+    class DataFeed(Enum):  # type: ignore
+        SIP = "sip"
+        IEX = "iex"
+
 
 LOGGER = logging.getLogger(__name__)
 
 
-class FeedMonitor:
-    """Coordinate a StockDataStream session while tracking feed health."""
-
-    def __init__(
-        self,
-        symbols: Sequence[str],
-        feed_health: FeedHealth,
-        *,
-        staleness_sec: Optional[int] = None,
-        on_bar: Optional[Callable[[str, object], None]] = None,
-    ) -> None:
-        self._symbols = [symbol.upper() for symbol in symbols]
-        self._feed_health = feed_health
-        self._on_bar = on_bar
-        self._staleness_sec = staleness_sec or get_data_staleness_seconds()
-        self._stop_event = asyncio.Event()
-        self._watchdog_task: Optional[asyncio.Task] = None
-        self._stream_task: Optional[asyncio.Task] = None
-        self._stream = None
-
-    async def run(self, duration_seconds: float) -> None:
-        """Run the bar stream for ``duration_seconds`` and evaluate health."""
-
-        if not self._symbols:
-            raise ValueError("At least one symbol is required")
-        stream = self._build_stream()
-        self._stream = stream
-        for symbol in self._symbols:
-            stream.subscribe_bars(self._handle_bar, symbol)
-        self._stream_task = asyncio.create_task(stream._run_forever())  # pylint: disable=protected-access
-        self._watchdog_task = asyncio.create_task(self._watchdog())
-        try:
-            await asyncio.sleep(duration_seconds)
-        finally:
-            await self._shutdown()
-
-    async def _handle_bar(self, bar: object) -> None:
-        symbol = _extract_symbol(bar)
-        if not symbol:
-            return
-        event_ts = _extract_event_timestamp(bar)
-        ingest_ts = dt.datetime.now(dt.timezone.utc)
-        if event_ts is None:
-            event_ts = ingest_ts
-        self._feed_health.note_event(symbol, event_ts, ingest_ts)
-        self._feed_health.update_last_price(symbol, _extract_event_price(bar))
-        if self._on_bar:
-            try:
-                self._on_bar(symbol, bar)
-            except Exception:  # noqa: BLE001
-                LOGGER.exception("on_bar callback failed", exc_info=True)
-
-    async def _watchdog(self) -> None:
-        """Periodic staleness evaluation."""
-
-        while not self._stop_event.is_set():
-            await asyncio.sleep(1)
-            now = dt.datetime.now(dt.timezone.utc)
-            for symbol in self._symbols:
-                self._feed_health.is_stale(symbol, now, self._staleness_sec)
-
-    async def _shutdown(self) -> None:
-        self._stop_event.set()
-        if self._watchdog_task:
-            self._watchdog_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._watchdog_task
-        if self._stream:
-            self._stream.stop()
-        if self._stream_task:
-            self._stream_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._stream_task
-
-    def _build_stream(self):
-        settings = get_alpaca_settings()
-        key = settings.key_id or os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY_ID")
-        secret = settings.secret_key or os.getenv("ALPACA_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY")
-        if not key or not secret:
-            raise RuntimeError("Alpaca API credentials are required for streaming")
-        paper = ensure_paper_mode(default=True) != "live"
-        try:
-            from alpaca.data.enums import DataFeed  # type: ignore
-            from alpaca.data.live import StockDataStream  # type: ignore
-        except ModuleNotFoundError as exc:  # pragma: no cover - guard path
-            raise RuntimeError("alpaca-py is required for streaming") from exc
-
-        feed_name = resolve_data_feed_name()
-        data_feed = DataFeed[feed_name.upper()]
-        return StockDataStream(key, secret, paper=paper, feed=data_feed)
+def _get_credentials() -> tuple[Optional[str], Optional[str]]:
+    key = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY_ID")
+    secret = os.getenv("ALPACA_API_SECRET") or os.getenv("APCA_API_SECRET_KEY")
+    if not key:
+        key = os.getenv("ALPACA_KEY_ID")
+    if not secret:
+        secret = os.getenv("ALPACA_SECRET_KEY")
+    return key, secret
 
 
-async def monitor_feed(
-    symbols: Sequence[str],
-    duration_seconds: float,
-    *,
-    feed_health: Optional[FeedHealth] = None,
-    staleness_sec: Optional[int] = None,
-    on_bar: Optional[Callable[[str, object], None]] = None,
-) -> FeedHealth:
-    """Run a streaming session and return the populated :class:`FeedHealth`."""
-
-    health = feed_health or FeedHealth()
-    monitor = FeedMonitor(symbols, health, staleness_sec=staleness_sec, on_bar=on_bar)
-    await monitor.run(duration_seconds)
-    return health
+def _staleness_threshold() -> float:
+    try:
+        return float(os.getenv("DATA_STALENESS_SEC", "5"))
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return 5.0
 
 
-def _extract_symbol(bar: object) -> Optional[str]:
-    if isinstance(bar, dict):
-        symbol = bar.get("symbol") or bar.get("S")
-        return str(symbol) if symbol else None
-    for attr in ("symbol", "S"):
-        if hasattr(bar, attr):
-            value = getattr(bar, attr)
-            return str(value) if value else None
-    return None
+def _select_feed_with_probe() -> DataFeed:
+    strict = os.getenv("STRICT_SIP", "").lower() == "true"
+    entitled = False
+    try:
+        entitled = sip_entitled()
+    except Exception as exc:  # noqa: BLE001 - defensive; should rarely occur
+        LOGGER.warning("SIP entitlement probe failed: %s", exc)
+    if entitled:
+        LOGGER.info("Using SIP feed after entitlement probe succeeded")
+        return DataFeed.SIP
+    if strict:
+        raise RuntimeError("STRICT_SIP=true but SIP entitlement not available.")
+    LOGGER.warning("Falling back to IEX feed — SIP entitlement missing or probe failed")
+    return DataFeed.IEX
 
 
-def _extract_event_timestamp(bar: object) -> Optional[dt.datetime]:
-    if isinstance(bar, dict):
-        candidate = bar.get("timestamp") or bar.get("t") or bar.get("time")
-    else:
-        candidate = None
-        for attr in ("timestamp", "t", "time"):
-            if hasattr(bar, attr):
-                candidate = getattr(bar, attr)
-                break
-    if candidate is None:
+def _compute_percentile(values: List[float], percentile: float) -> Optional[float]:
+    if not values:
         return None
-    return _coerce_datetime(candidate)
+    sorted_vals = sorted(values)
+    if len(sorted_vals) == 1:
+        return float(sorted_vals[0])
+    rank = (len(sorted_vals) - 1) * percentile
+    lower = math.floor(rank)
+    upper = math.ceil(rank)
+    if lower == upper:
+        return float(sorted_vals[int(rank)])
+    lower_val = sorted_vals[lower]
+    upper_val = sorted_vals[upper]
+    return float(lower_val + (upper_val - lower_val) * (rank - lower))
 
 
-def _extract_event_price(bar: object) -> Optional[float]:
+def _latency_snapshot(latency_history: Dict[str, Deque[float]], latest_latency: Dict[str, float]) -> Dict[str, Dict[str, Optional[float]]]:
+    snapshot: Dict[str, Dict[str, Optional[float]]] = {}
+    for symbol, history in latency_history.items():
+        values = list(history)
+        snapshot[symbol] = {
+            "p50": _compute_percentile(values, 0.50),
+            "p95": _compute_percentile(values, 0.95),
+            "last": latest_latency.get(symbol),
+        }
+    return snapshot
+
+
+def _now() -> datetime:
+    return datetime.now(tz=timezone.utc)
+
+
+def _as_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except ValueError:
+            return _now()
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+    return _now()
+
+
+def _build_stream(feed: DataFeed):
+    try:
+        from alpaca.data.live import StockDataStream
+    except ModuleNotFoundError as exc:  # pragma: no cover - triggered in CI without alpaca-py
+        raise RuntimeError("alpaca-py is required for streaming") from exc
+
+    key, secret = _get_credentials()
+    if not key or not secret:
+        raise RuntimeError("Missing ALPACA_API_KEY/SECRET for streaming")
+    return StockDataStream(key, secret, feed=feed)
+
+
+async def stream_bars(
+    symbols: Iterable[str],
+    minutes: Optional[float] = None,
+    on_health: Optional[Callable[[Dict[str, Any]], None]] = None,
+    on_bar: Optional[Callable[[str, Any], Any]] = None,
+) -> None:
+    symbol_list = [symbol.strip().upper() for symbol in symbols if symbol]
+    if not symbol_list:
+        raise ValueError("At least one symbol is required for streaming")
+
+    feed = _select_feed_with_probe()
+    stream = _build_stream(feed)
+
+    last_update: Dict[str, float] = {symbol: time.time() for symbol in symbol_list}
+    latency_history: Dict[str, Deque[float]] = {symbol: deque(maxlen=200) for symbol in symbol_list}
+    latest_latency: Dict[str, float] = {symbol: 0.0 for symbol in symbol_list}
+    state = {
+        "feed": feed,
+        "ok": set(symbol_list),
+        "stale": set(),
+        "threshold": _staleness_threshold(),
+    }
+
+    def publish(state_changed: bool = False) -> None:
+        if on_health is None:
+            return
+        payload = {
+            "feed": state["feed"].name if hasattr(state["feed"], "name") else str(state["feed"]),
+            "ok": sorted(state["ok"]),
+            "stale": sorted(state["stale"]),
+            "threshold_s": state["threshold"],
+            "latency": _latency_snapshot(latency_history, latest_latency),
+        }
+        if state_changed:
+            LOGGER.info("Health update: %s", payload)
+        on_health(payload)
+
+    async def handle_bar(bar: Any) -> None:
+        try:
+            sym = getattr(bar, "symbol", None) or getattr(bar, "S", None)
+            if sym is None and isinstance(bar, dict):
+                sym = bar.get("symbol") or bar.get("S")
+            if sym is None:
+                return
+            sym = str(sym).upper()
+            event_time = getattr(bar, "timestamp", None)
+            if event_time is None and isinstance(bar, dict):
+                event_time = bar.get("timestamp") or bar.get("t")
+            event_dt = _as_datetime(event_time)
+            ingest_dt = _now()
+            latency = max(0.0, (ingest_dt - event_dt).total_seconds())
+            latest_latency[sym] = latency
+            latency_history.setdefault(sym, deque(maxlen=200)).append(latency)
+            last_update[sym] = time.time()
+            if sym in state["stale"]:
+                state["stale"].discard(sym)
+                state["ok"].add(sym)
+                publish(state_changed=True)
+            LOGGER.info(
+                "BAR %s close=%s latency=%.3fs feed=%s",
+                sym,
+                getattr(bar, "close", getattr(bar, "c", None)) if not isinstance(bar, dict) else bar.get("close"),
+                latency,
+                state["feed"],
+            )
+            if on_bar is not None:
+                try:
+                    result = on_bar(sym, bar)
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception as callback_exc:  # noqa: BLE001 - keep stream running
+                    LOGGER.warning("on_bar callback failed for %s: %s", sym, callback_exc)
+            publish()
+        except Exception as exc:  # noqa: BLE001 - guard to keep stream alive
+            LOGGER.exception("Error processing bar: %s", exc)
+
+    stream.subscribe_bars(handle_bar, *symbol_list)
+    publish(state_changed=True)
+
+    stop_event = asyncio.Event()
+
+    async def watchdog() -> None:
+        try:
+            while not stop_event.is_set():
+                await asyncio.sleep(1.0)
+                now = time.time()
+                changed = False
+                for sym in symbol_list:
+                    last = last_update.get(sym, 0.0)
+                    if now - last > state["threshold"]:
+                        if sym not in state["stale"]:
+                            state["stale"].add(sym)
+                            state["ok"].discard(sym)
+                            changed = True
+                if changed:
+                    LOGGER.warning("Symbols marked stale: %s", sorted(state["stale"]))
+                    publish(state_changed=True)
+        finally:
+            publish()
+
+    async def limiter() -> None:
+        if minutes is None:
+            return
+        await asyncio.sleep(minutes * 60.0)
+        await stream.stop()
+
+    async def runner() -> None:
+        try:
+            await stream.run()
+        except APIError as exc:
+            LOGGER.error("Stream terminated due to API error: %s", exc)
+            raise
+        finally:
+            stop_event.set()
+
+    tasks = [
+        asyncio.create_task(runner()),
+        asyncio.create_task(watchdog()),
+    ]
+    if minutes is not None:
+        tasks.append(asyncio.create_task(limiter()))
+
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        stop_event.set()
+        await stream.stop()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        publish()
+
+
+def _extract_price(bar: Any) -> Optional[float]:
     if isinstance(bar, dict):
         for key in ("close", "c", "price"):
             value = bar.get(key)
             if value is not None:
-                return float(value)
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return None
+        return None
     for attr in ("close", "c", "price"):
         if hasattr(bar, attr):
             value = getattr(bar, attr)
             if value is not None:
-                return float(value)
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return None
     return None
 
 
-def _coerce_datetime(value: object) -> Optional[dt.datetime]:
-    if value is None:
-        return None
-    if isinstance(value, dt.datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=dt.timezone.utc)
-        return value.astimezone(dt.timezone.utc)
-    if isinstance(value, (int, float)):
-        return dt.datetime.fromtimestamp(float(value), tz=dt.timezone.utc)
-    if isinstance(value, str):
+async def monitor_feed(
+    symbols: Iterable[str],
+    duration_seconds: float,
+    *,
+    feed_health: Optional["FeedHealth"] = None,
+    staleness_sec: Optional[int] = None,
+    on_bar: Optional[Callable[[str, Any], Any]] = None,
+) -> Optional["FeedHealth"]:
+    if feed_health is None:
         try:
-            return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
-        except ValueError:
-            return None
-    return None
+            from app.data.quality import FeedHealth as FeedHealthCls
+        except ImportError as exc:  # pragma: no cover - defensive
+            raise RuntimeError("FeedHealth class unavailable") from exc
+        feed_health = FeedHealthCls()
+
+    threshold = staleness_sec if staleness_sec is not None else int(_staleness_threshold())
+
+    def _on_bar(symbol: str, bar: Any) -> None:
+        event_time = getattr(bar, "timestamp", None)
+        if event_time is None and isinstance(bar, dict):
+            event_time = bar.get("timestamp") or bar.get("t")
+        event_dt = _as_datetime(event_time)
+        ingest_dt = _now()
+        feed_health.note_event(symbol, event_dt, ingest_dt)
+        feed_health.update_last_price(symbol, _extract_price(bar))
+        if on_bar is not None:
+            on_bar(symbol, bar)
+
+    def _on_health(update: Dict[str, Any]) -> None:
+        now = _now()
+        for sym in update.get("stale", []):
+            feed_health.is_stale(sym, now, threshold)
+
+    minutes = max(duration_seconds / 60.0, 0.0)
+    await stream_bars(symbols, minutes=minutes, on_health=_on_health, on_bar=_on_bar)
+    return feed_health
+
+
+__all__ = ["stream_bars", "_select_feed_with_probe", "monitor_feed"]

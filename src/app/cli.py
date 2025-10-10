@@ -39,7 +39,19 @@ from core.utils import ensure_paper_mode
 from risk.manager import ConfiguredRiskManager
 from strategies.equities_momentum import EquitiesMomentumStrategy
 from app.data.quality import FeedHealth, get_data_staleness_seconds
-from app import streaming
+from app.streaming import stream_bars, _select_feed_with_probe, monitor_feed
+from app.execution.alpaca_orders import (
+    submit_order_sync,
+    build_market_order,
+    build_limit_order,
+)
+from app.alpaca_client import build_trading_client, MissingCredentialsError
+
+try:  # pragma: no cover - optional import for error handling
+    from alpaca.common.exceptions import APIError
+except ModuleNotFoundError:  # pragma: no cover - fallback when alpaca-py missing
+    class APIError(Exception):  # type: ignore
+        """Fallback API error type when alpaca-py is absent."""
 
 app = typer.Typer(add_completion=False, help="Gigatrader trading CLI")
 trade_app = typer.Typer(help="Direct trading utilities")
@@ -209,96 +221,160 @@ def _extract_order_id(order: object) -> Optional[str]:
 
 @trade_app.command("place-test-order")
 def place_test_order(
+    order_type: str = typer.Option("market", "--type", help="Order type: market or limit"),
     symbol: str = typer.Option("AAPL", "--symbol", help="Ticker symbol to trade"),
     qty: int = typer.Option(1, "--qty", min=1, help="Share quantity for the test order"),
+    limit_price: Optional[float] = typer.Option(
+        None, "--limit-price", help="Required when --type=limit"
+    ),
 ) -> None:
-    """Submit and immediately cancel a paper market order to verify connectivity."""
+    """Submit a tiny paper order then attempt to cancel it."""
 
     _load_env()
-    env = ensure_paper_mode(default=True)
-    if env != "paper":
-        console.print("[red]Test orders are only permitted in paper mode. LIVE_TRADING must remain false.[/red]")
+    if os.getenv("LIVE_TRADING", "false").lower() == "true":
+        console.print("[red]Refusing to place test order while LIVE_TRADING is true.[/red]")
         raise typer.Exit(code=2)
 
-    settings = get_alpaca_settings()
-    missing: list[str] = []
-    if not settings.key_id:
-        missing.append("ALPACA_KEY_ID")
-    if not settings.secret_key:
-        missing.append("ALPACA_SECRET_KEY")
-    if missing:
-        console.print(
-            "[red]Missing Alpaca credentials ({}). Set them in the environment before running the smoke test.[/red]".format(
-                ", ".join(missing)
-            )
-        )
-        raise typer.Exit(code=1)
-
     try:
-        from alpaca.common.exceptions import APIError
-        from alpaca.trading.client import TradingClient
-
-        from app.execution.alpaca_orders import build_market_order, submit_order_async
-    except ModuleNotFoundError:
-        console.print("[red]alpaca-py is required for this command. Install it and retry.[/red]")
-        raise typer.Exit(code=1) from None
-
-    try:
-        client = TradingClient(
-            settings.key_id,
-            settings.secret_key,
-            paper=True,
-            url_override=settings.paper_endpoint,
-        )
-    except TypeError as exc:  # pragma: no cover - stub fallback
-        console.print(
-            f"[yellow]alpaca-py TradingClient stub detected ({exc}); install alpaca-py for live connectivity.[/yellow]"
-        )
+        client = build_trading_client(force_paper=True)
+    except MissingCredentialsError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
 
     client_order_id = f"test-{uuid.uuid4().hex[:12]}"
-    order_request = build_market_order(
-        symbol=symbol,
-        qty=qty,
-        side="buy",
-        tif="day",
-        client_order_id=client_order_id,
+    side = "buy"
+    order_type_value = order_type.lower()
+    try:
+        if order_type_value == "market":
+            request = build_market_order(
+                symbol, qty, side, tif="DAY", client_order_id=client_order_id
+            )
+        elif order_type_value == "limit":
+            if limit_price is None:
+                console.print("[red]limit orders require --limit-price[/red]")
+                raise typer.Exit(code=2)
+            request = build_limit_order(
+                symbol,
+                qty,
+                side,
+                limit_price,
+                tif="DAY",
+                client_order_id=client_order_id,
+            )
+        else:
+            console.print("[red]--type must be either 'market' or 'limit'.[/red]")
+            raise typer.Exit(code=2)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    try:
+        order = submit_order_sync(client, request)
+    except APIError as exc:
+        console.print(f"[red]Order submission failed: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:  # noqa: BLE001 - guard unexpected failures
+        console.print(f"[red]Order submission failed: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    order_id = _extract_order_id(order)
+    console.print(
+        "[green]Submitted paper order[/green] {symbol} x{qty} (client_id={client_order_id})".format(
+            symbol=symbol,
+            qty=qty,
+            client_order_id=client_order_id,
+        )
     )
 
-    async def _place_and_cancel() -> int:
-        try:
-            order = await submit_order_async(client, order_request)
-        except APIError as exc:
-            console.print(f"[red]Order submission failed: {exc}[/red]")
-            return 1
+    if not order_id:
+        console.print("[yellow]Order id missing from response; skipping cancel step.[/yellow]")
+        return
 
-        order_id = _extract_order_id(order)
+    cancel_failed = False
+    try:
+        client.cancel_order_by_id(order_id)
+        console.print(f"[yellow]Cancel requested for order {order_id}[/yellow]")
+    except Exception as exc:  # noqa: BLE001 - best-effort cancel
+        console.print(f"[yellow]Order submitted but cancel failed: {exc}[/yellow]")
+        cancel_failed = True
+
+    if cancel_failed:
+        raise typer.Exit(code=1)
+
+
+@trade_app.command("verify-feed")
+def verify_feed_command() -> None:
+    """Print the selected market data feed after performing entitlement checks."""
+
+    _load_env()
+    try:
+        feed = _select_feed_with_probe()
+    except Exception as exc:  # noqa: BLE001 - propagate failures as CLI error
+        console.print(f"[red]Feed selection failed[/red]: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    feed_name = feed.name if hasattr(feed, "name") else str(feed)
+    console.print(f"[green]Selected feed:[/green] {feed_name}")
+
+
+@trade_app.command("feed-latency")
+def trade_feed_latency(
+    symbols: str = typer.Option("AAPL,MSFT", "--symbols", help="Comma-separated tickers to monitor"),
+    seconds: int = typer.Option(30, "--seconds", min=5, help="Duration to stream in seconds"),
+) -> None:
+    """Stream briefly and report per-symbol latency/staleness stats."""
+
+    _load_env()
+    symbol_list = _parse_symbols(symbols)
+    if not symbol_list:
+        console.print("[red]Provide at least one symbol via --symbols.[/red]")
+        raise typer.Exit(code=1)
+
+    health_updates: list[dict] = []
+
+    async def _runner() -> None:
+        await stream_bars(
+            symbol_list,
+            minutes=seconds / 60.0,
+            on_health=health_updates.append,
+        )
+
+    try:
+        asyncio.run(_runner())
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    if not health_updates:
+        console.print("[yellow]No health updates received; feed may be unavailable.[/yellow]")
+        raise typer.Exit(code=1)
+
+    last = health_updates[-1]
+    feed_name = last.get("feed", "?")
+    console.print(f"[green]Feed:[/green] {feed_name}")
+    stale_symbols = last.get("stale", [])
+    if stale_symbols:
         console.print(
-            "[green]Submitted paper order[/green] {symbol} x{qty} (client_id={client_order_id})".format(
-                symbol=symbol,
-                qty=qty,
-                client_order_id=client_order_id,
+            "[red]Symbols reported stale:[/red] {}".format(", ".join(stale_symbols))
+        )
+    latency = last.get("latency", {})
+    for sym in symbol_list:
+        stats = latency.get(sym, {})
+        p50 = stats.get("p50")
+        p95 = stats.get("p95")
+        console.print(
+            "[cyan]{sym}[/cyan] p50={p50} p95={p95}".format(
+                sym=sym,
+                p50=f"{p50:.3f}s" if p50 is not None else "n/a",
+                p95=f"{p95:.3f}s" if p95 is not None else "n/a",
             )
         )
 
-        if not order_id:
-            console.print("[yellow]Order id missing from response; skipping cancel step.[/yellow]")
-            return 0
-
-        loop = asyncio.get_running_loop()
-        try:
-            await loop.run_in_executor(None, lambda: client.cancel_order_by_id(order_id))
-        except APIError as exc:
-            console.print(f"[yellow]Order submitted but cancel failed: {exc}[/yellow]")
-            return 1
-
-        console.print(f"[green]Cancelled paper order {order_id}.[/green]")
-        return 0
-
-    exit_code = asyncio.run(_place_and_cancel())
-    if exit_code:
-        raise typer.Exit(code=exit_code)
-
+    if stale_symbols:
+        raise typer.Exit(code=1)
 
 @app.command("verify-data")
 def verify_data(
@@ -396,7 +472,7 @@ def feed_latency(
 async def _run_stream_session(
     symbols: list[str], duration_seconds: int, feed_health: FeedHealth, staleness_sec: int
 ) -> None:
-    await streaming.monitor_feed(
+    await monitor_feed(
         symbols,
         duration_seconds,
         feed_health=feed_health,
