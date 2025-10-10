@@ -9,6 +9,7 @@ from alpaca.trading.requests import OrderRequest
 
 from core.interfaces import Broker
 from core.utils import idempotency_key
+from app.execution.alpaca_orders import submit_order_async
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,9 @@ class AlpacaBroker(Broker):
     async def submit(self, order: Dict) -> Dict:
         request = OrderRequest(**order)
         idem = idempotency_key(order)
-        response = await self._client.submit_order_async(request, idempotency_key=idem)
+        if getattr(request, "client_order_id", None) is None:
+            request.client_order_id = idem
+        response = await submit_order_async(self._client, request)
         return response.dict()
 
     async def cancel(self, order_id: str) -> None:

@@ -14,6 +14,7 @@ import datetime as dt
 import os
 import pathlib
 import sys
+import uuid
 from dataclasses import dataclass
 from typing import Optional
 
@@ -37,6 +38,8 @@ from risk.manager import ConfiguredRiskManager
 from strategies.equities_momentum import EquitiesMomentumStrategy
 
 app = typer.Typer(add_completion=False, help="Gigatrader trading CLI")
+trade_app = typer.Typer(help="Direct trading utilities")
+app.add_typer(trade_app, name="trade")
 console = Console()
 DEFAULT_CONFIG = REPO_ROOT / "config.yaml"
 FALLBACK_CONFIG = REPO_ROOT / "config.example.yaml"
@@ -90,6 +93,116 @@ def _warn_missing_keys() -> None:
             )
         )
 
+
+def _extract_order_id(order: object) -> Optional[str]:
+    """Best-effort extraction of an Alpaca order identifier."""
+
+    if order is None:
+        return None
+    for attr in ("id", "order_id", "client_order_id"):
+        if hasattr(order, attr):
+            value = getattr(order, attr)
+            if value:
+                return str(value)
+    if hasattr(order, "model_dump"):
+        payload = order.model_dump()
+        for key in ("id", "order_id", "client_order_id"):
+            value = payload.get(key)
+            if value:
+                return str(value)
+    if isinstance(order, dict):
+        for key in ("id", "order_id", "client_order_id"):
+            value = order.get(key)
+            if value:
+                return str(value)
+    return None
+
+
+@trade_app.command("place-test-order")
+def place_test_order(
+    symbol: str = typer.Option("AAPL", "--symbol", help="Ticker symbol to trade"),
+    qty: int = typer.Option(1, "--qty", min=1, help="Share quantity for the test order"),
+) -> None:
+    """Submit and immediately cancel a paper market order to verify connectivity."""
+
+    _load_env()
+    env = ensure_paper_mode(default=True)
+    if env != "paper":
+        console.print("[red]Test orders are only permitted in paper mode. LIVE_TRADING must remain false.[/red]")
+        raise typer.Exit(code=2)
+
+    settings = get_alpaca_settings()
+    missing: list[str] = []
+    if not settings.key_id:
+        missing.append("ALPACA_KEY_ID")
+    if not settings.secret_key:
+        missing.append("ALPACA_SECRET_KEY")
+    if missing:
+        console.print(
+            "[red]Missing Alpaca credentials ({}). Set them in the environment before running the smoke test.[/red]".format(
+                ", ".join(missing)
+            )
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        from alpaca.common.exceptions import APIError
+        from alpaca.trading.client import TradingClient
+
+        from app.execution.alpaca_orders import build_market_order, submit_order_async
+    except ModuleNotFoundError:
+        console.print("[red]alpaca-py is required for this command. Install it and retry.[/red]")
+        raise typer.Exit(code=1) from None
+
+    client = TradingClient(
+        settings.key_id,
+        settings.secret_key,
+        paper=True,
+        url_override=settings.paper_endpoint,
+    )
+
+    client_order_id = f"test-{uuid.uuid4().hex[:12]}"
+    order_request = build_market_order(
+        symbol=symbol,
+        qty=qty,
+        side="buy",
+        tif="day",
+        client_order_id=client_order_id,
+    )
+
+    async def _place_and_cancel() -> int:
+        try:
+            order = await submit_order_async(client, order_request)
+        except APIError as exc:
+            console.print(f"[red]Order submission failed: {exc}[/red]")
+            return 1
+
+        order_id = _extract_order_id(order)
+        console.print(
+            "[green]Submitted paper order[/green] {symbol} x{qty} (client_id={client_order_id})".format(
+                symbol=symbol,
+                qty=qty,
+                client_order_id=client_order_id,
+            )
+        )
+
+        if not order_id:
+            console.print("[yellow]Order id missing from response; skipping cancel step.[/yellow]")
+            return 0
+
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, lambda: client.cancel_order_by_id(order_id))
+        except APIError as exc:
+            console.print(f"[yellow]Order submitted but cancel failed: {exc}[/yellow]")
+            return 1
+
+        console.print(f"[green]Cancelled paper order {order_id}.[/green]")
+        return 0
+
+    exit_code = asyncio.run(_place_and_cancel())
+    if exit_code:
+        raise typer.Exit(code=exit_code)
 
 @dataclass(slots=True)
 class PaperRuntimeContext:
