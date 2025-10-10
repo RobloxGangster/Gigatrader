@@ -29,11 +29,6 @@ def test_old_env_names(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ALPACA_API_KEY", "oldkey")
     monkeypatch.setenv("ALPACA_API_SECRET", "oldsecret")
 
-    from importlib import reload
-
-    import app.config as config_module
-
-    reload(config_module)
-    settings = config_module.get_settings()
+    settings = get_settings()
     assert settings.alpaca_key_id == "oldkey"
     assert settings.alpaca_secret_key == "oldsecret"
