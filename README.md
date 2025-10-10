@@ -25,3 +25,7 @@ See .env.example for required vars. Paper vs live is controlled by ALPACA_PAPER=
 
 Safety
 This step only uses paper endpoints by default. Live trading requires explicit env changes in later steps.
+
+Secret Hygiene
+--------------
+Never commit .env. If accidentally committed, rotate keys and scrub history (e.g., BFG or git-filter-repo), then force-push.
