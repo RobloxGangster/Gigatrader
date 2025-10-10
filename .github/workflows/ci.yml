@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install pip-tools
+        run: python -m pip install --upgrade pip pip-tools
+      - name: Compile lockfiles
+        run: |
+          pip-compile -q requirements-core.in -o requirements-core.txt
+          pip-compile -q requirements-dev.in -o requirements-dev.txt
+          pip-compile -q requirements-ui.in -o requirements-ui.txt
+          pip-compile -q requirements-ml.in -o requirements-ml.txt
+      - name: Install deps
+        run: pip install -r requirements-core.txt -r requirements-dev.txt
+      - name: Lint
+        run: ruff check app tests
+      - name: Test
+        run: pytest -q
+      # Optional smoke step can be enabled later with repo secrets.

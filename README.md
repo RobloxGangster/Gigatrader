@@ -1,107 +1,27 @@
-# Gigatrader
+Trading Project – Step 0: Repo hardening & env bootstrap
 
-Gigatrader is a production-grade scaffold for an automated US equities and equity options trading platform built on **Python 3.11** and **alpaca-py**. The project emphasises guardrails-first design, paper trading by default, and transparent risk management for short-term trading strategies.
+This step pins Python, locks dependencies, defines a clean .env schema, adds a paper-trading smoke test that connects to the Alpaca Market Data WebSocket, and sets up CI + linting.
 
-## Features
-- Paper trading as default mode with environment flag required for live execution.
-- Centralised async rate-limited execution queue with backoff and idempotent orders.
-- Strategy scaffolds for equities momentum/ORB and options directional & debit spread trading.
-- Configurable risk presets with pre-trade checks for equities and options.
-- Event-driven backtester with placeholders for realistic execution modelling.
-- Streamlit dashboard tailored for non-technical operators.
-- Typer-based CLI for orchestrating paper runs, backtests (with HTML reports), and guarded live stubs.
+Quick start
 
-## Installation & Quickstart
+Create and activate a virtualenv.
 
-### Windows (PowerShell)
-1. Ensure **Python 3.11** is installed and available via the `py` launcher (`py -3.11 -V`).
-2. Open **Windows PowerShell** in the repository root and run:
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
-   ```
-   The installer creates a `.venv` virtual environment, installs dependencies, and scaffolds missing config files.
-3. To verify the setup, launch the paper-trading stub:
-   ```bat
-   scripts\run_paper.bat
-   ```
-4. Optional: run a sample backtest report
-   ```bat
-   scripts\run_backtest.bat --days 2 --universe AAPL,MSFT
-   ```
+Install pip-tools, compile lockfiles, then install deps:
+pip install --upgrade pip pip-tools
+pip-compile -q requirements-core.in -o requirements-core.txt
+pip-compile -q requirements-dev.in -o requirements-dev.txt
+pip-compile -q requirements-ui.in -o requirements-ui.txt
+pip-compile -q requirements-ml.in -o requirements-ml.txt
+pip install -r requirements-core.txt -r requirements-dev.txt
 
-### macOS / Linux (manual)
-1. Install **Python 3.11** and create a virtual environment at the repo root:
-   ```bash
-   python3.11 -m venv .venv
-   source .venv/bin/activate
-   ```
-2. Install dependencies and the CLI in editable mode:
-   ```bash
-   pip install -U pip setuptools wheel
-   pip install -r requirements.txt
-   pip install -e .
-   ```
-3. Copy configuration templates if they do not exist:
-   ```bash
-   cp .env.example .env        # then add your Alpaca keys
-   cp config.example.yaml config.yaml
-   ```
-   The YAML schema defines data inputs, execution defaults, and the named risk
-   presets (`safe`, `balanced`, `high_risk`). Adjust the preset thresholds to
-   match your desired guardrails.
-4. Run the CLI directly:
-   ```bash
-   trade paper --config config.yaml
-   ```
-   This spins up the asynchronous paper session with a live heartbeat, kill
-   switch monitoring, and a strategy simulation that exercises the risk manager
-   against the configured preset.
+Copy env template and fill PAPER keys from Alpaca:
+cp .env.example .env
 
-### Environment Variables
-- Update `.env` with your Alpaca credentials; the CLI accepts `ALPACA_KEY_ID` and
-  `ALPACA_SECRET_KEY` (or the legacy `ALPACA_API_KEY` / `APCA_API_KEY_ID` pairs) and will
-  warn when they are missing.
-- Live trading requires `LIVE_TRADING=true` at runtime and remains disabled by default for safety.
+Run smoke test (paper mode):
+make run-paper # streams a few 1m bars for AAPL, MSFT, SPY then exits
 
-## CLI Usage
-- `trade paper` — loads configuration, initialises the kill switch + risk manager, and
-  runs a cancellable paper session with simulated fills. When `ALPACA_KEY_ID` and
-  `ALPACA_SECRET_KEY` are provided (and `alpaca-py` is installed) the session forwards
-  generated orders to the Alpaca paper endpoint instead of simulating fills locally.
-- `trade backtest --config CONFIG` — validates configuration and (stub) initialises the
-  backtest engine; full integration is pending.
-- `trade live` — refuses to execute unless `LIVE_TRADING=true`, failing closed with exit code 2 otherwise.
+Env variables
+See .env.example for required vars. Paper vs live is controlled by ALPACA_PAPER=true|false.
 
-## Directory Layout
-```
-core/         # Interfaces, config, rate limiting, kill switch, utilities
-data/         # Data provider adapters (Alpaca)
-execution/    # Broker adapters and order routing
-strategies/   # Strategy implementations and shared signal utilities
-risk/         # Risk manager and presets
-backtest/     # Backtesting engine, metrics, reports
-ui/           # Streamlit application
-scripts/      # CLI entrypoints and helper scripts
-notebooks/    # Research and exploratory analysis
-tests/        # Unit, property, and integration tests
-```
-
-## Guardrails
-- Live trading requires `LIVE_TRADING=true` environment variable; otherwise the system fails closed.
-- `trade halt` CLI command and `.kill_switch` file provide global kill-switch.
-- Risk manager enforces global exposure, per-trade, and options-specific limits before every order.
-- Rate limiter respects Alpaca rate limit headers and uses jittered exponential backoff.
-
-## Streamlit UI
-Launch via `poetry run streamlit run ui/app.py` to interact with the dashboard scaffold.
-
-## Backtesting
-See `notebooks/sample_backtest.ipynb` and `scripts/run_backtest_example.sh` for a minimal example of running the backtest engine.
-
-## Contributing
-- Format code with `ruff` and `black` (via `ruff format`).
-- Maintain >80% coverage with `pytest --cov` (CI enforced).
-- Use type hints everywhere and keep strategy logic deterministic for testing.
-
-## Disclaimer
-This repository is a scaffold and **not** ready for production trading without substantial development, validation, and regulatory compliance work.
+Safety
+This step only uses paper endpoints by default. Live trading requires explicit env changes in later steps.
