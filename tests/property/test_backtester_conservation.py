@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import pytest
+import asyncio
 
 from backtest.engine import BacktestConfig, BacktestEngine
 
@@ -16,9 +16,11 @@ class DummyStrategy:
         return None
 
 
-@pytest.mark.asyncio
-async def test_backtester_fill_conservation() -> None:
-    engine = BacktestEngine([DummyStrategy()], BacktestConfig(latency_ms=0))
-    bars = [{"symbol": "TEST", "close": 10.0} for _ in range(3)]
-    result = await engine.run(bars)
-    assert len(result.trades) == len(bars)
+def test_backtester_fill_conservation() -> None:
+    async def runner() -> None:
+        engine = BacktestEngine([DummyStrategy()], BacktestConfig(latency_ms=0))
+        bars = [{"symbol": "TEST", "close": 10.0} for _ in range(3)]
+        result = await engine.run(bars)
+        assert len(result.trades) == len(bars)
+
+    asyncio.run(runner())
