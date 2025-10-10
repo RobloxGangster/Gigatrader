@@ -1,117 +1,175 @@
 from __future__ import annotations
-import os, subprocess, sys, time, pathlib
-import streamlit as st
+
+import subprocess
+from pathlib import Path
+import sys
+from typing import List
+
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
 from dotenv import load_dotenv
 
-from app.streaming import _select_feed_with_probe
-from ui.services.runtime import StreamManager, get_account_summary, place_test_order
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
-load_dotenv(REPO_ROOT / ".env")
+from ui.services import runtime
 
-st.set_page_config(page_title="Gigatrader UI", layout="wide")
+load_dotenv()
 
-st.sidebar.title("Gigatrader")
-acct = {}
-try:
-    acct = get_account_summary()
-    st.sidebar.success(f"{acct['mode']}  •  {acct['status']}")
-    st.sidebar.write(f"Acct: `{acct['id']}`")
-    st.sidebar.write(f"BP: ${acct['buying_power']}")
-    st.sidebar.write(f"Cash: ${acct['cash']}")
-    st.sidebar.write(f"Equity: ${acct['portfolio_value']}")
-except Exception as e:
-    st.sidebar.error(f"Account check failed: {e}")
+if "symbols_input" not in st.session_state:
+    st.session_state["symbols_input"] = "AAPL,MSFT"
+if "streaming" not in st.session_state:
+    st.session_state["streaming"] = False
+if "last_backtest_output" not in st.session_state:
+    st.session_state["last_backtest_output"] = ""
+if "backtest_config" not in st.session_state:
+    st.session_state["backtest_config"] = "config.yaml"
 
-if "stream" not in st.session_state:
-    st.session_state.stream = StreamManager()
+st.set_page_config(page_title="Gigatrader Control Panel", layout="wide")
+st.title("Gigatrader Dev Console")
 
-tab_dash, tab_orders, tab_backtest, tab_logs = st.tabs(["Overview", "Orders", "Backtest", "Logs"])
+overview_tab, orders_tab, backtest_tab, logs_tab = st.tabs(
+    ["Overview", "Orders", "Backtest", "Logs"]
+)
 
-with tab_dash:
-    st.subheader("Feed & Stream")
-    feed = "?"
-    try:
-        feed = str(_select_feed_with_probe()).split(".")[-1]
-    except Exception as e:
-        st.warning(f"Feed selection error: {e}")
-    col1, col2 = st.columns(2)
-    with col1:
-        syms = st.text_input("Symbols (comma-separated)", "AAPL,MSFT,SPY")
-    with col2:
-        run_btn = st.button("Start Stream", type="primary")
-        stop_btn = st.button("Stop Stream")
 
-    mgr: StreamManager = st.session_state.stream
-    if run_btn:
-        mgr.start([s.strip() for s in syms.split(",") if s.strip()])
-        time.sleep(0.2)
-    if stop_btn:
-        mgr.stop()
+def _parse_symbols(raw: str) -> List[str]:
+    return [token.strip().upper() for token in raw.split(",") if token.strip()]
 
-    snap = mgr.snapshot()
-    st.info(f"Feed: **{feed}**  •  Running: **{mgr.running}**  •  Stale threshold: {os.getenv('DATA_STALENESS_SEC','5')}s")
-    colA, colB = st.columns([3,2])
 
-    with colA:
-        if snap.latest:
-            rows = [{"symbol": s, "close": d["close"], "timestamp": d["ts"]} for s,d in snap.latest.items()]
-            df = pd.DataFrame(rows).sort_values("symbol")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+with overview_tab:
+    st.subheader("Market Data Overview")
+    st.caption("Start the live stream to monitor bar latency and staleness.")
+    st.session_state["symbols_input"] = st.text_input(
+        "Symbols", st.session_state["symbols_input"], help="Comma separated list"
+    )
+    cols = st.columns(3)
+    start_clicked = cols[0].button("Start Stream", use_container_width=True)
+    stop_clicked = cols[1].button("Stop Stream", use_container_width=True)
+    refresh_clicked = cols[2].button("Refresh", use_container_width=True)
+
+    if start_clicked:
+        symbols = _parse_symbols(st.session_state["symbols_input"])
+        if symbols:
+            runtime.start_stream(symbols)
+            st.session_state["streaming"] = True
+            st.success(f"Streaming started for {', '.join(symbols)}")
         else:
-            st.write("No bars received yet.")
+            st.warning("Provide at least one symbol.")
+        st.experimental_rerun()
+    if stop_clicked:
+        runtime.stop_stream()
+        st.session_state["streaming"] = False
+        st.info("Streaming stopped.")
+        st.experimental_rerun()
+    if refresh_clicked:
+        st.experimental_rerun()
 
-    with colB:
-        lat_rows = []
-        for sym, L in snap.latencies.items():
-            for v in L[-200:]:
-                lat_rows.append({"symbol": sym, "latency_s": v})
-        if lat_rows:
-            dlat = pd.DataFrame(lat_rows)
-            fig = px.box(dlat, x="symbol", y="latency_s", points="all")
-            st.plotly_chart(fig, use_container_width=True)
-        st.warning(f"STALE: {', '.join(snap.stale) if snap.stale else '—'}")
+    health = runtime.get_stream_health()
+    with st.container():
+        cols = st.columns(4)
+        cols[0].metric("Feed", health.get("feed", "n/a"))
+        cols[1].metric("Threshold (s)", health.get("threshold_s", "n/a"))
+        cols[2].metric("Active Symbols", len(health.get("ok", [])))
+        cols[3].metric("Stale Symbols", len(health.get("stale", [])))
+        if health.get("stale"):
+            st.warning(f"Stale: {', '.join(health['stale'])}")
+        elif st.session_state.get("streaming"):
+            st.success("All symbols healthy.")
 
-with tab_orders:
-    st.subheader("Place Paper Test Order")
-    colL, colR = st.columns(2)
-    with colL:
-        typ = st.selectbox("Order Type", ["market", "limit"])
-        sym = st.text_input("Symbol", "AAPL")
+    bars = runtime.get_latest_bars()
+    if bars:
+        df = pd.DataFrame(bars)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("No bar data yet.")
+
+    samples = runtime.get_latency_samples()
+    fig = go.Figure()
+    for sym, values in samples.items():
+        if values:
+            fig.add_trace(go.Box(y=values, name=sym, boxmean=True))
+    if fig.data:
+        fig.update_layout(title="Latency Distribution", yaxis_title="Latency (s)")
+        st.plotly_chart(fig, use_container_width=True)
+    elif st.session_state.get("streaming"):
+        st.caption("Waiting for latency samples...")
+
+    account = runtime.get_account_summary()
+    st.subheader("Account Summary")
+    if "error" in account:
+        st.error(account["error"])
+    else:
+        cols = st.columns(3)
+        cols[0].metric("Status", account.get("status", "unknown"))
+        cols[1].metric("Equity", account.get("equity", "n/a"))
+        cols[2].metric("Cash", account.get("cash", "n/a"))
+
+with orders_tab:
+    st.subheader("Paper Test Orders")
+    with st.form("order_form"):
+        symbol = st.text_input("Symbol", "AAPL")
         qty = st.number_input("Quantity", min_value=1, value=1, step=1)
-        lmt = None
-        if typ == "limit":
-            lmt = st.number_input("Limit Price", min_value=0.0, value=200.0, step=0.1, format="%.2f")
-        go = st.button("Submit Test Order (paper)")
-    with colR:
-        st.info("Paper only. Validates limit price locally; refuses in LIVE.")
-    if go:
+        order_type = st.selectbox("Order Type", ["market", "limit"])
+        limit_price = None
+        if order_type == "limit":
+            limit_price = st.number_input(
+                "Limit Price", min_value=0.0, value=0.0, step=0.01, format="%.2f"
+            )
+        submitted = st.form_submit_button("Submit Order")
+    if submitted:
         try:
-            res = place_test_order(sym.upper(), int(qty), typ, lmt)
-            st.success(f"Submitted: {res['id']} • status={res['status']}")
-        except Exception as e:
-            st.error(str(e))
+            if order_type == "limit" and not limit_price:
+                raise ValueError("Limit orders require a positive limit price")
+            result = runtime.place_test_order(
+                symbol=symbol.strip().upper(),
+                qty=int(qty),
+                order_type=order_type,
+                limit_price=float(limit_price) if limit_price else None,
+            )
+            st.success(f"Order submitted: {result}")
+        except Exception as exc:  # noqa: BLE001
+            st.error(str(exc))
 
-with tab_backtest:
-    st.subheader("Run Backtest (stub)")
-    days = st.number_input("Lookback days", min_value=1, value=5, step=1)
-    uni = st.text_input("Universe (comma-separated)", "AAPL,MSFT")
-    run = st.button("Run Backtest")
-    if run:
-        try:
-            cmd = [sys.executable, "-m", "app.cli", "backtest", "--config", str(REPO_ROOT / "config.yaml"), "--days", str(int(days)), "--universe", uni]
-            res = subprocess.run(cmd, capture_output=True, text=True)
-            st.code(res.stdout + "
-" + res.stderr)
-            reports = sorted((REPO_ROOT / "reports").glob("*_report.html"))
-            if reports:
-                st.success(f"Report: {reports[-1].as_posix()}")
-                st.markdown(f"[Open latest report]({reports[-1].as_uri()})")
-        except Exception as e:
-            st.error(str(e))
+with backtest_tab:
+    st.subheader("Backtest Runner")
+    st.session_state["backtest_config"] = st.text_input(
+        "Config Path", st.session_state["backtest_config"]
+    )
+    if st.button("Run Backtest"):
+        cfg = st.session_state["backtest_config"]
+        cmd = ["python", "-m", "app.cli", "backtest"]
+        if cfg:
+            cmd.extend(["--config", cfg])
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        output = result.stdout + "\n" + result.stderr
+        st.session_state["last_backtest_output"] = output
+        if result.returncode == 0:
+            st.success("Backtest completed.")
+        else:
+            st.error("Backtest failed. See logs below.")
+    if st.session_state["last_backtest_output"]:
+        st.code(st.session_state["last_backtest_output"], language="bash")
 
-with tab_logs:
-    st.subheader("Notes & Logs")
-    st.write("Stream and order outcomes surface inline on other tabs. Consider wiring structured logs here later.")
+    reports_path = Path("reports")
+    if reports_path.exists():
+        reports = sorted(reports_path.glob("*_report.html"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if reports:
+            st.markdown("### Latest Reports")
+            for report in reports[:5]:
+                rel_path = report.relative_to(Path.cwd()) if report.is_absolute() else report
+                st.markdown(f"- [{report.name}]({rel_path.as_posix()})")
+        else:
+            st.info("No reports found.")
+    else:
+        st.info("Reports directory missing.")
+
+with logs_tab:
+    st.subheader("Logs")
+    st.info("Log streaming coming soon. Monitor console output for now.")
