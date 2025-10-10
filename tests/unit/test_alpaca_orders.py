@@ -56,7 +56,7 @@ def _install_alpaca_stubs() -> None:
 
 _install_alpaca_stubs()
 
-from app.execution.alpaca_orders import submit_order_async, submit_order_sync
+from app.execution.alpaca_orders import submit_order_async, submit_order_sync  # noqa: E402
 
 
 def test_submit_order_sync_forwards_to_client() -> None:

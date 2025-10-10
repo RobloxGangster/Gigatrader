@@ -1,31 +1,22 @@
-.PHONY: setup lint typecheck test run-paper run-backtest report
-
+.PHONY: help setup lock install fmt lint test run-paper
+PY?=python
+PIP?=pip
+help:
+	@echo "make setup | lock | install | fmt | lint | test | run-paper"
 setup:
-poetry install
-
+	$(PIP) install --upgrade pip pip-tools
+lock:
+	pip-compile -q requirements-core.in -o requirements-core.txt
+	pip-compile -q requirements-dev.in -o requirements-dev.txt
+	pip-compile -q requirements-ui.in -o requirements-ui.txt
+	pip-compile -q requirements-ml.in -o requirements-ml.txt
+install:
+	$(PIP) install -r requirements-core.txt -r requirements-dev.txt
+fmt:
+	black app tests
 lint:
-poetry run ruff check .
-
-format:
-poetry run ruff format .
-
-typecheck:
-poetry run mypy .
-
+	ruff check app tests
 test:
-poetry run pytest --cov=.
-
+	pytest -q tests/test_config.py tests/test_rate_limit.py
 run-paper:
-poetry run trade paper --config config.example.yaml
-
-run-backtest:
-poetry run trade backtest --config config.example.yaml
-
-report:
-poetry run trade report --run-id latest
-
-ui-dev:
-	streamlit run ui/app.py --server.runOnSave=true
-
-ui-test:
-	pytest ui/tests
+	$(PY) -m app.smoke.paper_stream
