@@ -21,3 +21,14 @@ def test_defaults_and_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.paper is True
     assert settings.data_feed == "iex"
     assert settings.smoke_symbols == ["AAPL", "MSFT", "SPY"]
+
+
+def test_old_env_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ALPACA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("ALPACA_API_SECRET_KEY", raising=False)
+    monkeypatch.setenv("ALPACA_API_KEY", "oldkey")
+    monkeypatch.setenv("ALPACA_API_SECRET", "oldsecret")
+
+    settings = get_settings()
+    assert settings.alpaca_key_id == "oldkey"
+    assert settings.alpaca_secret_key == "oldsecret"

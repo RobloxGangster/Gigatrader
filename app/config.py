@@ -32,10 +32,12 @@ class Settings:
 def get_settings() -> Settings:
     """Load application settings from the environment."""
 
-    key = os.getenv("ALPACA_API_KEY_ID", "")
-    secret = os.getenv("ALPACA_API_SECRET_KEY", "")
+    key = os.getenv("ALPACA_API_KEY_ID") or os.getenv("ALPACA_API_KEY", "")
+    secret = os.getenv("ALPACA_API_SECRET_KEY") or os.getenv("ALPACA_API_SECRET", "")
     if not key or not secret:
-        raise RuntimeError("Missing ALPACA_API_KEY_ID or ALPACA_API_SECRET_KEY in environment.")
+        raise RuntimeError(
+            "Missing ALPACA_API_KEY_ID/ALPACA_API_KEY or ALPACA_API_SECRET_KEY/ALPACA_API_SECRET in environment."
+        )
 
     paper = _bool("ALPACA_PAPER", True)
     data_feed = os.getenv("ALPACA_DATA_FEED", "iex").lower()
