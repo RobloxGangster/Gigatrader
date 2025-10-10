@@ -1,24 +1,37 @@
 """Configuration management utilities."""
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Literal
 
-import yaml
-from pydantic import BaseModel, BaseSettings, Field, validator
+try:  # pragma: no cover - import guard exercised indirectly
+    import yaml  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - executed in minimal environments
+    yaml = None
+    import json
+
+from pydantic import BaseModel, Field, validator
 
 
-class AlpacaSettings(BaseSettings):
+@dataclass(slots=True)
+class AlpacaSettings:
     """Alpaca credentials sourced from environment variables."""
 
-    key_id: str = Field("", env="ALPACA_KEY_ID")
-    secret_key: str = Field("", env="ALPACA_SECRET_KEY")
-    paper_endpoint: str = Field("https://paper-api.alpaca.markets", env="ALPACA_PAPER_ENDPOINT")
-    live_endpoint: str = Field("https://api.alpaca.markets", env="ALPACA_LIVE_ENDPOINT")
+    key_id: str = ""
+    secret_key: str = ""
+    paper_endpoint: str = "https://paper-api.alpaca.markets"
+    live_endpoint: str = "https://api.alpaca.markets"
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    @classmethod
+    def from_env(cls) -> "AlpacaSettings":
+        return cls(
+            key_id=os.getenv("ALPACA_KEY_ID", ""),
+            secret_key=os.getenv("ALPACA_SECRET_KEY", ""),
+            paper_endpoint=os.getenv("ALPACA_PAPER_ENDPOINT", "https://paper-api.alpaca.markets"),
+            live_endpoint=os.getenv("ALPACA_LIVE_ENDPOINT", "https://api.alpaca.markets"),
+        )
 
 
 class RiskPresetConfig(BaseModel):
@@ -64,15 +77,22 @@ class AppConfig(BaseModel):
         return value
 
 
+def _read_config_payload(path: Path) -> Dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    if yaml is not None:  # pragma: no branch - trivial check
+        return yaml.safe_load(text)
+    return json.loads(text)
+
+
 def load_config(path: Path) -> AppConfig:
     """Load configuration from ``path``."""
 
-    with path.open("r", encoding="utf-8") as handle:
-        payload: Dict[str, Any] = yaml.safe_load(handle)
-    presets = {
-        name: RiskPresetConfig(name=name, **cfg)
-        for name, cfg in payload.get("risk_presets", {}).items()
-    }
+    payload = _read_config_payload(path)
+    presets = {}
+    for name, cfg in payload.get("risk_presets", {}).items():
+        preset_payload = dict(cfg)
+        preset_payload.setdefault("name", name)
+        presets[name] = RiskPresetConfig(**preset_payload)
     payload["risk_presets"] = presets
     return AppConfig(**payload)
 
@@ -80,4 +100,4 @@ def load_config(path: Path) -> AppConfig:
 def get_alpaca_settings() -> AlpacaSettings:
     """Return Alpaca credentials from environment variables."""
 
-    return AlpacaSettings()
+    return AlpacaSettings.from_env()

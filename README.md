@@ -46,18 +46,26 @@ Gigatrader is a production-grade scaffold for an automated US equities and equit
    cp .env.example .env        # then add your Alpaca keys
    cp config.example.yaml config.yaml
    ```
+   The YAML schema defines data inputs, execution defaults, and the named risk
+   presets (`safe`, `balanced`, `high_risk`). Adjust the preset thresholds to
+   match your desired guardrails.
 4. Run the CLI directly:
    ```bash
    trade paper --config config.yaml
    ```
+   This spins up the asynchronous paper session with a live heartbeat, kill
+   switch monitoring, and a strategy simulation that exercises the risk manager
+   against the configured preset.
 
 ### Environment Variables
 - Update `.env` with your Alpaca credentials; the CLI will warn when keys are missing.
 - Live trading requires `LIVE_TRADING=true` at runtime and remains disabled by default for safety.
 
 ## CLI Usage
-- `trade paper` — loads configuration and runs a cancellable heartbeat loop for paper trading simulations.
-- `trade backtest --days N --universe SYMBOLS` — generates a timestamped HTML report under `./reports/`.
+- `trade paper` — loads configuration, initialises the kill switch + risk manager, and
+  runs a cancellable paper session with simulated fills.
+- `trade backtest --config CONFIG` — validates configuration and (stub) initialises the
+  backtest engine; full integration is pending.
 - `trade live` — refuses to execute unless `LIVE_TRADING=true`, failing closed with exit code 2 otherwise.
 
 ## Directory Layout
