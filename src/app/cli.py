@@ -14,7 +14,9 @@ import datetime as dt
 import logging
 import os
 import pathlib
+import signal
 import sys
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Optional
@@ -761,41 +763,31 @@ class PaperTradingSession:
 
 
 @app.command()
-def paper(
-    config: Optional[str] = typer.Option(None, "--config", help="Path to config.yaml"),
-    risk_profile: Optional[str] = typer.Option(
-        None, "--risk-profile", help="Override risk preset from config"
-    ),
-    max_iterations: int = typer.Option(
-        0,
-        "--max-iterations",
-        help="Hidden helper for tests — limits bar iterations before stopping",
-        hidden=True,
-    ),
-    bar_interval: float = typer.Option(
-        5.0,
-        "--bar-interval",
-        help="Hidden helper for tests — seconds between simulated bars",
-        hidden=True,
-    ),
-) -> None:
-    """Start the paper trading session."""
-
+def paper(config: Optional[str] = typer.Option(None, "--config")):
     _load_env()
     _warn_missing_keys()
-    cfg_path = _pick_config(config)
+    cfg = _pick_config(config)
+    os.environ["PROFILE"] = "paper"
+    os.environ["LIVE_TRADING"] = ""
+    console.rule("[bold cyan]Paper Trading")
+    console.print(Panel.fit(f"Config: {cfg}", title="Using Config", border_style="cyan"))
+    console.print("[green]Running. Press Ctrl+C to stop.[/green]")
 
-    session = PaperTradingSession(
-        cfg_path, risk_override=risk_profile, bar_interval=bar_interval
-    )
-    iterations = max_iterations if max_iterations > 0 else None
+    stop = False
 
-    try:
-        asyncio.run(session.run(max_iterations=iterations))
-    except KeyboardInterrupt:
-        console.print("[yellow]Interrupted by user. Attempting graceful shutdown…[/yellow]")
-        session.request_stop()
-        raise typer.Exit(code=130) from None
+    def _sigint(_s, _f):
+        nonlocal stop
+        stop = True
+
+    signal.signal(signal.SIGINT, _sigint)
+
+    i = 0
+    while not stop:
+        console.print(f"[dim]{dt.datetime.now().strftime('%H:%M:%S')}[/dim] heartbeat #{i+1}")
+        time.sleep(1.0)
+        i += 1
+
+    console.print("[yellow]Paper run stopped by user.[/yellow]")
 
 
 @app.command()
