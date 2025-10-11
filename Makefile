@@ -60,3 +60,13 @@ verify-phase7:
 	python tools/verify_phase7.py
 test-runner:
 	pytest -q tests/test_runner_cli.py
+
+.PHONY: sim verify-phase8 test-sim
+sim:
+	python -m services.sim.run
+
+verify-phase8:
+	python tools/verify_phase8.py
+
+test-sim:
+	pytest -q tests/test_sim_smoke.py
