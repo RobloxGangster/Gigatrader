@@ -33,3 +33,7 @@ verify-phase1:
 .PHONY: test-exec
 test-exec:
 	pytest -q tests/test_execution_engine.py
+
+.PHONY: verify-phase2
+verify-phase2:
+	python tools/verify_phase2.py
