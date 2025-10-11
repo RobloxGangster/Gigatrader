@@ -4,7 +4,7 @@ This step pins Python, locks dependencies, defines a clean .env schema, adds a p
 
 Quick start
 
-Create and activate a virtualenv.
+Use Python **3.11.x** to match the toolchain used in CI (`actions/setup-python@v5` with `python-version: 3.11`). Create and activate a virtualenv with that interpreter.
 
 Install pip-tools, compile lockfiles, then install deps:
 pip install --upgrade pip pip-tools
