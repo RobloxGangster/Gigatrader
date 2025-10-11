@@ -44,3 +44,11 @@ run-sentiment:
 
 test-sentiment:
 	uv run -p 3.11 --with pytest python -m pytest -q tests/test_sentiment_pipeline.py tests/test_filters_and_models.py
+
+.PHONY: test-strategy
+test-strategy:
+	pytest -q tests/test_strategy_engine.py
+
+.PHONY: verify-phase6
+verify-phase6:
+	python tools/verify_phase6.py
