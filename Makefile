@@ -29,3 +29,7 @@ run-market:
 .PHONY: verify-phase1
 verify-phase1:
 	python tools/verify_phase1.py
+
+.PHONY: test-exec
+test-exec:
+	pytest -q tests/test_execution_engine.py
