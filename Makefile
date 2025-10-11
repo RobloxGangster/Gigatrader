@@ -52,3 +52,11 @@ test-strategy:
 .PHONY: verify-phase6
 verify-phase6:
 	python tools/verify_phase6.py
+
+.PHONY: run verify-phase7 test-runner
+run:
+	python -m cli.main run
+verify-phase7:
+	python tools/verify_phase7.py
+test-runner:
+	pytest -q tests/test_runner_cli.py

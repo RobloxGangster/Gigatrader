@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
+from contextlib import suppress
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 import yaml
 from alpaca.data.live import StockDataStream
@@ -15,14 +17,26 @@ from alpaca.data.models.bars import Bar
 from app.config import get_settings
 from services.market.indicators import OpeningRange, RollingATR, RollingRSI, RollingZScore
 from services.market.store import BarRow, TSStore
+from services.runtime.logging import with_trace
+from services.strategy.types import Bar as StrategyBar
 
 _MAX_BACKOFF_SECONDS = 60
 
+BarConsumer = Callable[[str, StrategyBar], Awaitable[None]]
+
 
 class MarketLoop:
-    """Manage streaming market data and indicator persistence."""
+    """Manage streaming market data, indicator persistence, and strategy wiring."""
 
-    def __init__(self, cfg: Dict[str, Any], ts_url: str) -> None:
+    def __init__(
+        self,
+        cfg: Dict[str, Any],
+        ts_url: str,
+        *,
+        on_bar: Optional[BarConsumer] = None,
+        metrics: Optional[object] = None,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
         self.cfg = self._resolve_config(cfg)
         self.store = TSStore(ts_url)
         self.symbol_state: Dict[str, Dict[str, Any]] = {}
@@ -30,6 +44,9 @@ class MarketLoop:
         self.last_metrics = time.time()
         self.heartbeat: Optional[float] = None
         self._backoff = 1.0
+        self._on_bar = on_bar
+        self._metrics = metrics
+        self.log = logger or logging.getLogger(__name__)
 
     @staticmethod
     def _resolve_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -80,19 +97,23 @@ class MarketLoop:
 
         while True:
             try:
-                print(
-                    f"[market] connecting feed={settings.data_feed} symbols={self.cfg['symbols']}"
+                self.log.info(
+                    "market.stream.connect",
+                    extra=with_trace({"feed": settings.data_feed, "symbols": self.cfg["symbols"]}),
                 )
                 await stream.run()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # pragma: no cover - runtime resilience
                 delay = min(self._backoff, _MAX_BACKOFF_SECONDS)
-                print(f"[market] error: {exc}; reconnecting in {delay:.1f}s")
+                self.log.error(
+                    "market.stream.error",
+                    extra=with_trace({"error": str(exc), "retry_sec": delay}),
+                )
                 await asyncio.sleep(delay)
                 self._backoff = min(self._backoff * 2, _MAX_BACKOFF_SECONDS)
             else:
-                print("[market] stream ended; reconnecting")
+                self.log.warning("market.stream.ended", extra=with_trace())
                 await asyncio.sleep(self._backoff)
                 self._backoff = min(self._backoff * 2, _MAX_BACKOFF_SECONDS)
 
@@ -129,7 +150,33 @@ class MarketLoop:
 
             self.msgs += 1
             self.heartbeat = time.time()
+            if self._metrics:
+                try:
+                    self._metrics.inc("market_bars")  # type: ignore[call-arg]
+                    self._metrics.set("market_heartbeat", self.heartbeat)  # type: ignore[call-arg]
+                except AttributeError:  # pragma: no cover - defensive for duck typing
+                    pass
             await self._metrics_maybe(bar)
+
+            if self._on_bar:
+                strategy_bar = StrategyBar(
+                    ts=bar.timestamp.timestamp(),
+                    open=float(bar.open),
+                    high=float(bar.high),
+                    low=float(bar.low),
+                    close=float(bar.close),
+                    volume=float(bar.volume or 0.0),
+                )
+                try:
+                    await self._on_bar(symbol, strategy_bar)
+                except Exception as exc:  # pragma: no cover - resilience
+                    if self._metrics:
+                        with suppress(Exception):
+                            self._metrics.inc("market_strategy_errors")  # type: ignore[call-arg]
+                    self.log.error(
+                        "market.strategy.error",
+                        extra=with_trace({"symbol": symbol, "error": str(exc)}),
+                    )
 
         return handler
 
@@ -138,8 +185,9 @@ class MarketLoop:
         if now - self.last_metrics >= self.cfg["metrics_interval_sec"]:
             lag = (datetime.now(timezone.utc) - bar.timestamp).total_seconds()
             rate = self.msgs / max(1, self.cfg["metrics_interval_sec"])
-            print(
-                f"[metrics] msgs/sec≈{rate:.2f} lag_s={lag:.2f} heartbeat={self.heartbeat:.2f}"
+            self.log.info(
+                "market.metrics",
+                extra=with_trace({"rate": rate, "lag_seconds": lag, "heartbeat": self.heartbeat}),
             )
             self.msgs = 0
             self.last_metrics = now
