@@ -8,3 +8,8 @@ build/
 .vscode/
 .idea/
 /artifacts/
+/.venv
+/.env
+/.pytest_cache
+/artifacts
+/.DS_Store
