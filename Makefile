@@ -20,3 +20,12 @@ test:
 	pytest -q tests/test_config.py tests/test_rate_limit.py
 run-paper:
 	$(PY) -m app.smoke.paper_stream
+.PHONY: db-init run-market
+db-init:
+	python tools/db_init.py
+run-market:
+	python -m services.market.loop
+
+.PHONY: verify-phase1
+verify-phase1:
+	python tools/verify_phase1.py

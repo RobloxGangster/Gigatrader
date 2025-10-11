@@ -1,0 +1,7 @@
+symbols: ${SYMBOLS:-AAPL,MSFT,SPY}
+orb_minutes: ${ORB_MINUTES:-30}
+rsi_period: 14
+atr_period: 14
+zscore_window: 20
+bar_timeframe: 1Min
+metrics_interval_sec: 15
