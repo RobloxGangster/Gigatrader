@@ -37,3 +37,10 @@ test-exec:
 .PHONY: verify-phase2
 verify-phase2:
 	python tools/verify_phase2.py
+
+.PHONY: run-sentiment test-sentiment
+run-sentiment:
+	uv run -p 3.11 python -c "import os; from services.sentiment.fetchers import StubFetcher; from services.sentiment.poller import Poller; from services.sentiment.store import SentiStore; symbols=[s.strip() for s in os.getenv('SYMBOLS','AAPL,MSFT,SPY').split(',') if s.strip()]; poller=Poller(store=SentiStore(), fetchers=[StubFetcher('stub')], symbols=symbols); print('Running one poll...'); print(poller.run_once())"
+
+test-sentiment:
+	uv run -p 3.11 --with pytest python -m pytest -q tests/test_sentiment_pipeline.py tests/test_filters_and_models.py
