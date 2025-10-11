@@ -1,42 +1,88 @@
-.PHONY: help setup lock install fmt lint test run-paper
-PY?=python
-PIP?=pip
+.PHONY: help bootstrap sync-deps run-paper run-ui check clean distclean
 help:
-	@echo "make setup | lock | install | fmt | lint | test | run-paper"
-setup:
+	@echo "Targets:"
+	@echo "  bootstrap - Create venv, compile locks, install"
+	@echo "  sync-deps - Recompile lockfiles from *.in"
+	@echo "  run-paper - Run paper runner (loads .env)"
+	@echo "  run-ui - Run UI dev server (optional)"
+	@echo "  check - Lint + unit tests (quick)"
+	@echo "  clean - Remove build artifacts"
+	@echo "  distclean - clean + .venv"
+
+VENVDIR ?= .venv
+PY ?= $(VENVDIR)/bin/python
+PIP ?= $(VENVDIR)/bin/pip
+DOTENV ?= .env
+
+$(VENVDIR)/bin/python:
+	python3.11 -m venv $(VENVDIR)
 	$(PIP) install --upgrade pip pip-tools
-lock:
-	pip-compile -q requirements-core.in -o requirements-core.txt
-	pip-compile -q requirements-dev.in -o requirements-dev.txt
-	pip-compile -q requirements-ui.in -o requirements-ui.txt
-	pip-compile -q requirements-ml.in -o requirements-ml.txt
+
+bootstrap: $(VENVDIR)/bin/python
+	$(VENVDIR)/bin/pip-compile -q requirements-core.in -o requirements-core.txt
+	$(VENVDIR)/bin/pip-compile -q requirements-dev.in -o requirements-dev.txt
+	-@[ -f requirements-ui.in ] && $(VENVDIR)/bin/pip-compile -q requirements-ui.in -o requirements-ui.txt || true
+	-@[ -f requirements-ml.in ] && $(VENVDIR)/bin/pip-compile -q requirements-ml.in -o requirements-ml.txt || true
+	$(PIP) install -r requirements-core.txt -r requirements-dev.txt
+	-@[ -f requirements-ui.txt ] && $(PIP) install -r requirements-ui.txt || true
+	-@[ -f requirements-ml.txt ] && $(PIP) install -r requirements-ml.txt || true
+	@cp -n .env.example .env 2>/dev/null || true
+	@cp -n config.example.yaml config.yaml 2>/dev/null || true
+	@echo "Bootstrap complete."
+
+sync-deps: $(VENVDIR)/bin/python
+	$(VENVDIR)/bin/pip-compile -q requirements-core.in -o requirements-core.txt
+	$(VENVDIR)/bin/pip-compile -q requirements-dev.in -o requirements-dev.txt
+	-@[ -f requirements-ui.in ] && $(VENVDIR)/bin/pip-compile -q requirements-ui.in -o requirements-ui.txt || true
+	-@[ -f requirements-ml.in ] && $(VENVDIR)/bin/pip-compile -q requirements-ml.in -o requirements-ml.txt || true
+
+run-paper:
+	@set -a; [ -f $(DOTENV) ] && . $(DOTENV); set +a;
+	$(PY) -m cli.main run
+
+run-ui:
+	@set -a; [ -f $(DOTENV) ] && . $(DOTENV); set +a;
+	$(PY) -m ui.app
+
+check:
+	$(PY) -m ruff check services tests tools || true
+	$(PY) -m pytest -q
+
+clean:
+	rm -rf artifacts .pytest_cache **/pycache build dist
+
+distclean: clean
+	rm -rf $(VENVDIR)
+
+.PHONY: setup lock install fmt lint test
+setup: bootstrap
+lock: sync-deps
 install:
 	$(PIP) install -r requirements-core.txt -r requirements-dev.txt
 fmt:
-	black app tests
+	$(PY) -m black app tests
 lint:
-	ruff check app tests
+	$(PY) -m ruff check app tests
 test:
-	pytest -q tests/test_config.py tests/test_rate_limit.py
-run-paper:
-	$(PY) -m app.smoke.paper_stream
+	$(PY) -m pytest -q tests/test_config.py tests/test_rate_limit.py
+
 .PHONY: db-init run-market
 db-init:
-	python tools/db_init.py
+	$(PY) tools/db_init.py
 run-market:
-	python -m services.market.loop
+	$(PY) -m services.market.loop
 
 .PHONY: verify-phase1
 verify-phase1:
-	python tools/verify_phase1.py
+	$(PY) tools/verify_phase1.py
 
 .PHONY: test-exec
 test-exec:
-	pytest -q tests/test_execution_engine.py
+	$(PY) -m pytest -q tests/test_execution_engine.py
 
 .PHONY: verify-phase2
 verify-phase2:
-	python tools/verify_phase2.py
+	$(PY) tools/verify_phase2.py
 
 .PHONY: run-sentiment test-sentiment
 run-sentiment:
@@ -47,26 +93,26 @@ test-sentiment:
 
 .PHONY: test-strategy
 test-strategy:
-	pytest -q tests/test_strategy_engine.py
+	$(PY) -m pytest -q tests/test_strategy_engine.py
 
 .PHONY: verify-phase6
 verify-phase6:
-	python tools/verify_phase6.py
+	$(PY) tools/verify_phase6.py
 
 .PHONY: run verify-phase7 test-runner
 run:
-	python -m cli.main run
+	$(PY) -m cli.main run
 verify-phase7:
-	python tools/verify_phase7.py
+	$(PY) tools/verify_phase7.py
 test-runner:
-	pytest -q tests/test_runner_cli.py
+	$(PY) -m pytest -q tests/test_runner_cli.py
 
 .PHONY: sim verify-phase8 test-sim
 sim:
-	python -m services.sim.run
+	$(PY) -m services.sim.run
 
 verify-phase8:
-	python tools/verify_phase8.py
+	$(PY) tools/verify_phase8.py
 
 test-sim:
-	pytest -q tests/test_sim_smoke.py
+	$(PY) -m pytest -q tests/test_sim_smoke.py
