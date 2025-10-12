@@ -19,6 +19,7 @@ REQUIRED_ENV = ("ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY")
 def _load_env() -> None:
     load_dotenv(override=False)
     os.environ.setdefault("ALPACA_PAPER", "true")
+    os.environ.setdefault("TRADING_MODE", "paper")
 
 
 def _missing_env() -> list[str]:

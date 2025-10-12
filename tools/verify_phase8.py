@@ -43,6 +43,7 @@ def must_exist() -> None:
 
 def run_sim() -> None:
     env = dict(os.environ)
+    env.setdefault("PYTHONPATH", str(ROOT))
     env.setdefault("SIM_SYMBOLS", "AAPL,MSFT,SPY")
     env.setdefault("SIM_BARS_PATH", "data/sim/bars_1m.csv")
     env.setdefault("SIM_SENTI_PATH", "data/sim/sentiment.ndjson")
