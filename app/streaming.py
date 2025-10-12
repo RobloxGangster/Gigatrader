@@ -6,7 +6,13 @@ import time
 from datetime import datetime, timezone
 from typing import Dict, Iterable
 
-from alpaca.data.enums import DataFeed
+try:
+    from alpaca.data.enums import DataFeed
+except Exception as ex:
+    raise ImportError(
+        "Failed to import alpaca-py. Ensure `alpaca-py` is installed and no local `alpaca/` "
+        "module shadows it. Run `make fix-shadowing` and recompile deps."
+    ) from ex
 from alpaca.data.live import StockDataStream
 
 from app.data.entitlement import sip_entitled
