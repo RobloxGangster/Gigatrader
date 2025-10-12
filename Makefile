@@ -44,3 +44,7 @@ clean:
 
 distclean: clean
 	rm -rf $(VENVDIR)
+
+.PHONY: quarantine-ai
+quarantine-ai:
+	python tools/quarantine_ai_docs.py

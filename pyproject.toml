@@ -28,7 +28,7 @@ include = ["app*", "core*", "services*", "cli*", "execution*", "risk*", "strateg
 
 [tool.ruff]
 line-length = 100
-extend-exclude = ["artifacts", "build", "dist", "ui", "tools", "notebooks"]
+extend-exclude = ["artifacts", "build", "dist", "ui", "tools", "notebooks", "docs/agents"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B"]
