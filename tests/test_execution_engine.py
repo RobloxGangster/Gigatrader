@@ -1,4 +1,5 @@
 import asyncio
+
 import pytest
 
 from services.execution.engine import ExecutionEngine
@@ -96,19 +97,19 @@ def test_process_updates_reconciles_state(monkeypatch):
         engine.process_update(
             {
                 "event": "partial_fill",
-            "order": {
-                "id": order_info["alpaca_order_id"],
-                "client_order_id": submit_result.client_order_id,
-                "symbol": "AAPL",
-                "side": "buy",
-                "filled_qty": "1",
-                "fill_price": "100",
-                "status": "partially_filled",
-                "asset_class": "us_equity",
-            },
-            "timestamp": 1_700_000_000.0,
-            "realized_pl": "1.0",
-        }
+                "order": {
+                    "id": order_info["alpaca_order_id"],
+                    "client_order_id": submit_result.client_order_id,
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": "1",
+                    "fill_price": "100",
+                    "status": "partially_filled",
+                    "asset_class": "us_equity",
+                },
+                "timestamp": 1_700_000_000.0,
+                "realized_pl": "1.0",
+            }
         )
     )
 
@@ -120,19 +121,19 @@ def test_process_updates_reconciles_state(monkeypatch):
         engine.process_update(
             {
                 "event": "fill",
-            "order": {
-                "id": order_info["alpaca_order_id"],
-                "client_order_id": submit_result.client_order_id,
-                "symbol": "AAPL",
-                "side": "buy",
-                "filled_qty": "2",
-                "fill_price": "101",
-                "status": "filled",
-                "asset_class": "us_equity",
-            },
-            "timestamp": 1_700_000_010.0,
-            "realized_pl": "2.5",
-        }
+                "order": {
+                    "id": order_info["alpaca_order_id"],
+                    "client_order_id": submit_result.client_order_id,
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": "2",
+                    "fill_price": "101",
+                    "status": "filled",
+                    "asset_class": "us_equity",
+                },
+                "timestamp": 1_700_000_010.0,
+                "realized_pl": "2.5",
+            }
         )
     )
 

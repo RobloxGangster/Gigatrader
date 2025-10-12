@@ -1,9 +1,10 @@
 """Event-driven backtest engine."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Iterable, List
 
 from core.interfaces import SlippageCostModel, Strategy

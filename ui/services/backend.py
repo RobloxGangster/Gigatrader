@@ -1,4 +1,5 @@
 """Backend client abstractions for the Gigatrader UI."""
+
 from __future__ import annotations
 
 import json
@@ -38,56 +39,39 @@ class BackendError(RuntimeError):
 class BrokerAPI(Protocol):
     """Protocol describing backend interactions required by the UI."""
 
-    def get_status(self) -> Dict[str, Any]:
-        ...
+    def get_status(self) -> Dict[str, Any]: ...
 
-    def start_paper(self, preset: str) -> Dict[str, Any]:
-        ...
+    def start_paper(self, preset: str) -> Dict[str, Any]: ...
 
-    def stop_all(self) -> Dict[str, Any]:
-        ...
+    def stop_all(self) -> Dict[str, Any]: ...
 
-    def flatten_and_halt(self) -> Dict[str, Any]:
-        ...
+    def flatten_and_halt(self) -> Dict[str, Any]: ...
 
-    def get_equity_curve(self, run_id: Optional[str] = None) -> List[EquityPoint]:
-        ...
+    def get_equity_curve(self, run_id: Optional[str] = None) -> List[EquityPoint]: ...
 
-    def get_risk_snapshot(self) -> RiskSnapshot:
-        ...
+    def get_risk_snapshot(self) -> RiskSnapshot: ...
 
-    def get_orders(self) -> List[Order]:
-        ...
+    def get_orders(self) -> List[Order]: ...
 
-    def get_positions(self) -> List[Position]:
-        ...
+    def get_positions(self) -> List[Position]: ...
 
-    def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Trade]:
-        ...
+    def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Trade]: ...
 
-    def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:
-        ...
+    def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain: ...
 
-    def get_greeks(self, contract: str) -> Greeks:
-        ...
+    def get_greeks(self, contract: str) -> Greeks: ...
 
-    def get_indicators(self, symbol: str, lookback: int) -> Indicators:
-        ...
+    def get_indicators(self, symbol: str, lookback: int) -> Indicators: ...
 
-    def apply_strategy_params(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        ...
+    def apply_strategy_params(self, payload: Dict[str, Any]) -> Dict[str, Any]: ...
 
-    def get_backtest_runs(self) -> List[RunInfo]:
-        ...
+    def get_backtest_runs(self) -> List[RunInfo]: ...
 
-    def get_backtest_report(self, run_id: str) -> ReportSummary:
-        ...
+    def get_backtest_report(self, run_id: str) -> ReportSummary: ...
 
-    def get_logs(self, tail: int, level: Optional[str] = None) -> List[LogEvent]:
-        ...
+    def get_logs(self, tail: int, level: Optional[str] = None) -> List[LogEvent]: ...
 
-    def get_pacing_stats(self) -> PacingStats:
-        ...
+    def get_pacing_stats(self) -> PacingStats: ...
 
 
 def _build_trace_headers() -> Dict[str, str]:
@@ -110,7 +94,14 @@ class RealAPI:
         self.base_url = base_url or os.getenv("API_BASE_URL", "http://localhost:8000")
         self.session = requests.Session()
 
-    def _request(self, method: str, path: str, *, params: Optional[Dict[str, Any]] = None, json_payload: Optional[Dict[str, Any]] = None) -> Any:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json_payload: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         url = f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
         headers = _build_trace_headers()
         try:
@@ -162,7 +153,9 @@ class RealAPI:
         return [Trade(**item) for item in payload]
 
     def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:
-        payload = self._request("GET", "/options/chain", params={"symbol": symbol, "expiry": expiry})
+        payload = self._request(
+            "GET", "/options/chain", params={"symbol": symbol, "expiry": expiry}
+        )
         return OptionChain(**payload)
 
     def get_greeks(self, contract: str) -> Greeks:
@@ -170,7 +163,9 @@ class RealAPI:
         return Greeks(**payload)
 
     def get_indicators(self, symbol: str, lookback: int) -> Indicators:
-        payload = self._request("GET", "/indicators", params={"symbol": symbol, "lookback": lookback})
+        payload = self._request(
+            "GET", "/indicators", params={"symbol": symbol, "lookback": lookback}
+        )
         return Indicators(**payload)
 
     def apply_strategy_params(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -185,7 +180,9 @@ class RealAPI:
         return ReportSummary(**payload)
 
     def get_logs(self, tail: int, level: Optional[str] = None) -> List[LogEvent]:
-        payload = self._request("GET", "/logs", params={"tail": tail, "level": level} if level else {"tail": tail})
+        payload = self._request(
+            "GET", "/logs", params={"tail": tail, "level": level} if level else {"tail": tail}
+        )
         return [LogEvent(**item) for item in payload]
 
     def get_pacing_stats(self) -> PacingStats:
@@ -335,4 +332,3 @@ def get_backend() -> BrokerAPI:
     if os.getenv("MOCK_MODE", "true").lower() == "true":
         return MockAPI()
     return RealAPI()
-

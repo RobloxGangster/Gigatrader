@@ -1,4 +1,5 @@
 """Backtest Reports page."""
+
 from __future__ import annotations
 
 import io
@@ -52,4 +53,3 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:  # noqa: ARG001
     _equity_section(report)
     _trade_tree_placeholder()
     st.info("Open the HTML report from backend in future iteration.")
-

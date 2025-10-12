@@ -1,4 +1,5 @@
 """Fetchers for sentiment pipeline (stub implementations)."""
+
 from __future__ import annotations
 
 import time

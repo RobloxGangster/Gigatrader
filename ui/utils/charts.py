@@ -1,4 +1,5 @@
 """Chart helper utilities for the Gigatrader UI."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -99,5 +100,3 @@ def risk_gauge_chart(value: float, *, limit: float, title: str, suffix: str = ""
     )
     fig.update_layout(margin=dict(l=0, r=0, t=50, b=0), height=220)
     return fig
-
-

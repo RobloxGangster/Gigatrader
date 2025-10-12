@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
-import threading
 
 import psycopg2
 import psycopg2.pool

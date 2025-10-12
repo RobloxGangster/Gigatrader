@@ -10,7 +10,9 @@ class DummyClient:
 
     def submit_order(self, order_data):
         self.calls += 1
-        return SimpleNamespace(id="abc123", status="accepted", symbol=getattr(order_data, "symbol", None))
+        return SimpleNamespace(
+            id="abc123", status="accepted", symbol=getattr(order_data, "symbol", None)
+        )
 
 
 def test_sync_wrapper():

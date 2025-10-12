@@ -1,4 +1,5 @@
 """Orders & Positions page."""
+
 from __future__ import annotations
 
 from typing import List
@@ -56,10 +57,7 @@ def _positions_section(positions: List[Position]) -> None:
     summary_cols[3].metric("Avg Leverage", f"{df['leverage'].mean():.2f}")
 
     greeks = df[["delta", "gamma", "theta", "vega"]].sum()
-    st.caption(
-        "Greeks: "
-        + ", ".join(f"{name}={value:.2f}" for name, value in greeks.items())
-    )
+    st.caption("Greeks: " + ", ".join(f"{name}={value:.2f}" for name, value in greeks.items()))
 
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
@@ -70,4 +68,3 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     _orders_table(orders)
     _order_actions(orders, state)
     _positions_section(positions)
-

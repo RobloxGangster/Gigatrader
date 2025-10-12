@@ -1,4 +1,5 @@
 """Configuration management utilities."""
+
 from __future__ import annotations
 
 import os
@@ -39,7 +40,8 @@ class AlpacaSettings:
             or ""
         )
         paper_endpoint = os.getenv(
-            "ALPACA_PAPER_ENDPOINT", os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+            "ALPACA_PAPER_ENDPOINT",
+            os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets"),
         )
         live_endpoint = os.getenv(
             "ALPACA_LIVE_ENDPOINT", os.getenv("APCA_API_BASE_URL", "https://api.alpaca.markets")

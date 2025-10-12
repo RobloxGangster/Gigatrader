@@ -1,4 +1,5 @@
 """Trade Blotter page."""
+
 from __future__ import annotations
 
 import json
@@ -73,4 +74,3 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     _trade_metrics(trades)
     render_table("trades", [trade.dict() for trade in trades])
     _trade_inspector(trades)
-

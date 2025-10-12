@@ -1,4 +1,5 @@
 """Lightweight event bus for decoupled components."""
+
 from __future__ import annotations
 
 import asyncio

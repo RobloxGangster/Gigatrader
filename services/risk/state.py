@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional
-import time
 
 
 @dataclass(slots=True)

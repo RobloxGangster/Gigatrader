@@ -93,7 +93,10 @@ def verify_timescale() -> None:
     from services.market.store import BarRow, TSStore
 
     # Verify hypertable, primary key, and indexes.
-    with psycopg2.connect(url) as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+    with (
+        psycopg2.connect(url) as conn,
+        conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur,
+    ):
         cur.execute(
             """
             SELECT hypertable_name
@@ -234,4 +237,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

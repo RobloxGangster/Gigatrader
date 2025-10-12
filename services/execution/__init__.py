@@ -1,7 +1,7 @@
 """Asynchronous execution engine and adapters."""
 
-from .engine import ExecutionEngine
 from .adapter_alpaca import AlpacaAdapter
+from .engine import ExecutionEngine
 from .types import ExecIntent, ExecResult
 from .updates import UpdateBus
 

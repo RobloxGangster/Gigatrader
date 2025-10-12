@@ -1,4 +1,5 @@
 """Option Chain & Greeks page."""
+
 from __future__ import annotations
 
 import pandas as pd
@@ -8,7 +9,9 @@ from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState, update_session_state
 
 
-def _chain_dataframe(api: BrokerAPI, symbol: str, expiry: str | None, liquidity_only: bool) -> pd.DataFrame:
+def _chain_dataframe(
+    api: BrokerAPI, symbol: str, expiry: str | None, liquidity_only: bool
+) -> pd.DataFrame:
     chain = api.get_option_chain(symbol, expiry or None)
     rows = [row.dict() for row in chain.rows]
     df = pd.DataFrame(rows)
@@ -24,6 +27,7 @@ def _render_chain(df: pd.DataFrame, highlight_strategy: bool) -> None:
     df = df.sort_values(by=["expiry", "strike", "option_type"]).reset_index(drop=True)
     target_idx = df["volume"].idxmax()
     if highlight_strategy:
+
         def highlight(row):
             color = "background-color: #2C5282; color: white;" if row.name == target_idx else ""
             return [color] * len(row)
@@ -49,7 +53,9 @@ def _spread_builder(df: pd.DataFrame) -> None:
     strikes = sorted(df["strike"].unique())
     col1, col2 = st.columns(2)
     long_strike = col1.selectbox("Long Strike", strikes, key="long_strike")
-    short_strike = col2.selectbox("Short Strike", strikes, index=min(1, len(strikes) - 1), key="short_strike")
+    short_strike = col2.selectbox(
+        "Short Strike", strikes, index=min(1, len(strikes) - 1), key="short_strike"
+    )
     long_mid = float(df[df["strike"] == long_strike]["mid"].iloc[0])
     short_mid = float(df[df["strike"] == short_strike]["mid"].iloc[0])
     debit = max(long_mid - short_mid, 0)
@@ -61,7 +67,11 @@ def _spread_builder(df: pd.DataFrame) -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Option Chain & Greeks")
-    symbol = st.selectbox("Underlying", ["AAPL", "MSFT", "SPY"], index=["AAPL", "MSFT", "SPY"].index(state.selected_symbol))
+    symbol = st.selectbox(
+        "Underlying",
+        ["AAPL", "MSFT", "SPY"],
+        index=["AAPL", "MSFT", "SPY"].index(state.selected_symbol),
+    )
     expiry = st.text_input("Expiry (YYYY-MM-DD)", value=state.option_expiry or "")
     update_session_state(selected_symbol=symbol, option_expiry=expiry)
 
@@ -77,4 +87,3 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     _render_chain(df, highlight)
     _greeks_panel(api, symbol, expiry or None)
     _spread_builder(df)
-

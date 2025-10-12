@@ -1,4 +1,5 @@
 """Logs & Pacing page."""
+
 from __future__ import annotations
 
 import json
@@ -79,7 +80,11 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     if component:
         log_events = [log for log in log_events if component.lower() in log["component"].lower()]
     if correlation:
-        log_events = [log for log in log_events if correlation.lower() in (log.get("correlation_id") or "").lower()]
+        log_events = [
+            log
+            for log in log_events
+            if correlation.lower() in (log.get("correlation_id") or "").lower()
+        ]
 
     _logs_table(log_events)
 
@@ -94,4 +99,3 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
         trades = [trade.dict() for trade in api.get_trades(None)]
         bundle = _create_repro_bundle(state, log_events, orders, trades)
         st.success(f"Bundle created: {bundle}")
-

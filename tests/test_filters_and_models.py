@@ -1,4 +1,5 @@
 """Unit tests for filters and rule-based scoring."""
+
 from __future__ import annotations
 
 from services.sentiment.filters import dedupe, language_filter, source_whitelist
@@ -8,9 +9,30 @@ from services.sentiment.types import NewsItem
 
 def test_filters_and_rule_scoring() -> None:
     items = [
-        NewsItem(id="1", source="reuters", ts=1.0, symbol="AAPL", title="AAPL beats on strong growth", lang="en"),
-        NewsItem(id="1", source="reuters", ts=1.0, symbol="AAPL", title="AAPL beats on strong growth", lang="en"),
-        NewsItem(id="2", source="random", ts=1.0, symbol="AAPL", title="AAPL downgrade amidst slump", lang="en"),
+        NewsItem(
+            id="1",
+            source="reuters",
+            ts=1.0,
+            symbol="AAPL",
+            title="AAPL beats on strong growth",
+            lang="en",
+        ),
+        NewsItem(
+            id="1",
+            source="reuters",
+            ts=1.0,
+            symbol="AAPL",
+            title="AAPL beats on strong growth",
+            lang="en",
+        ),
+        NewsItem(
+            id="2",
+            source="random",
+            ts=1.0,
+            symbol="AAPL",
+            title="AAPL downgrade amidst slump",
+            lang="en",
+        ),
         NewsItem(id="3", source="reuters", ts=1.0, symbol="AAPL", title="Unrelated", lang="fr"),
     ]
     items = dedupe(items)

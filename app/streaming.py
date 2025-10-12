@@ -11,6 +11,7 @@ from alpaca.data.live import StockDataStream
 
 from app.data.entitlement import sip_entitled
 
+
 def _staleness_threshold() -> float:
     try:
         return float(os.getenv("DATA_STALENESS_SEC", "5"))
@@ -27,14 +28,11 @@ def _select_feed_with_probe() -> DataFeed:
     return DataFeed.IEX
 
 
-
 def _credentials():
     return os.getenv("ALPACA_API_KEY"), os.getenv("ALPACA_API_SECRET")
 
 
-async def stream_bars(
-    symbols: Iterable[str], minutes: int | None = None, on_health=None
-):
+async def stream_bars(symbols: Iterable[str], minutes: int | None = None, on_health=None):
     key, secret = _credentials()
     if not key or not secret:
         raise RuntimeError("Missing ALPACA_API_KEY/ALPACA_API_SECRET.")
@@ -74,9 +72,7 @@ async def stream_bars(
                 state["stale"].discard(sym)
                 state["ok"].add(sym)
                 publish()
-            print(
-                f"BAR {sym} close={bar.close} latency={latency:.3f}s feed={state['feed']}"
-            )
+            print(f"BAR {sym} close={bar.close} latency={latency:.3f}s feed={state['feed']}")
         except Exception as exc:
             print(f"[stream] error processing bar: {exc}")
 
@@ -94,9 +90,9 @@ async def stream_bars(
                         state["ok"].discard(sym)
                         changed = True
             if changed:
-                print(
-                    f"[health] stale={sorted(state['stale'])} ok={sorted(state['ok'])} thr={stale_thr}s"
-                )
+                stale_list = sorted(state["stale"])
+                ok_list = sorted(state["ok"])
+                print(f"[health] stale={stale_list} ok={ok_list} thr={stale_thr}s")
                 publish()
             await asyncio.sleep(1.0)
 

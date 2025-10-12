@@ -1,4 +1,5 @@
 """News-first poller for sentiment scoring."""
+
 from __future__ import annotations
 
 import os
@@ -29,7 +30,9 @@ class Poller:
         self.interval = int(os.getenv("SENTI_POLL_SEC", "30"))
         self.lang = os.getenv("SENTI_LANG", "en")
         whitelist = os.getenv("SENTI_SOURCE_WHITELIST", "").strip()
-        self.whitelist: Set[str] = {entry.strip() for entry in whitelist.split(",") if entry.strip()}
+        self.whitelist: Set[str] = {
+            entry.strip() for entry in whitelist.split(",") if entry.strip()
+        }
         self.model = os.getenv("SENTI_MODEL", "rule").strip().lower()
         self.hf_name = os.getenv("SENTI_HF_MODEL", "ProsusAI/finbert")
         self.onnx_path = os.getenv("SENTI_ONNX_PATH", "models/finbert.onnx")

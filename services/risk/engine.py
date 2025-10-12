@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-import os
 
 from services.risk.presets import PRESETS, RiskPreset
 from services.risk.state import Position, StateProvider
@@ -162,13 +162,8 @@ class RiskManager:
                 return Decision(False, "options_min_oi_not_met")
             if symbol_vol is not None and symbol_vol < self.cfg.options_min_volume:
                 return Decision(False, "options_min_volume_not_met")
-            if (
-                proposal.delta is not None
-                and not (
-                    self.cfg.options_delta_min
-                    <= abs(proposal.delta)
-                    <= self.cfg.options_delta_max
-                )
+            if proposal.delta is not None and not (
+                self.cfg.options_delta_min <= abs(proposal.delta) <= self.cfg.options_delta_max
             ):
                 return Decision(False, "options_delta_out_of_bounds")
 

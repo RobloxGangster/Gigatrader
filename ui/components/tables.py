@@ -1,4 +1,5 @@
 """Reusable table helpers for pagination and exports."""
+
 from __future__ import annotations
 
 import io
@@ -46,4 +47,3 @@ def render_table(name: str, rows: Iterable[Dict[str, Any]], *, page_size: int = 
         mime="text/csv",
         key=f"{name}_download",
     )
-

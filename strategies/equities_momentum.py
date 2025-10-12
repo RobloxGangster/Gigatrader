@@ -1,4 +1,5 @@
 """Equities intraday momentum strategy scaffold."""
+
 from __future__ import annotations
 
 import logging
@@ -24,7 +25,9 @@ class EquitiesMomentumStrategy(Strategy):
         self.state = MomentumState(universe=universe, atr={})
 
     async def prepare(self, data_context: Dict) -> None:
-        logger.info("Preparing equities momentum strategy", extra={"_extra_universe": self.state.universe})
+        logger.info(
+            "Preparing equities momentum strategy", extra={"_extra_universe": self.state.universe}
+        )
         self.state.atr = data_context.get("atr", {})
         self.state.regime = data_context.get("regime", "neutral")
 

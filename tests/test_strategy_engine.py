@@ -8,9 +8,9 @@ from typing import List
 
 import pytest
 
+from services.risk.state import InMemoryState
 from services.strategy.engine import StrategyEngine
 from services.strategy.types import Bar
-from services.risk.state import InMemoryState
 
 
 @dataclass

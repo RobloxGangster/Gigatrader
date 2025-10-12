@@ -1,4 +1,5 @@
 """Market data quality utilities and health tracking."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -152,7 +153,9 @@ class FeedHealth:
         except ModuleNotFoundError as exc:  # pragma: no cover - guard path
             raise RuntimeError("alpaca-py is required for snapshot cross-checks") from exc
 
-        request = StockSnapshotRequest(symbol_or_symbols=symbols, feed=_ensure_data_feed_enum(self._feed_name))
+        request = StockSnapshotRequest(
+            symbol_or_symbols=symbols, feed=_ensure_data_feed_enum(self._feed_name)
+        )
         snapshots = client.get_stock_snapshots(request)
         mismatches: List[dict] = []
         for symbol in symbols:
@@ -168,7 +171,9 @@ class FeedHealth:
             price_delta = None
             if snapshot_price is not None and stream_price is not None:
                 price_delta = snapshot_price - stream_price
-            if delta > _SNAPSHOT_SKEW_THRESHOLD or (price_delta is not None and abs(price_delta) > 0):
+            if delta > _SNAPSHOT_SKEW_THRESHOLD or (
+                price_delta is not None and abs(price_delta) > 0
+            ):
                 mismatches.append(
                     {
                         "symbol": symbol,
@@ -268,6 +273,7 @@ class FeedHealth:
 # ----------------------------------------------------------------------
 # Environment helpers
 
+
 def resolve_data_feed_name() -> str:
     """Return the configured Alpaca data feed (``iex`` default)."""
 
@@ -291,6 +297,7 @@ def get_data_staleness_seconds(default: int = _DEFAULT_STALENESS_SECONDS) -> int
 
 # ----------------------------------------------------------------------
 # Private helpers
+
 
 def _ensure_data_feed_enum(feed_name: str):
     try:
@@ -358,7 +365,11 @@ def _extract_snapshot_price(snapshot: object) -> Optional[float]:
         if isinstance(node, dict):
             price = node.get("price") or node.get("close") or node.get("c")
         else:
-            price = getattr(node, "price", None) or getattr(node, "close", None) or getattr(node, "c", None)
+            price = (
+                getattr(node, "price", None)
+                or getattr(node, "close", None)
+                or getattr(node, "c", None)
+            )
         if price is not None:
             return float(price)
     if isinstance(snapshot, dict):
@@ -376,7 +387,9 @@ def _coerce_datetime(value: object) -> Optional[dt.datetime]:
         return dt.datetime.fromtimestamp(float(value), tz=dt.timezone.utc)
     if isinstance(value, str):
         try:
-            return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
+            return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+                dt.timezone.utc
+            )
         except ValueError:
             return None
     return None

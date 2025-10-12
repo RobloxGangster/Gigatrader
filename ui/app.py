@@ -159,7 +159,9 @@ with backtest_tab:
 
     reports_path = Path("reports")
     if reports_path.exists():
-        reports = sorted(reports_path.glob("*_report.html"), key=lambda p: p.stat().st_mtime, reverse=True)
+        reports = sorted(
+            reports_path.glob("*_report.html"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
         if reports:
             st.markdown("### Latest Reports")
             for report in reports[:5]:

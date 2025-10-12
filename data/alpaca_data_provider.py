@@ -1,12 +1,13 @@
 """Alpaca market data adapter."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
 from typing import AsyncIterator, Iterable, List
 
-from alpaca.data.historical import StockHistoricalDataClient, OptionHistoricalDataClient
-from alpaca.data.live import StockDataStream, OptionDataStream
+from alpaca.data.historical import OptionHistoricalDataClient, StockHistoricalDataClient
+from alpaca.data.live import OptionDataStream, StockDataStream
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
@@ -21,7 +22,9 @@ class AlpacaDataProvider(DataProvider):
     TODO: Wire in authentication and pagination; handle retries on network errors.
     """
 
-    def __init__(self, stock_client: StockHistoricalDataClient, option_client: OptionHistoricalDataClient) -> None:
+    def __init__(
+        self, stock_client: StockHistoricalDataClient, option_client: OptionHistoricalDataClient
+    ) -> None:
         self._stock_client = stock_client
         self._option_client = option_client
         self._stock_stream: StockDataStream | None = None

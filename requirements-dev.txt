@@ -4,29 +4,20 @@
 #
 #    pip-compile --output-file=requirements-dev.txt requirements-dev.in
 #
-black==24.10.0
-    # via -r requirements-dev.in
 build==1.3.0
     # via pip-tools
 click==8.3.0
-    # via
-    #   black
-    #   pip-tools
+    # via pip-tools
+coverage[toml]==7.10.7
+    # via pytest-cov
 iniconfig==2.1.0
     # via pytest
-mypy-extensions==1.1.0
-    # via black
 packaging==25.0
     # via
-    #   black
     #   build
     #   pytest
-pathspec==0.12.1
-    # via black
 pip-tools==7.5.1
     # via -r requirements-dev.in
-platformdirs==4.5.0
-    # via black
 pluggy==1.6.0
     # via pytest
 pygments==2.19.2
@@ -39,7 +30,10 @@ pytest==8.4.2
     # via
     #   -r requirements-dev.in
     #   pytest-asyncio
+    #   pytest-cov
 pytest-asyncio==0.26.0
+    # via -r requirements-dev.in
+pytest-cov==5.0.0
     # via -r requirements-dev.in
 ruff==0.14.0
     # via -r requirements-dev.in

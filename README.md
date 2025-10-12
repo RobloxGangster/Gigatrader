@@ -6,15 +6,22 @@ Quick start
 
 Windows (cmd.exe)
 
+```
 scripts\setup_and_run.bat
-
+```
 
 macOS/Linux
 
+```
 bash scripts/setup_and_run.sh
+```
 
+Manual
 
-If you prefer manual steps, see Makefile targets: bootstrap, run-paper.
+```
+make bootstrap
+make run-paper
+```
 
 Env variables
 See .env.example for required vars. Paper vs live is controlled by ALPACA_PAPER=true|false.

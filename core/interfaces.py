@@ -1,4 +1,5 @@
 """Core interfaces defining contracts for the trading platform."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

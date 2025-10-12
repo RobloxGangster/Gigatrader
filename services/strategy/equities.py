@@ -57,14 +57,18 @@ class EquityStrategy:
         self.min_senti = min_senti if min_senti is not None else _env_float("STRAT_SENTI_MIN", 0.10)
         self.cooldown = cooldown if cooldown is not None else _env_int("STRAT_COOLDOWN_SEC", 300)
         self.max_pos_per_symbol = (
-            max_pos_per_symbol if max_pos_per_symbol is not None else _env_int("STRAT_MAX_POS_PER_SYMBOL", 1)
+            max_pos_per_symbol
+            if max_pos_per_symbol is not None
+            else _env_int("STRAT_MAX_POS_PER_SYMBOL", 1)
         )
         self.disable_in_choppy = _env_bool("STRAT_REGIME_DISABLE_CHOPPY", True)
         self._time = time_fn or time.time
         self.last_trade_ts: dict[str, float] = {}
         self.open_positions: dict[str, int] = {}
 
-    def on_bar(self, symbol: str, bar: Bar, senti: Optional[float], regime: str) -> Optional[OrderPlan]:
+    def on_bar(
+        self, symbol: str, bar: Bar, senti: Optional[float], regime: str
+    ) -> Optional[OrderPlan]:
         """Generate an order plan for an equity symbol if conditions are met."""
 
         if self.disable_in_choppy and regime == "choppy":

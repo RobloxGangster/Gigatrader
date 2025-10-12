@@ -113,7 +113,7 @@ async def run_sim() -> str:
         if first_symbol is not None:
             first_close = first_close_by_symbol.get(first_symbol)
             if first_close is not None:
-                setattr(rsi, "last_close", first_close)
+                rsi.last_close = first_close
 
     artifacts_dir = Path("artifacts")
     artifacts_dir.mkdir(parents=True, exist_ok=True)

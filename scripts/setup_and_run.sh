@@ -9,4 +9,6 @@ pip-compile -q requirements-dev.in -o requirements-dev.txt
 pip install -r requirements-core.txt -r requirements-dev.txt
 [ -f requirements-ml.txt ] && pip install -r requirements-ml.txt
 cp -n .env.example .env 2>/dev/null || true
+cp -n config.example.yaml config.yaml 2>/dev/null || true
+python -m cli.main check || echo "Environment incomplete; continuing in mock paper mode"
 python -m cli.main run

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Sanity checks for phase-0 requirements."""
+
 from pathlib import Path
 import re
 import sys

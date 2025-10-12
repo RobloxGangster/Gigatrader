@@ -1,4 +1,5 @@
 """Clock utilities for trading sessions."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -9,8 +10,7 @@ from typing import Protocol
 class ClockProvider(Protocol):
     """Protocol for broker clock responses."""
 
-    async def clock(self) -> dict:
-        ...
+    async def clock(self) -> dict: ...
 
 
 @dataclass(slots=True)

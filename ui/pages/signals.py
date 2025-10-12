@@ -1,4 +1,5 @@
 """Signals & Strategy Params page."""
+
 from __future__ import annotations
 
 import json
@@ -78,4 +79,3 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     _strategy_form(api, state)
     params = state.strategy_params or {"atr_mult": 2.0, "risk_pct": 1.0, "size": 100}
     _explainability_panel(indicator_snapshot, params)
-

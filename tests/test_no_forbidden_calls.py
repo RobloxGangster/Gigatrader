@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 FORBIDDEN = "TradingClient.submit_order_async"
 
 
