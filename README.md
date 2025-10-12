@@ -2,25 +2,16 @@ Trading Project – Step 0: Repo hardening & env bootstrap
 
 This step pins Python, locks dependencies, defines a clean .env schema, adds a paper-trading smoke test that connects to the Alpaca Market Data WebSocket, and sets up CI + linting.
 
-Quick start
-
-Windows (cmd.exe)
-
+## Quick start
 ```
-scripts\setup_and_run.bat
-```
-
-macOS/Linux
-
-```
-bash scripts/setup_and_run.sh
-```
-
-Manual
-
-```
+# one time
 make bootstrap
+# run (paper)
 make run-paper
+```
+
+## Verify locally (mirrors CI)
+```
 make verify-all
 ```
 

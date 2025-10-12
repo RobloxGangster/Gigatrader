@@ -16,6 +16,8 @@ click==8.3.0
     # via typer
 idna==3.10
     # via requests
+iniconfig==2.1.0
+    # via pytest
 markdown-it-py==4.0.0
     # via rich
 mdurl==0.1.2
@@ -26,10 +28,14 @@ numpy==2.3.3
     # via
     #   pandas
     #   pyarrow
+packaging==25.0
+    # via pytest
 pandas==2.3.3
     # via
     #   -r requirements-core.in
     #   alpaca-py
+pluggy==1.6.0
+    # via pytest
 psycopg2-binary==2.9.11
     # via -r requirements-core.in
 pyarrow==17.0.0
@@ -41,7 +47,11 @@ pydantic==2.12.0
 pydantic-core==2.41.1
     # via pydantic
 pygments==2.19.2
-    # via rich
+    # via
+    #   pytest
+    #   rich
+pytest==8.4.2
+    # via -r requirements-core.in
 python-dateutil==2.9.0.post0
     # via pandas
 python-dotenv==1.1.1
@@ -56,6 +66,8 @@ rich==13.9.4
     # via
     #   -r requirements-core.in
     #   typer
+ruff==0.14.0
+    # via -r requirements-core.in
 shellingham==1.5.4
     # via typer
 six==1.17.0

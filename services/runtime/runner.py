@@ -134,8 +134,16 @@ class Runner:
     # Readiness & health helpers
     # ------------------------------------------------------------------
     def _alpaca_credentials(self) -> Tuple[Optional[str], Optional[str]]:
-        key = os.getenv("ALPACA_API_KEY_ID") or os.getenv("ALPACA_API_KEY")
-        secret = os.getenv("ALPACA_API_SECRET_KEY") or os.getenv("ALPACA_API_SECRET")
+        key = (
+            os.getenv("ALPACA_API_KEY_ID")
+            or os.getenv("ALPACA_API_KEY")
+            or os.getenv("APCA_API_KEY_ID")
+        )
+        secret = (
+            os.getenv("ALPACA_API_SECRET_KEY")
+            or os.getenv("ALPACA_API_SECRET")
+            or os.getenv("APCA_API_SECRET_KEY")
+        )
         return key, secret
 
     def _health_status(self) -> Tuple[bool, str]:
