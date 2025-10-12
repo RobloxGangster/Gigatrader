@@ -1,4 +1,4 @@
 pytest
-pytest-asyncio
+pytest-asyncio>=0.23
 pytest-cov
 ruff

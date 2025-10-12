@@ -50,3 +50,7 @@ distclean: clean
 
 sanitize:
 	python tools/sanitize_repo.py
+
+.PHONY: fix-shadowing
+fix-shadowing:
+	python tools/fix_shadowing.py

@@ -8,20 +8,24 @@ alpaca-py==0.42.2
     # via -r requirements-core.in
 annotated-types==0.7.0
     # via pydantic
+anyio==4.11.0
+    # via starlette
 certifi==2025.10.5
     # via requests
 charset-normalizer==3.4.3
     # via requests
 click==8.3.0
-    # via typer
+    # via uvicorn
+fastapi==0.119.0
+    # via -r requirements-core.in
+h11==0.16.0
+    # via uvicorn
 idna==3.10
-    # via requests
+    # via
+    #   anyio
+    #   requests
 iniconfig==2.1.0
     # via pytest
-markdown-it-py==4.0.0
-    # via rich
-mdurl==0.1.2
-    # via markdown-it-py
 msgpack==1.1.2
     # via alpaca-py
 numpy==2.3.3
@@ -42,14 +46,12 @@ pyarrow==17.0.0
     # via -r requirements-core.in
 pydantic==2.12.0
     # via
-    #   -r requirements-core.in
     #   alpaca-py
+    #   fastapi
 pydantic-core==2.41.1
     # via pydantic
 pygments==2.19.2
-    # via
-    #   pytest
-    #   rich
+    # via pytest
 pytest==8.4.2
     # via -r requirements-core.in
 python-dateutil==2.9.0.post0
@@ -58,29 +60,25 @@ python-dotenv==1.1.1
     # via -r requirements-core.in
 pytz==2025.2
     # via pandas
-pyyaml==6.0.3
-    # via -r requirements-core.in
 requests==2.32.5
     # via alpaca-py
-rich==13.9.4
-    # via
-    #   -r requirements-core.in
-    #   typer
 ruff==0.14.0
     # via -r requirements-core.in
-shellingham==1.5.4
-    # via typer
 six==1.17.0
     # via python-dateutil
+sniffio==1.3.1
+    # via anyio
 sseclient-py==1.8.0
     # via alpaca-py
-typer==0.19.2
-    # via -r requirements-core.in
+starlette==0.48.0
+    # via fastapi
 typing-extensions==4.15.0
     # via
+    #   anyio
+    #   fastapi
     #   pydantic
     #   pydantic-core
-    #   typer
+    #   starlette
     #   typing-inspection
 typing-inspection==0.4.2
     # via pydantic
@@ -88,5 +86,7 @@ tzdata==2025.2
     # via pandas
 urllib3==2.5.0
     # via requests
+uvicorn==0.37.0
+    # via -r requirements-core.in
 websockets==15.0.1
     # via alpaca-py
