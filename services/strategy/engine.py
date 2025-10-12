@@ -57,6 +57,7 @@ class StrategyEngine:
         self.universe = universe or Universe(base_symbols, max_watch=max_watch)
         self._equity_enabled = _env_bool("STRAT_EQUITY_ENABLED", True)
         self._option_enabled = _env_bool("STRAT_OPTION_ENABLED", True)
+        self._senti_min = float(os.getenv("STRAT_SENTI_MIN", "0") or 0)
         self.equity_strategies: List[EquityStrategy] = list(equity_strategies or [EquityStrategy()])
         self.option_strategies: List[OptionStrategy] = list(option_strategies or [OptionStrategy()])
         self.latest_sentiment: Dict[str, float] = {}
@@ -79,6 +80,11 @@ class StrategyEngine:
             return
 
         regime = self.regime.update(bar.high, bar.low, bar.close)
+
+        if self._senti_min > 0:
+            senti_mag = abs(senti) if senti is not None else None
+            if senti_mag is None or senti_mag < self._senti_min:
+                return
 
         if self._equity_enabled:
             for strategy in self.equity_strategies:

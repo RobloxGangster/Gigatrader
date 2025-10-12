@@ -92,6 +92,7 @@ class OptionGateway:
             limit_price=selected.mid,
             asset_class="option",
             option_symbol=selected.symbol,
+            submit_side="buy",
             meta={
                 "selected": {
                     "symbol": selected.symbol,

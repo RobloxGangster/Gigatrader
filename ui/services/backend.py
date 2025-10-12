@@ -41,7 +41,9 @@ class BrokerAPI(Protocol):
 
     def get_status(self) -> Dict[str, Any]: ...
 
-    def start_paper(self, preset: str) -> Dict[str, Any]: ...
+    def start_paper(self, preset: Optional[str] = None) -> Dict[str, Any]: ...
+
+    def start_live(self, preset: Optional[str] = None) -> Dict[str, Any]: ...
 
     def stop_all(self) -> Dict[str, Any]: ...
 
@@ -123,8 +125,13 @@ class RealAPI:
     def get_status(self) -> Dict[str, Any]:
         return self._request("GET", "/status")
 
-    def start_paper(self, preset: str) -> Dict[str, Any]:
-        return self._request("POST", "/paper/start", json_payload={"preset": preset})
+    def start_paper(self, preset: Optional[str] = None) -> Dict[str, Any]:
+        payload = {"preset": preset} if preset else None
+        return self._request("POST", "/paper/start", json_payload=payload)
+
+    def start_live(self, preset: Optional[str] = None) -> Dict[str, Any]:
+        payload = {"preset": preset} if preset else None
+        return self._request("POST", "/live/start", json_payload=payload)
 
     def stop_all(self) -> Dict[str, Any]:
         return self._request("POST", "/paper/stop")
@@ -204,6 +211,8 @@ class MockAPI:
         seed = int(os.getenv("MOCK_SEED", "42"))
         self.random = random.Random(seed)
         status = _load_json_fixture("status")
+        status.setdefault("paper", True)
+        status.setdefault("halted", False)
         self._state = _MockState(status=status)
 
     # helpers -----------------------------------------------------------------
@@ -218,19 +227,35 @@ class MockAPI:
         trace_id = f"mock-{self.random.randint(10000, 99999)}"
         self._state.trace_id = trace_id
         status["trace_id"] = trace_id
+        status["paper"] = status.get("profile", "paper") == "paper"
+        status.setdefault("halted", False)
         if self._state.params:
             status["strategy_params"] = self._state.params
         return status
 
-    def start_paper(self, preset: str) -> Dict[str, Any]:
+    def start_paper(self, preset: Optional[str] = None) -> Dict[str, Any]:
         run_id = f"paper-{self.random.randint(1000, 9999)}"
         self._state.run_id = run_id
         self._state.status["profile"] = "paper"
-        self._state.status["preset"] = preset
+        if preset is not None:
+            self._state.status["preset"] = preset
+        self._state.status["paper"] = True
+        self._state.status["halted"] = False
+        return {"run_id": run_id}
+
+    def start_live(self, preset: Optional[str] = None) -> Dict[str, Any]:
+        run_id = f"live-{self.random.randint(1000, 9999)}"
+        self._state.run_id = run_id
+        self._state.status["profile"] = "live"
+        if preset is not None:
+            self._state.status["preset"] = preset
+        self._state.status["paper"] = False
+        self._state.status["halted"] = False
         return {"run_id": run_id}
 
     def stop_all(self) -> Dict[str, Any]:
         self._state.run_id = None
+        self._state.status["halted"] = False
         return {"ok": True}
 
     def flatten_and_halt(self) -> Dict[str, Any]:
@@ -329,6 +354,6 @@ class MockAPI:
 
 def get_backend() -> BrokerAPI:
     """Return the proper backend implementation based on environment variables."""
-    if os.getenv("MOCK_MODE", "true").lower() == "true":
+    if os.getenv("MOCK_MODE", "false").lower() == "true":
         return MockAPI()
     return RealAPI()

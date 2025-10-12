@@ -69,7 +69,7 @@ class ExecutionEngine:
     def _intent_to_payload(self, intent: ExecIntent, client_order_id: str) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "symbol": intent.symbol,
-            "side": intent.side,
+            "side": intent.submit_side or intent.side,
             "qty": intent.qty,
             "limit_price": intent.limit_price,
             "client_order_id": client_order_id,

@@ -22,6 +22,7 @@ class ExecIntent:
     take_profit_pct: Optional[float] = None
     stop_loss_pct: Optional[float] = None
     option_symbol: Optional[str] = None
+    submit_side: Optional[Side] = None
     meta: Dict[str, Any] = field(default_factory=dict)
 
     def idempotency_key(self) -> str:

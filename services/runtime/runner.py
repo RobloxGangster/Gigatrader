@@ -208,10 +208,23 @@ class Runner:
         if not self.sentiment_enabled:
             return None
         from services.sentiment.fetchers import (
+            NewsAPIFetcher,
             StubFetcher,
         )  # local import to avoid heavy deps by default
 
-        fetchers = [StubFetcher("stub")]
+        api_key = os.getenv("NEWS_API_KEY", "").strip()
+        fetchers: List[object]
+        if api_key:
+            try:
+                fetchers = [NewsAPIFetcher(api_key)]
+            except RuntimeError as exc:
+                self.log.warning(
+                    "sentiment.fetcher.missing_dep",
+                    extra=with_trace({"error": str(exc)}),
+                )
+                fetchers = [StubFetcher("stub")]
+        else:
+            fetchers = [StubFetcher("stub")]
         return Poller(store=self.senti_store, fetchers=fetchers, symbols=self.symbols)
 
     async def _sentiment_task(self) -> None:
