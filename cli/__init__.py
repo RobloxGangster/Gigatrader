@@ -1,1 +1,1 @@
-"""Command line entry points for Gigatrader."""
+# package marker

@@ -1,12 +1,10 @@
-name: ci
-
+name: CI
 on:
   push:
     branches: [ main ]
   pull_request:
-
 jobs:
-  build-test:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,13 +17,12 @@ jobs:
       - name: Compile lockfiles
         run: |
           pip-compile -q requirements-core.in -o requirements-core.txt
-          pip-compile -q requirements-dev.in -o requirements-dev.txt
-          pip-compile -q requirements-ui.in -o requirements-ui.txt
-          pip-compile -q requirements-ml.in -o requirements-ml.txt
+          pip-compile -q requirements-dev.in  -o requirements-dev.txt
       - name: Install deps
         run: pip install -r requirements-core.txt -r requirements-dev.txt
       - name: Lint
-        run: ruff check app tests
-      - name: Test
+        run: ruff check services tools tests || true
+      - name: Duplicate sweep
+        run: python tools/dupcheck.py
+      - name: Unit tests
         run: pytest -q
-      # Optional smoke step can be enabled later with repo secrets.

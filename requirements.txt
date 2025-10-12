@@ -1,0 +1,4 @@
+﻿typer>=0.12
+pydantic>=2
+python-dotenv>=1
+rich>=13
