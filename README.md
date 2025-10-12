@@ -21,10 +21,12 @@ Manual
 ```
 make bootstrap
 make run-paper
+make verify-all
 ```
 
 Env variables
-See .env.example for required vars. Paper vs live is controlled by ALPACA_PAPER=true|false.
+See .env.example for required vars. Paper vs live is controlled by ALPACA_PAPER=true|false
+and TRADING_MODE=paper|live (defaults favour paper).
 
 Safety
 This step only uses paper endpoints by default. Live trading requires explicit env changes in later steps.

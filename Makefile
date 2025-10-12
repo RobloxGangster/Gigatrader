@@ -1,4 +1,4 @@
-.PHONY: help bootstrap sync-deps run-paper run-ui check clean distclean install fmt lint test
+.PHONY: help bootstrap sync-deps run-paper run-ui run-market db-init check clean distclean install fmt lint test verify-all
 
 VENVDIR ?= .venv
 PY ?= $(VENVDIR)/bin/python
@@ -38,7 +38,13 @@ install: $(VENVDIR)/bin/python
 	$(PIP) install -r requirements-core.txt -r requirements-dev.txt
 
 run-paper:
-	$(PY) -m cli.main run
+	ALPACA_PAPER=true TRADING_MODE=paper $(PY) -m cli.main run
+
+run-market:
+	$(PY) -m services.market.loop
+
+db-init:
+	$(PY) tools/db_init.py
 
 run-ui:
 	@set -a; [ -f $(DOTENV) ] && . $(DOTENV); set +a;
@@ -59,4 +65,11 @@ clean:
 	rm -rf artifacts .pytest_cache build dist
 
 distclean: clean
-rm -rf $(VENVDIR)
+	rm -rf $(VENVDIR)
+
+verify-all:
+	$(PY) tools/verify_phase1.py
+	$(PY) tools/verify_phase2.py
+	$(PY) tools/verify_phase6.py
+	$(PY) tools/verify_phase7.py
+	$(PY) tools/verify_phase8.py

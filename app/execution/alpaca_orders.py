@@ -1,17 +1,67 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from functools import partial
 from typing import Optional
 
-from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
-from alpaca.trading.requests import (
-    LimitOrderRequest,
-    MarketOrderRequest,
-    StopLossRequest,
-    TakeProfitRequest,
-)
+try:  # pragma: no cover - optional dependency for paper-trading mode
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+    from alpaca.trading.requests import (
+        LimitOrderRequest,
+        MarketOrderRequest,
+        StopLossRequest,
+        TakeProfitRequest,
+    )
+except ModuleNotFoundError:  # pragma: no cover - lightweight fallback for tests/CI
+    class TradingClient:  # type: ignore[override]
+        """Minimal TradingClient stub used when alpaca-py is unavailable."""
+
+        def submit_order(self, *args, **kwargs):  # noqa: D401 - simple stub
+            raise RuntimeError("alpaca-py is not installed; install it for live trading")
+
+    class OrderClass:
+        BRACKET = "BRACKET"
+
+    class OrderSide(str):
+        def __new__(cls, value: str) -> "OrderSide":
+            return str.__new__(cls, value.upper())
+
+    class TimeInForce(str):
+        def __new__(cls, value: str) -> "TimeInForce":
+            return str.__new__(cls, value.upper())
+
+    @dataclass(slots=True)
+    class TakeProfitRequest:  # type: ignore[override]
+        limit_price: float
+
+    @dataclass(slots=True)
+    class StopLossRequest:  # type: ignore[override]
+        stop_price: float
+
+    @dataclass(slots=True)
+    class MarketOrderRequest:  # type: ignore[override]
+        symbol: str
+        qty: int
+        side: str
+        time_in_force: str
+        client_order_id: Optional[str] = None
+        order_class: Optional[str] = None
+        take_profit: Optional[TakeProfitRequest] = None
+        stop_loss: Optional[StopLossRequest] = None
+
+    @dataclass(slots=True)
+    class LimitOrderRequest:  # type: ignore[override]
+        symbol: str
+        qty: int
+        limit_price: float
+        side: str
+        time_in_force: str
+        client_order_id: Optional[str] = None
+        order_class: Optional[str] = None
+        take_profit: Optional[TakeProfitRequest] = None
+        stop_loss: Optional[StopLossRequest] = None
 
 
 def submit_order_sync(client: TradingClient, order_req):

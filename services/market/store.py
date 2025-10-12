@@ -6,9 +6,15 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-import psycopg2
-import psycopg2.pool
-from psycopg2.extras import Json
+try:  # pragma: no cover - optional dependency for production deployments
+    import psycopg2
+    import psycopg2.pool
+    from psycopg2.extras import Json
+except ModuleNotFoundError:  # pragma: no cover - fallback for tests/offline mode
+    psycopg2 = None  # type: ignore[assignment]
+
+    def Json(value: object) -> object:  # type: ignore[override]
+        return value
 
 
 @dataclass(slots=True)
@@ -35,6 +41,8 @@ class TSStore:
     def __init__(self, url: str) -> None:
         if not url:
             raise RuntimeError("TIMESCALE_URL is required for Phase 1")
+        if psycopg2 is None:
+            raise RuntimeError("psycopg2 is not installed; Timescale access is unavailable in paper mode")
         self._url = url
         self._pool = psycopg2.pool.SimpleConnectionPool(minconn=1, maxconn=6, dsn=url)
         self._lock = threading.Lock()

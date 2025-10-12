@@ -149,7 +149,9 @@ def run_pytests() -> None:
     ]
     cmd = [sys.executable, "-m", "pytest", "-q", *tests]
     print("$ " + " ".join(cmd))
-    result = subprocess.run(cmd, cwd=str(ROOT), check=False)
+    env = os.environ.copy()
+    env.setdefault("PYTHONPATH", str(ROOT))
+    result = subprocess.run(cmd, cwd=str(ROOT), check=False, env=env)
     if result.returncode != 0:
         fail("pytest failed")
     else:

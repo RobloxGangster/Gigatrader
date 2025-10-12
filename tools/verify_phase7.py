@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -74,7 +75,9 @@ def run_unit_subset() -> None:
         "tests/test_sentiment_pipeline.py",
     ]
     print("$ " + " ".join(cmd))
-    result = subprocess.run(cmd, cwd=str(ROOT))
+    env = os.environ.copy()
+    env.setdefault("PYTHONPATH", str(ROOT))
+    result = subprocess.run(cmd, cwd=str(ROOT), env=env)
     if result.returncode != 0:
         fail("pytest failed")
     else:
