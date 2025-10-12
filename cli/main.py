@@ -9,33 +9,17 @@ def main():
     sub.add_parser("demo")
     a=ap.parse_args()
 
-    paper_url="https://paper-api.alpaca.markets"
     if a.cmd=="run":
-        load_dotenv(override=False)  # local .env, CI env wins
-        os.environ.setdefault("APCA_API_BASE_URL", paper_url)
+        load_dotenv(override=False)
         from services.runtime.runner import main as run_main
         run_main()
     elif a.cmd=="check":
-        checks={
-            "APCA_API_KEY_ID": ("APCA_API_KEY_ID","ALPACA_API_KEY_ID","ALPACA_API_KEY"),
-            "APCA_API_SECRET_KEY": ("APCA_API_SECRET_KEY","ALPACA_API_SECRET_KEY","ALPACA_API_SECRET"),
-            "APCA_API_BASE_URL": ("APCA_API_BASE_URL","ALPACA_API_BASE_URL"),
-        }
-        missing=[]
-        for primary, options in checks.items():
-            if primary == "APCA_API_BASE_URL":
-                if not any(os.getenv(opt) for opt in options):
-                    os.environ.setdefault(primary, paper_url)
-                continue
-            if not any(os.getenv(opt) for opt in options):
-                missing.append(primary)
-        if missing:
-            print("NOT READY: missing", missing); sys.exit(1)
-        print("READY"); sys.exit(0)
+        miss=[k for k in ("APCA_API_KEY_ID","APCA_API_SECRET_KEY","APCA_API_BASE_URL") if not os.getenv(k)]
+        print("READY" if not miss else f"NOT READY: missing {miss}")
+        sys.exit(0 if not miss else 1)
     elif a.cmd=="demo":
         os.environ.setdefault("TRADING_MODE","paper")
         os.environ.setdefault("ALPACA_PAPER","true")
-        os.environ.setdefault("APCA_API_BASE_URL", paper_url)
         from services.runtime.runner import main as run_main
         run_main()
     else:

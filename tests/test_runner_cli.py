@@ -22,14 +22,16 @@ def test_cli_check_ready() -> None:
     base_env.pop("ALPACA_API_SECRET_KEY", None)
     base_env.pop("ALPACA_API_KEY", None)
     base_env.pop("ALPACA_API_SECRET", None)
+    base_env.pop("APCA_API_BASE_URL", None)
 
     missing = _run_check(base_env)
     assert missing.returncode != 0
     assert "NOT READY" in missing.stdout
 
     ready_env = dict(base_env)
-    ready_env["ALPACA_API_KEY_ID"] = "key"
-    ready_env["ALPACA_API_SECRET_KEY"] = "secret"
+    ready_env["APCA_API_KEY_ID"] = "key"
+    ready_env["APCA_API_SECRET_KEY"] = "secret"
+    ready_env["APCA_API_BASE_URL"] = "https://paper-api.alpaca.markets"
 
     ready = _run_check(ready_env)
     assert ready.returncode == 0

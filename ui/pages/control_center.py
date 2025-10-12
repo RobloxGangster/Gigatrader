@@ -33,6 +33,17 @@ def _render_status(status: Dict[str, str]) -> None:
         "Open" if market_open else "Closed",
         variant="positive" if market_open else "warning",
     )
+    status_pill(
+        "Mode",
+        "Paper" if status.get("paper", True) else "Live",
+        variant="positive" if status.get("paper", True) else "warning",
+    )
+    halted = bool(status.get("halted"))
+    status_pill(
+        "Kill Switch",
+        "Engaged" if halted else "Standby",
+        variant="warning" if halted else "positive",
+    )
     if status.get("trace_id"):
         st.caption(f"Trace ID {status['trace_id']}")
     if status.get("strategy_params"):
@@ -64,6 +75,7 @@ def _run_config_preview() -> None:
 
 
 def _action_buttons(api: BrokerAPI, state: AppSessionState, preset: str) -> None:
+    st.subheader("Paper Trading Controls")
     col1, col2, col3 = st.columns(3)
     confirm_halt = st.checkbox("Confirm flatten & halt", key="confirm_halt")
     if col1.button("Start Paper", use_container_width=True):
@@ -80,6 +92,30 @@ def _action_buttons(api: BrokerAPI, state: AppSessionState, preset: str) -> None
         st.toast("Flatten + halt triggered", icon="⛔")
     if not confirm_halt:
         st.caption("Enable the confirmation checkbox to activate the halt button.")
+
+
+def _live_controls(api: BrokerAPI, state: AppSessionState, preset: str) -> None:
+    st.subheader("Live Trading Controls")
+    enable_live = st.checkbox("Enable live trading", key="enable_live")
+    confirm_text = st.text_input(
+        "Type CONFIRM to unlock Start Live",
+        key="live_confirm",
+        placeholder="CONFIRM",
+    )
+    armed = enable_live and confirm_text.strip().upper() == "CONFIRM"
+    disabled = not armed
+    if st.button("Start Live", use_container_width=True, disabled=disabled):
+        try:
+            response = api.start_live(preset)
+        except Exception as exc:  # noqa: BLE001 - surface backend failures
+            st.error(str(exc))
+        else:
+            state.run_id = response.get("run_id")
+            st.toast(f"Live run started ({state.run_id})", icon="🚀")
+    if not enable_live:
+        st.caption("Check the box to enable live trading controls.")
+    elif not armed:
+        st.caption("Enter CONFIRM exactly to arm the live start button.")
 
 
 def _risk_overview(snapshot: RiskSnapshot) -> None:
@@ -111,6 +147,7 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
         )
 
     _action_buttons(api, state, preset)
+    _live_controls(api, state, preset)
     _render_status(status)
 
     snapshot: RiskSnapshot = api.get_risk_snapshot()
