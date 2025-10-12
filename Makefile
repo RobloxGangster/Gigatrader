@@ -48,3 +48,7 @@ distclean: clean
 .PHONY: quarantine-ai
 quarantine-ai:
 	python tools/quarantine_ai_docs.py
+
+.PHONY: sanitize
+sanitize:
+	python tools/sanitize_repo.py
