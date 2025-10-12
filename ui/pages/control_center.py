@@ -1,4 +1,5 @@
 """Control Center page."""
+
 from __future__ import annotations
 
 import json
@@ -27,7 +28,11 @@ def _render_status(status: Dict[str, str]) -> None:
     cols[3].metric("Preset", status.get("preset", "balanced"))
 
     market_open = status.get("market_open", False)
-    status_pill("Market", "Open" if market_open else "Closed", variant="positive" if market_open else "warning")
+    status_pill(
+        "Market",
+        "Open" if market_open else "Closed",
+        variant="positive" if market_open else "warning",
+    )
     if status.get("trace_id"):
         st.caption(f"Trace ID {status['trace_id']}")
     if status.get("strategy_params"):
@@ -53,7 +58,9 @@ def _run_config_preview() -> None:
     current_config = _load_config(current_path) or default_config
     diff = _diff_configs(default_config, current_config)
     st.code(diff, language="diff")
-    st.caption("Comparing config.yaml to config.example.yaml. Defaults shown if no override present.")
+    st.caption(
+        "Comparing config.yaml to config.example.yaml. Defaults shown if no override present."
+    )
 
 
 def _action_buttons(api: BrokerAPI, state: AppSessionState, preset: str) -> None:
@@ -110,4 +117,3 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     _risk_overview(snapshot)
 
     _run_config_preview()
-

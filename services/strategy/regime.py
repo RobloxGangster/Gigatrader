@@ -33,7 +33,7 @@ class RegimeDetector:
 
         closes = list(self.closes)
         atr_sum = 0.0
-        for prev, curr in zip(closes, closes[1:]):
+        for prev, curr in zip(closes, closes[1:], strict=False):
             atr_sum += abs(curr - prev)
         atr = atr_sum / (len(closes) - 1)
 

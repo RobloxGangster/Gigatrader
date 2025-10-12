@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import signal
 import sys
+import time
 from contextlib import suppress
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
@@ -40,6 +42,58 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+class MockMarketLoop:
+    """Synthetic market loop used for offline test runs."""
+
+    def __init__(
+        self,
+        symbols: Sequence[str],
+        *,
+        on_bar: Callable[[str, StrategyBar], Awaitable[None]],
+        metrics: Optional[Metrics] = None,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        self.symbols = list(symbols) or ["AAPL"]
+        self._on_bar = on_bar
+        self._metrics = metrics
+        self.log = logger or logging.getLogger("gigatrader.mock-market")
+        self.iterations = int(os.getenv("MOCK_ITERATIONS", "20"))
+        self.interval = float(os.getenv("MOCK_BAR_INTERVAL", "0.2"))
+        self._rng = random.Random(42)
+
+    async def run(self) -> None:
+        self.log.info(
+            "mock_market.start",
+            extra=with_trace({"symbols": self.symbols, "iterations": self.iterations}),
+        )
+        prices: Dict[str, float] = {symbol: 100.0 + idx for idx, symbol in enumerate(self.symbols)}
+        ts = time.time()
+        for iteration in range(self.iterations):
+            for symbol in self.symbols:
+                base = prices[symbol]
+                delta = self._rng.uniform(-0.5, 0.5)
+                close = max(0.01, base + delta)
+                high = max(base, close) + abs(self._rng.uniform(0, 0.2))
+                low = min(base, close) - abs(self._rng.uniform(0, 0.2))
+                bar = StrategyBar(
+                    ts=ts,
+                    open=base,
+                    high=high,
+                    low=low,
+                    close=close,
+                    volume=float(100 + iteration),
+                )
+                await self._on_bar(symbol, bar)
+                prices[symbol] = close
+                if self._metrics:
+                    with suppress(AttributeError):
+                        self._metrics.inc("market_bars")
+                        self._metrics.set("market_heartbeat", ts)
+            await asyncio.sleep(self.interval)
+            ts += self.interval
+        self.log.info("mock_market.stop", extra=with_trace())
+
+
 class Runner:
     """Coordinate the full trading pipeline with observability and shutdown."""
 
@@ -55,6 +109,7 @@ class Runner:
         self.shutdown = asyncio.Event()
         self._env_bool = env_bool
         self.market_enabled = self._env_bool("RUN_MARKET", True)
+        self.mock_market = self._env_bool("MOCK_MARKET", True)
         self.sentiment_enabled = self._env_bool("RUN_SENTIMENT", True)
         self.ready_timeout = int(os.getenv("READY_CHECK_TIMEOUT_SEC", "5"))
         self.state = InMemoryState()
@@ -95,10 +150,10 @@ class Runner:
     def readiness_errors(self, *, strict: bool = False) -> List[str]:
         errors: List[str] = []
         key, secret = self._alpaca_credentials()
-        if self.market_enabled or strict:
+        if (self.market_enabled or strict) and not self.mock_market:
             if not key or not secret:
                 errors.append("missing_alpaca_credentials")
-        if self.market_enabled and strict:
+        if self.market_enabled and strict and not self.mock_market:
             ts_url = os.getenv("TIMESCALE_URL", "")
             if not ts_url:
                 errors.append("missing_timescale_url")
@@ -144,7 +199,9 @@ class Runner:
     def _build_poller(self) -> Optional[Poller]:
         if not self.sentiment_enabled:
             return None
-        from services.sentiment.fetchers import StubFetcher  # local import to avoid heavy deps by default
+        from services.sentiment.fetchers import (
+            StubFetcher,
+        )  # local import to avoid heavy deps by default
 
         fetchers = [StubFetcher("stub")]
         return Poller(store=self.senti_store, fetchers=fetchers, symbols=self.symbols)
@@ -198,8 +255,9 @@ class Runner:
         except Exception as exc:  # pragma: no cover - network resilience
             self.metrics.inc("market_errors")
             self.log.error("market.loop.error", extra=with_trace({"error": str(exc)}))
-            raise
         finally:
+            if self.mock_market:
+                self.shutdown.set()
             self.log.info("market.loop.stop", extra=with_trace())
 
     async def _exec_updates_task(self) -> None:
@@ -228,13 +286,21 @@ class Runner:
         cfg = self._load_market_config()
         ts_url = os.getenv("TIMESCALE_URL", "")
         if self.market_enabled:
-            self.market_loop = MarketLoop(
-                cfg,
-                ts_url,
-                on_bar=self._handle_bar,
-                metrics=self.metrics,
-                logger=logging.getLogger("gigatrader.market"),
-            )
+            if self.mock_market:
+                self.market_loop = MockMarketLoop(
+                    self.symbols,
+                    on_bar=self._handle_bar,
+                    metrics=self.metrics,
+                    logger=logging.getLogger("gigatrader.market"),
+                )
+            else:
+                self.market_loop = MarketLoop(
+                    cfg,
+                    ts_url,
+                    on_bar=self._handle_bar,
+                    metrics=self.metrics,
+                    logger=logging.getLogger("gigatrader.market"),
+                )
         self.poller = self._build_poller()
         self.ms.start()
         self._install_signals()

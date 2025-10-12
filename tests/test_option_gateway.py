@@ -67,7 +67,9 @@ class EmptyChain(FakeChain):
 def test_gateway_no_contract() -> None:
     state = InMemoryState()
     risk = RiskManager(state)
-    gateway = OptionGateway(exec_engine=FakeExec(risk), chain_source=EmptyChain(), risk_manager=risk)
+    gateway = OptionGateway(
+        exec_engine=FakeExec(risk), chain_source=EmptyChain(), risk_manager=risk
+    )
 
     result = asyncio.run(gateway.propose_option_trade("AAPL", "buy", 1))
 

@@ -1,4 +1,5 @@
 """ONNX runtime wrapper for FinBERT models."""
+
 from __future__ import annotations
 
 from typing import Dict
@@ -14,9 +15,8 @@ def _load(path: str) -> None:
     global _tokenizer, _session
     if _session is not None:
         return
-    from transformers import AutoTokenizer
-
     import onnxruntime as ort
+    from transformers import AutoTokenizer
 
     _tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
     _session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])

@@ -1,4 +1,5 @@
 """Application state and data models for the Gigatrader UI."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -211,4 +212,3 @@ def update_session_state(**kwargs: object) -> None:
     for key, value in kwargs.items():
         if hasattr(state, key):
             setattr(state, key, value)
-

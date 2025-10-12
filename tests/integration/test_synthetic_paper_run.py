@@ -14,7 +14,13 @@ def test_synthetic_paper_run_one_day() -> None:
             {
                 "symbol": "TEST",
                 "close": 10.0,
-                "signals": {"orb_breakout": True, "momentum": 1, "size": 1, "target": 11, "stop": 9},
+                "signals": {
+                    "orb_breakout": True,
+                    "momentum": 1,
+                    "size": 1,
+                    "target": 11,
+                    "stop": 9,
+                },
             },
         ]
         result = await engine.run(bars)

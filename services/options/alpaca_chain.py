@@ -31,7 +31,9 @@ class AlpacaChainSource(ChainSource):
             self._settings = settings
             from alpaca.data.historical import OptionHistoricalDataClient
 
-            self._client = OptionHistoricalDataClient(settings.alpaca_key_id, settings.alpaca_secret_key)
+            self._client = OptionHistoricalDataClient(
+                settings.alpaca_key_id, settings.alpaca_secret_key
+            )
         return self._client
 
     async def fetch(self, underlying: str) -> List[OptionContract]:

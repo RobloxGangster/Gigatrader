@@ -1,4 +1,5 @@
 """Data Inspector page."""
+
 from __future__ import annotations
 
 import json
@@ -67,4 +68,3 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:  # noqa: ARG001
     _render_anomalies(df)
     _render_timezone_trace(df)
     _render_cache_stats()
-

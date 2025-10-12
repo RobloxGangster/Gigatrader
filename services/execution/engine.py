@@ -81,7 +81,9 @@ class ExecutionEngine:
 
         if intent.asset_class == "equity":
             limit_price = intent.limit_price
-            tp_pct = intent.take_profit_pct if intent.take_profit_pct is not None else self.default_tp
+            tp_pct = (
+                intent.take_profit_pct if intent.take_profit_pct is not None else self.default_tp
+            )
             sl_pct = intent.stop_loss_pct if intent.stop_loss_pct is not None else self.default_sl
             if limit_price is not None and tp_pct > 0 and sl_pct > 0:
                 tp, sl = _bracket_prices(intent.side, limit_price, tp_pct, sl_pct)
@@ -184,11 +186,17 @@ class ExecutionEngine:
         status = (order_data.get("status") or update.get("event") or "").lower()
         symbol = order_data.get("symbol") or order_data.get("asset_symbol")
         side = (order_data.get("side") or "").lower()
-        fill_price = _parse_float(order_data.get("fill_price") or order_data.get("filled_avg_price") or update.get("fill_price"))
+        fill_price = _parse_float(
+            order_data.get("fill_price")
+            or order_data.get("filled_avg_price")
+            or update.get("fill_price")
+        )
         realized_pl = _parse_float(update.get("realized_pl") or order_data.get("realized_pl"))
         timestamp_raw = update.get("timestamp") or order_data.get("filled_at")
         asset_class = (order_data.get("asset_class") or update.get("asset_class") or "").lower()
-        filled_qty_total = _parse_float(order_data.get("filled_qty") or order_data.get("filled_quantity"))
+        filled_qty_total = _parse_float(
+            order_data.get("filled_qty") or order_data.get("filled_quantity")
+        )
         fill_qty_delta = _parse_float(order_data.get("fill_qty") or order_data.get("fill_quantity"))
         if fill_qty_delta <= 0 and filled_qty_total > 0:
             prev = 0.0
@@ -196,10 +204,14 @@ class ExecutionEngine:
                 prev = self._order_fill_qty.get(order_id, 0.0)
             fill_qty_delta = max(0.0, filled_qty_total - prev)
         if order_id:
-            self._order_fill_qty[order_id] = self._order_fill_qty.get(order_id, 0.0) + fill_qty_delta
+            self._order_fill_qty[order_id] = (
+                self._order_fill_qty.get(order_id, 0.0) + fill_qty_delta
+            )
 
         if client_order_id and client_order_id in self._orders:
-            self._orders[client_order_id]["status"] = status or self._orders[client_order_id].get("status", "")
+            self._orders[client_order_id]["status"] = status or self._orders[client_order_id].get(
+                "status", ""
+            )
         if status in {"canceled", "rejected"}:
             return
 

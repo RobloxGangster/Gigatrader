@@ -54,7 +54,9 @@ class MarketLoop:
         for key, value in cfg.items():
             resolved[key] = MarketLoop._resolve_value(value)
 
-        resolved["symbols"] = [s.strip().upper() for s in str(resolved["symbols"]).split(",") if s.strip()]
+        resolved["symbols"] = [
+            s.strip().upper() for s in str(resolved["symbols"]).split(",") if s.strip()
+        ]
         resolved["orb_minutes"] = int(resolved["orb_minutes"])
         resolved["rsi_period"] = int(resolved["rsi_period"])
         resolved["atr_period"] = int(resolved["atr_period"])

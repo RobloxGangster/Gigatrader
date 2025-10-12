@@ -1,4 +1,5 @@
 """Smoke tests for Streamlit UI using streamlit.testing."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -63,4 +64,3 @@ def test_repro_bundle_creation(monkeypatch, tmp_path) -> None:
     button.click().run()
     repros = list((tmp_path / "repros").glob("repro_*.zip"))
     assert repros
-

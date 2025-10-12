@@ -20,8 +20,10 @@ jobs:
           pip-compile -q requirements-dev.in  -o requirements-dev.txt
       - name: Install deps
         run: pip install -r requirements-core.txt -r requirements-dev.txt
-      - name: Lint
-        run: ruff check services tools tests || true
+      - name: Ruff lint
+        run: |
+          ruff format --check
+          ruff check
       - name: Duplicate sweep
         run: python tools/dupcheck.py
       - name: Unit tests

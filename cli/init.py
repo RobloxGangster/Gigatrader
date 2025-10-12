@@ -1,1 +1,1 @@
-package marker
+"""CLI package marker."""

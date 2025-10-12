@@ -42,9 +42,7 @@ def _now_utc() -> datetime:
 def _update_state(symbol: str, bar) -> None:
     event_ts = getattr(bar, "timestamp", None) or _now_utc()
     if isinstance(event_ts, str):
-        event_ts = datetime.fromisoformat(event_ts.replace("Z", "+00:00")).astimezone(
-            timezone.utc
-        )
+        event_ts = datetime.fromisoformat(event_ts.replace("Z", "+00:00")).astimezone(timezone.utc)
     ingestion = _now_utc()
     latency = max((ingestion - event_ts).total_seconds(), 0.0)
     with _LOCK:
@@ -145,7 +143,9 @@ def start_stream(symbols: Iterable[str]) -> None:
         return
     thread = threading.Thread(target=_run_stream, args=(symbols_list,), daemon=True)
     with _LOCK:
-        _STATE.update({"thread": thread, "symbols": symbols_list, "staleness": _staleness_threshold()})
+        _STATE.update(
+            {"thread": thread, "symbols": symbols_list, "staleness": _staleness_threshold()}
+        )
         _STATE["stale"] = set(symbols_list)
         _STATE["latest"] = {}
         _STATE["last_update"] = {}

@@ -1,4 +1,5 @@
 """Risk management engine."""
+
 from __future__ import annotations
 
 import logging
@@ -43,7 +44,9 @@ class ConfiguredRiskManager(RiskManager):
                 return Decision(False, "Option notional limit exceeded")
             greeks = order.get("greeks", {})
             delta = greeks.get("delta", 0.0)
-            if not (self._config["delta_bounds"][0] <= abs(delta) <= self._config["delta_bounds"][1]):
+            if not (
+                self._config["delta_bounds"][0] <= abs(delta) <= self._config["delta_bounds"][1]
+            ):
                 return Decision(False, "Delta outside bounds")
             if abs(greeks.get("vega", 0.0)) > self._config["vega_limit"]:
                 return Decision(False, "Vega limit exceeded")

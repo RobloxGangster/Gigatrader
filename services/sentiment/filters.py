@@ -1,4 +1,5 @@
 """Filtering utilities for sentiment ingestion."""
+
 from __future__ import annotations
 
 from typing import Iterable, List, Set

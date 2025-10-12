@@ -1,11 +1,14 @@
 """Technical indicator utilities."""
+
 from __future__ import annotations
 
 import math
 from statistics import mean
 
 
-def average_true_range(high: list[float], low: list[float], close: list[float], period: int = 14) -> float:
+def average_true_range(
+    high: list[float], low: list[float], close: list[float], period: int = 14
+) -> float:
     if len(close) < period + 1:
         raise ValueError("Insufficient data for ATR")
     trs: list[float] = []
@@ -50,7 +53,9 @@ def momentum(series: list[float], lookback: int = 10) -> float:
     return float(series[-1] - series[-1 - lookback])
 
 
-def opening_range_breakout(high: list[float], low: list[float], open_: list[float], window: int = 5) -> float:
+def opening_range_breakout(
+    high: list[float], low: list[float], open_: list[float], window: int = 5
+) -> float:
     if len(high) < window:
         raise ValueError("Insufficient data for ORB")
     range_high = max(high[:window])

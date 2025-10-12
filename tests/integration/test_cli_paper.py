@@ -19,8 +19,8 @@ def test_paper_command_runs(tmp_path) -> None:
         '    "max_exposure": 10000, "max_positions": 5,'
         '    "options_max_notional_per_expiry": 5000, "min_option_liquidity": 50,'
         '    "delta_bounds": [0.3, 0.35], "vega_limit": 0.5, "theta_limit": 0.5'
-        '  }'
-        '}'
+        "  }"
+        "}"
         "}"
     )
     runner = CliRunner()

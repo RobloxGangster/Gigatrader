@@ -1,4 +1,5 @@
 """Reusable badge components."""
+
 from __future__ import annotations
 
 import streamlit as st
@@ -34,4 +35,3 @@ def status_pill(label: str, value: str, *, variant: str = "neutral") -> None:
         f"<strong style='margin-right:6px;'>{label}:</strong>{value}</span>",
         unsafe_allow_html=True,
     )
-

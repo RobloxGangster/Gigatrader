@@ -10,7 +10,9 @@ class DummyStrategy:
         return None
 
     async def on_bar(self, event):
-        return [{"qty": 1, "limit_price": event.get("close", 0), "symbol": event.get("symbol", "TEST")}]
+        return [
+            {"qty": 1, "limit_price": event.get("close", 0), "symbol": event.get("symbol", "TEST")}
+        ]
 
     async def on_fill(self, event):
         return None

@@ -1,4 +1,5 @@
 """Alpaca trading adapter."""
+
 from __future__ import annotations
 
 import logging
@@ -11,9 +12,9 @@ try:
 except (ImportError, ModuleNotFoundError):  # pragma: no cover - env guard
     OrderRequest = None  # type: ignore[assignment]
 
+from app.execution.alpaca_orders import submit_order_async
 from core.interfaces import Broker
 from core.utils import idempotency_key
-from app.execution.alpaca_orders import submit_order_async
 
 logger = logging.getLogger(__name__)
 

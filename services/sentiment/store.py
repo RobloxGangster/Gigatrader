@@ -1,4 +1,5 @@
 """Rolling sentiment store for per-symbol metrics."""
+
 from __future__ import annotations
 
 import time

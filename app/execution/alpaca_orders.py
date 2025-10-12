@@ -5,13 +5,13 @@ from functools import partial
 from typing import Optional
 
 from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
 from alpaca.trading.requests import (
     LimitOrderRequest,
     MarketOrderRequest,
     StopLossRequest,
     TakeProfitRequest,
 )
-from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
 
 
 def submit_order_sync(client: TradingClient, order_req):

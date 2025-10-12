@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-from risk.manager import ConfiguredRiskManager
 from core.kill_switch import KillSwitch
+from risk.manager import ConfiguredRiskManager
 
 
 def test_kill_switch_blocks_order(tmp_path) -> None:

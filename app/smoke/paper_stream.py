@@ -1,4 +1,5 @@
 """Paper-mode market data smoke test."""
+
 from __future__ import annotations
 
 from alpaca.data.live import StockDataStream
@@ -35,9 +36,9 @@ def main() -> None:
         stream.subscribe_bars(on_bar, sym)
 
     mode = "PAPER" if cfg.paper else "LIVE"
-    print(
-        f"Connecting to Alpaca Market Data ({cfg.data_feed}) for {cfg.smoke_symbols} in {mode} mode..."
-    )
+    data_feed = cfg.data_feed
+    symbols = ",".join(cfg.smoke_symbols)
+    print(f"Connecting to Alpaca Market Data ({data_feed}) for {symbols} in {mode} mode...")
     stream.run()
     print("Smoke test complete.")
 

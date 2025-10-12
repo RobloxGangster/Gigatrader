@@ -1,4 +1,5 @@
 """Configuration management for the trading app."""
+
 from __future__ import annotations
 
 import os
@@ -36,12 +37,17 @@ def get_settings() -> Settings:
     secret = os.getenv("ALPACA_API_SECRET_KEY") or os.getenv("ALPACA_API_SECRET", "")
     if not key or not secret:
         raise RuntimeError(
-            "Missing ALPACA_API_KEY_ID/ALPACA_API_KEY or ALPACA_API_SECRET_KEY/ALPACA_API_SECRET in environment."
+            "Missing ALPACA_API_KEY_ID/ALPACA_API_KEY or "
+            "ALPACA_API_SECRET_KEY/ALPACA_API_SECRET in environment."
         )
 
     paper = _bool("ALPACA_PAPER", True)
     data_feed = os.getenv("ALPACA_DATA_FEED", "iex").lower()
-    symbols = [s.strip().upper() for s in os.getenv("SMOKE_SYMBOLS", "AAPL,MSFT,SPY").split(",") if s.strip()]
+    symbols = [
+        s.strip().upper()
+        for s in os.getenv("SMOKE_SYMBOLS", "AAPL,MSFT,SPY").split(",")
+        if s.strip()
+    ]
     timeframe = os.getenv("SMOKE_TIMEFRAME", "1Min")
 
     return Settings(

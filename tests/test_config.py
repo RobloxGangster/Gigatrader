@@ -1,4 +1,5 @@
 """Tests for configuration loading."""
+
 import pytest
 
 from app.config import get_settings

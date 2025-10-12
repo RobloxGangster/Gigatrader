@@ -1,4 +1,5 @@
 """Lazy-loading HuggingFace FinBERT sentiment model."""
+
 from __future__ import annotations
 
 from typing import Dict
@@ -36,7 +37,9 @@ def infer(item: NewsItem, model_name: str) -> ScoredItem:
     assert _pipeline is not None
     text = f"{item.title} {item.summary or ''}".strip()
     scores = _pipeline(text)[0]
-    score_map: Dict[str, float] = {entry["label"].lower(): float(entry["score"]) for entry in scores}
+    score_map: Dict[str, float] = {
+        entry["label"].lower(): float(entry["score"]) for entry in scores
+    }
     value = score_map.get("positive", 0.0) - score_map.get("negative", 0.0)
     if value > 0.1:
         label = "pos"

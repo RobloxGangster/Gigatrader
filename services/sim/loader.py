@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterator, Set
 import csv
 import json
+from dataclasses import dataclass
+from typing import Dict, Iterator, Set
 
 
 @dataclass(slots=True)

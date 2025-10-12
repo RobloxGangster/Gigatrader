@@ -1,4 +1,5 @@
 """Equity & Risk page."""
+
 from __future__ import annotations
 
 from statistics import mean
@@ -29,7 +30,9 @@ def _risk_dials(points: list[EquityPoint], snapshot) -> None:
     current_exposure = float(points[-1].exposure)
     cols = st.columns(4)
     cols[0].plotly_chart(
-        risk_gauge_chart(abs(float(snapshot.daily_loss_pct)), limit=8, title="Daily Loss", suffix="%"),
+        risk_gauge_chart(
+            abs(float(snapshot.daily_loss_pct)), limit=8, title="Daily Loss", suffix="%"
+        ),
         use_container_width=True,
     )
     cols[1].plotly_chart(
@@ -74,4 +77,3 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     _equity_summary(points)
     _risk_dials(points, snapshot)
     _risk_table(snapshot)
-

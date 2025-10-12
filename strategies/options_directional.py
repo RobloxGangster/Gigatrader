@@ -1,4 +1,5 @@
 """Options directional and debit spread strategy scaffold."""
+
 from __future__ import annotations
 
 import logging

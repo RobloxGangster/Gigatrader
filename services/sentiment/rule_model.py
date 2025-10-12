@@ -1,4 +1,5 @@
 """Simple rule-based sentiment scoring."""
+
 from __future__ import annotations
 
 from services.sentiment.types import NewsItem, ScoredItem

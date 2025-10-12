@@ -1,4 +1,5 @@
 """Reusable stat card components."""
+
 from __future__ import annotations
 
 from typing import Optional
@@ -6,7 +7,14 @@ from typing import Optional
 import streamlit as st
 
 
-def stat_card(title: str, value: str, *, delta: Optional[str] = None, help_text: Optional[str] = None, key: Optional[str] = None) -> None:
+def stat_card(
+    title: str,
+    value: str,
+    *,
+    delta: Optional[str] = None,
+    help_text: Optional[str] = None,
+    key: Optional[str] = None,
+) -> None:
     """Render a KPI style card."""
     container = st.container()
     with container:
@@ -20,4 +28,3 @@ def stat_card(title: str, value: str, *, delta: Optional[str] = None, help_text:
         )
         if help_text:
             st.caption(help_text)
-
