@@ -14,39 +14,36 @@ PY ?= $(VENVDIR)/bin/python
 PIP ?= $(VENVDIR)/bin/pip
 DOTENV ?= .env
 
+.PHONY: bootstrap sync-deps run-paper check
+
 $(VENVDIR)/bin/python:
-	python3.11 -m venv $(VENVDIR)
-	$(PIP) install --upgrade pip pip-tools
+        python3.11 -m venv $(VENVDIR)
+        $(PIP) install --upgrade pip pip-tools
 
-bootstrap: $(VENVDIR)/bin/python
-	$(VENVDIR)/bin/pip-compile -q requirements-core.in -o requirements-core.txt
-	$(VENVDIR)/bin/pip-compile -q requirements-dev.in -o requirements-dev.txt
-	-@[ -f requirements-ui.in ] && $(VENVDIR)/bin/pip-compile -q requirements-ui.in -o requirements-ui.txt || true
-	-@[ -f requirements-ml.in ] && $(VENVDIR)/bin/pip-compile -q requirements-ml.in -o requirements-ml.txt || true
-	$(PIP) install -r requirements-core.txt -r requirements-dev.txt
-	-@[ -f requirements-ui.txt ] && $(PIP) install -r requirements-ui.txt || true
-	-@[ -f requirements-ml.txt ] && $(PIP) install -r requirements-ml.txt || true
-	@cp -n .env.example .env 2>/dev/null || true
-	@cp -n config.example.yaml config.yaml 2>/dev/null || true
-	@echo "Bootstrap complete."
+bootstrap:
+	python3 -m venv .venv && . .venv/bin/activate;
+	python -m pip install --upgrade pip pip-tools;
+	pip-compile -q requirements-core.in -o requirements-core.txt;
+	pip-compile -q requirements-dev.in -o requirements-dev.txt;
+	[ -f requirements-ml.in ] && pip-compile -q requirements-ml.in -o requirements-ml.txt || true;
+	pip install -r requirements-core.txt -r requirements-dev.txt;
+	[ -f requirements-ml.txt ] && pip install -r requirements-ml.txt || true;
+	cp -n .env.example .env 2>/dev/null || true; echo "Bootstrap complete."
 
-sync-deps: $(VENVDIR)/bin/python
-	$(VENVDIR)/bin/pip-compile -q requirements-core.in -o requirements-core.txt
-	$(VENVDIR)/bin/pip-compile -q requirements-dev.in -o requirements-dev.txt
-	-@[ -f requirements-ui.in ] && $(VENVDIR)/bin/pip-compile -q requirements-ui.in -o requirements-ui.txt || true
-	-@[ -f requirements-ml.in ] && $(VENVDIR)/bin/pip-compile -q requirements-ml.in -o requirements-ml.txt || true
+sync-deps:
+	pip-compile -q requirements-core.in -o requirements-core.txt;
+	pip-compile -q requirements-dev.in -o requirements-dev.txt;
+	[ -f requirements-ml.in ] && pip-compile -q requirements-ml.in -o requirements-ml.txt || true
 
 run-paper:
-	@set -a; [ -f $(DOTENV) ] && . $(DOTENV); set +a;
-	$(PY) -m cli.main run
+	python -m cli.main run
 
 run-ui:
 	@set -a; [ -f $(DOTENV) ] && . $(DOTENV); set +a;
 	$(PY) -m ui.app
 
 check:
-	$(PY) -m ruff check services tests tools || true
-	$(PY) -m pytest -q
+	python -m cli.main check
 
 clean:
 	rm -rf artifacts .pytest_cache **/pycache build dist
