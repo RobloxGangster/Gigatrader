@@ -13,3 +13,7 @@ build/
 /.pytest_cache
 /artifacts
 /.DS_Store
+/tmp
+/temp
+/notes
+*.log
