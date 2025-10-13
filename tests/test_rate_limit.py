@@ -40,18 +40,15 @@ def make_two_429_then_ok() -> Callable[[], Awaitable[str]]:
     return _impl
 
 
-@pytest.mark.asyncio
-async def test_success() -> None:
-    assert await backoff_request(ok) == 42
+def test_success() -> None:
+    assert asyncio.run(backoff_request(ok)) == 42
 
 
-@pytest.mark.asyncio
-async def test_retries_then_ok() -> None:
+def test_retries_then_ok() -> None:
     fn = make_two_429_then_ok()
-    assert await backoff_request(fn) == "ok"
+    assert asyncio.run(backoff_request(fn)) == "ok"
 
 
-@pytest.mark.asyncio
-async def test_max_retries() -> None:
+def test_max_retries() -> None:
     with pytest.raises(RateLimitError):
-        await backoff_request(always_429, max_retries=2)
+        asyncio.run(backoff_request(always_429, max_retries=2))

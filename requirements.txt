@@ -1,6 +1,7 @@
 fastapi==0.115.0
 uvicorn==0.30.6
 alpaca-py>=0.30,<1
+websockets<14
 requests==2.32.3
 python-dotenv==1.0.1
 streamlit==1.38.0

@@ -13,7 +13,7 @@ except ModuleNotFoundError:  # pragma: no cover - executed in minimal environmen
     yaml = None
     import json
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 @dataclass(slots=True)
@@ -88,14 +88,20 @@ class AppConfig(BaseModel):
     risk_profile: Literal["safe", "balanced", "high_risk"] = "safe"
     risk_presets: Dict[str, RiskPresetConfig]
 
-    @validator("profile")
+    @field_validator("profile", mode="before")
+    @classmethod
     def validate_live_profile(cls, value: str) -> str:
-        if value == "live":
+        if value is None:
+            return value
+
+        str_value = str(value)
+
+        if str_value == "live":
             from os import getenv
 
             if getenv("LIVE_TRADING", "false").lower() != "true":
                 raise ValueError("LIVE_TRADING env flag must be true for live profile")
-        return value
+        return str_value
 
 
 def _read_config_payload(path: Path) -> Dict[str, Any]:
