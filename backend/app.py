@@ -1,5 +1,6 @@
 import os, sys, asyncio, threading, subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable, Any, Tuple, Dict
 
@@ -100,6 +101,22 @@ class StatusResp(BaseModel):
     preset: Optional[str] = None
     last_error: Optional[str] = None
 
+class RiskLimits(BaseModel):
+    max_position_pct: float = 0.2
+    max_leverage: float = 2.0
+    max_daily_loss_pct: float = 0.05
+
+class RiskSnapshot(BaseModel):
+    profile: str
+    equity: float
+    cash: float
+    exposure_pct: float
+    day_pnl: float
+    leverage: float
+    kill_switch: bool
+    limits: RiskLimits
+    timestamp: str
+
 app = FastAPI()
 
 def start_background_runner(profile: str = "paper"):
@@ -138,6 +155,75 @@ def status():
         market_open=False,
         preset=os.environ.get("RISK_PROFILE", "balanced"),
         last_error=runner_last_error,
+    )
+
+def _kill_switch_on() -> bool:
+    return os.path.exists(".kill_switch")
+
+@app.get("/risk", response_model=RiskSnapshot)
+def get_risk():
+    """
+    Return current risk snapshot derived from Alpaca account + local controls.
+    - Uses TradingClient (paper) to read equity/cash/day pnl/leverage.
+    - Limits come from env (optional) or sensible defaults.
+    - kill_switch reflects presence of .kill_switch file.
+    """
+    limits = RiskLimits(
+        max_position_pct=float(os.environ.get("RISK_MAX_POSITION_PCT", 0.2)),
+        max_leverage=float(os.environ.get("RISK_MAX_LEVERAGE", 2.0)),
+        max_daily_loss_pct=float(os.environ.get("RISK_MAX_DAILY_LOSS_PCT", 0.05)),
+    )
+    profile = os.environ.get("RISK_PROFILE", "balanced")
+
+    try:
+        tc = _get_trading_client()
+        acct = tc.get_account()
+
+        def to_float(value: Any) -> float:
+            if hasattr(value, "model_dump"):
+                try:
+                    dumped = value.model_dump()
+                    if isinstance(dumped, dict):
+                        return float(dumped.get("amount", dumped))
+                except Exception:
+                    pass
+            try:
+                return float(value)
+            except Exception:
+                return 0.0
+
+        equity = to_float(getattr(acct, "equity", 0.0))
+        cash = to_float(getattr(acct, "cash", 0.0))
+        day_pnl = to_float(getattr(acct, "daytrading_buying_power", 0.0)) * 0.0
+        try:
+            day_pnl = float(getattr(acct, "daytrading_buying_power", 0.0)) * 0.0
+            if hasattr(acct, "daytrade_count"):
+                _ = acct.daytrade_count
+        except Exception:
+            pass
+        try:
+            day_pnl = float(getattr(acct, "day_pl", day_pnl))
+        except Exception:
+            pass
+        try:
+            leverage = float(getattr(acct, "multiplier", 1.0))
+        except Exception:
+            leverage = 1.0
+    except Exception:
+        equity, cash, day_pnl, leverage = 0.0, 0.0, 0.0, 1.0
+
+    exposure_pct = 0.0 if equity == 0 else max(0.0, min(1.0, (equity - cash) / max(equity, 1e-9)))
+
+    return RiskSnapshot(
+        profile=profile,
+        equity=float(equity),
+        cash=float(cash),
+        exposure_pct=float(exposure_pct),
+        day_pnl=float(day_pnl),
+        leverage=float(leverage),
+        kill_switch=_kill_switch_on(),
+        limits=limits,
+        timestamp=datetime.now(timezone.utc).isoformat(),
     )
 
 # ---------- Paper controls ----------
