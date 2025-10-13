@@ -165,6 +165,22 @@ class RealAPI:
                 "timestamp": now,
             }
         # Backward-compat: older backends may not include these keys
+        payload.setdefault("profile", "balanced")
+        payload.setdefault("equity", 0.0)
+        payload.setdefault("cash", 0.0)
+        payload.setdefault("exposure_pct", 0.0)
+        payload.setdefault("day_pnl", 0.0)
+        payload.setdefault("leverage", 0.0)
+        payload.setdefault("kill_switch", False)
+        payload.setdefault(
+            "limits",
+            {
+                "max_position_pct": 0.0,
+                "max_leverage": 0.0,
+                "max_daily_loss_pct": 0.0,
+            },
+        )
+        payload.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
         payload.setdefault("run_id", "idle")
         payload.setdefault("daily_loss_pct", 0.0)
         payload.setdefault("max_exposure", float(os.getenv("MAX_NOTIONAL", "0") or 0))
@@ -295,7 +311,7 @@ class MockAPI:
 
     def get_risk_snapshot(self) -> RiskSnapshot:
         payload = _load_json_fixture("risk_snapshot")
-        payload["run_id"] = self._state.run_id
+        payload["run_id"] = self._state.run_id or payload.get("run_id") or "idle"
         return RiskSnapshot(**payload)
 
     def get_orders(self) -> List[Order]:

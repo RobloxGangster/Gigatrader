@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from ui.services.backend import BrokerAPI
+from ui.utils.num import to_float
 from ui.state import AppSessionState, EquityPoint
 from ui.utils.charts import exposure_chart, render_equity_curve, risk_gauge_chart
 
@@ -53,8 +54,9 @@ def _risk_dials(points: list[EquityPoint], snapshot) -> None:
         col.metric(title, formatted_value)
         return True
 
+    daily_loss = abs(to_float(snapshot.daily_loss_pct) * 100)
     fallback_used |= _render_gauge(
-        cols[0], abs(float(snapshot.daily_loss_pct)), limit=8, title="Daily Loss", suffix="%"
+        cols[0], daily_loss, limit=8, title="Daily Loss", suffix="%"
     )
     fallback_used |= _render_gauge(
         cols[1], current_exposure, limit=100, title="Exposure", suffix="%"
@@ -63,7 +65,7 @@ def _risk_dials(points: list[EquityPoint], snapshot) -> None:
         cols[2], float(snapshot.open_positions), limit=20, title="Open Positions"
     )
     fallback_used |= _render_gauge(
-        cols[3], float(snapshot.leverage), limit=6, title="Leverage"
+        cols[3], to_float(snapshot.leverage), limit=6, title="Leverage"
     )
 
     if fallback_used:
@@ -74,15 +76,18 @@ def _risk_table(snapshot) -> None:
     st.subheader("Risk Snapshot")
     df = pd.DataFrame(
         [
-            {"Metric": "Daily Loss %", "Value": snapshot.daily_loss_pct},
-            {"Metric": "Max Exposure ($)", "Value": snapshot.max_exposure},
-            {"Metric": "Open Positions", "Value": snapshot.open_positions},
-            {"Metric": "Leverage", "Value": snapshot.leverage},
+            {"Metric": "Daily Loss %", "Value": f"{to_float(snapshot.daily_loss_pct) * 100:.2f}%"},
+            {"Metric": "Max Exposure ($)", "Value": f"${to_float(snapshot.max_exposure):,.0f}"},
+            {"Metric": "Open Positions", "Value": int(snapshot.open_positions)},
+            {"Metric": "Leverage", "Value": f"{to_float(snapshot.leverage):.2f}×"},
         ]
     )
     st.dataframe(df, hide_index=True)
     if snapshot.breached:
-        st.error("Alerts: " + ", ".join(f"{k}={v}" for k, v in snapshot.breached.items()))
+        if snapshot.kill_switch:
+            st.error("Kill switch engaged – trading halted.")
+        else:
+            st.error("Risk thresholds breached – review presets and positions.")
         st.markdown("[Risk Presets Documentation](./RISK_PRESETS.md)")
 
 

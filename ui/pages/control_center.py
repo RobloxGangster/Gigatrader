@@ -19,6 +19,7 @@ from ui.state import (
     RiskSnapshot,
     update_session_state,
 )
+from ui.utils.num import to_float
 
 
 def _load_config(path: Path) -> str:
@@ -127,16 +128,27 @@ def _live_controls(api: BrokerAPI, state: AppSessionState, preset: str) -> None:
 
 def _risk_overview(snapshot: RiskSnapshot) -> None:
     st.subheader("Risk Snapshot")
-    cols = st.columns(4)
-    cols[0].metric("Daily Loss %", f"{snapshot.daily_loss_pct}%")
-    cols[1].metric("Max Exposure", f"${snapshot.max_exposure:,.0f}")
-    cols[2].metric("Open Positions", snapshot.open_positions)
-    cols[3].metric("Leverage", snapshot.leverage)
+    cols = st.columns(5)
+    cols[0].metric("Equity", f"${to_float(snapshot.equity):,.2f}")
+    cols[1].metric("Cash", f"${to_float(snapshot.cash):,.2f}")
+    cols[2].metric("Daily P&L", f"${to_float(snapshot.day_pnl):,.2f}")
+    cols[3].metric("Leverage", f"{to_float(snapshot.leverage):.2f}×")
+    cols[4].metric("Open Positions", f"{int(snapshot.open_positions)}")
+
+    cols = st.columns(3)
+    cols[0].metric("Daily Loss %", f"{to_float(snapshot.daily_loss_pct) * 100:.2f}%")
+    cols[1].metric("Exposure %", f"{to_float(snapshot.exposure_pct) * 100:.2f}%")
+    cols[2].metric("Max Exposure", f"${to_float(snapshot.max_exposure):,.0f}")
+
     if snapshot.breached:
-        items = ", ".join(f"{k}: {v}" for k, v in snapshot.breached.items())
-        st.error(f"Thresholds breached → {items}")
+        if snapshot.kill_switch:
+            st.error("Kill switch engaged – trading halted.")
+        else:
+            st.error("Risk thresholds breached – review presets and positions.")
         st.markdown("[Review Risk Presets](./RISK_PRESETS.md)")
-    st.caption(f"Run ID: {snapshot.run_id or '—'}")
+    st.caption(
+        f"Profile: {snapshot.profile} · Run ID: {snapshot.run_id or '—'} · Updated {snapshot.timestamp}"
+    )
 
 
 def _orders_preview(orders: List[Order]) -> None:

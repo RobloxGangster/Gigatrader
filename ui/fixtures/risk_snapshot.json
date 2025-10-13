@@ -1,10 +1,20 @@
 {
   "run_id": "paper-1234",
-  "daily_loss_pct": -1.8,
-  "max_exposure": 420000,
+  "profile": "paper",
+  "equity": 125000.50,
+  "cash": 80000.25,
+  "exposure_pct": 0.42,
+  "day_pnl": 1850.75,
+  "leverage": 1.80,
   "open_positions": 8,
-  "leverage": 2.4,
-  "breached": {
-    "drawdown": -4.2
-  }
+  "daily_loss_pct": -0.018,
+  "max_exposure": 420000.0,
+  "kill_switch": false,
+  "breached": false,
+  "limits": {
+    "max_position_pct": 0.2,
+    "max_leverage": 2.0,
+    "max_daily_loss_pct": 0.05
+  },
+  "timestamp": "2024-01-01T10:00:00Z"
 }
