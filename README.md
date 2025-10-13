@@ -28,3 +28,83 @@ This step only uses paper endpoints by default. Live trading requires explicit e
 Secret Hygiene
 --------------
 Never commit .env. If accidentally committed, rotate keys and scrub history (e.g., BFG or git-filter-repo), then force-push.
+
+# Gigatrader — Quick Start (Windows)
+
+> Prereqs: Windows 10+, Python 3.11 (via `py` launcher), Git.  
+> Recommended: run from a normal `cmd.exe` (not PowerShell) the first time.
+
+## 1) Clone and prepare
+```bat
+git clone <your-fork-or-repo-url> Gigatrader
+cd Gigatrader
+```
+
+Create a `.env` (copy from `.env.example` if present) and fill your Alpaca paper keys:
+
+```env
+ALPACA_API_KEY_ID=your_key
+ALPACA_API_SECRET_KEY=your_secret
+ALPACA_DATA_FEED=iex
+SERVICE_PORT=8000
+```
+
+## 2) One-shot launcher (installs, tests, launches)
+```
+scripts\setup_and_launch.bat
+```
+
+Creates `.venv` (3.11), upgrades pip, installs `requirements.txt`.
+
+Runs a fast smoke test (`pytest`).
+
+Starts backend on http://127.0.0.1:8000 and Streamlit UI on http://localhost:8501.
+
+Optional: run diagnostics by adding the `diag` argument:
+
+```
+scripts\setup_and_launch.bat diag
+```
+
+Artifacts/logs:
+
+- `logs\setup.log` (install), `logs\test.log` (pytest), and diagnostics zip in `diagnostics\`.
+
+## 3) Manual launch (if you prefer)
+```bat
+cd /d E:\GitHub\Gigatrader
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+
+REM Backend
+set SERVICE_PORT=8000
+set PYTHONPATH=%CD%
+python backend\app.py
+
+REM UI (wrapper auto-detects real app)
+set PYTHONPATH=%CD%
+python -m streamlit run ui\Home.py
+```
+
+### Start/Stop runner (paper)
+```bat
+curl -X POST "http://127.0.0.1:8000/paper/start?preset=balanced"
+curl -X POST "http://127.0.0.1:8000/paper/flatten"
+curl -X POST "http://127.0.0.1:8000/paper/stop"
+```
+
+### Diagnostics
+```bat
+python dev\arch_diag.py --zip
+start "" diagnostics
+```
+
+### Troubleshooting
+
+- **405 on `/paper/start`**: It’s POST-only. Use `curl -X POST ...`.
+- **Runner won’t start**: Delete `.kill_switch`, then POST `/paper/start`.
+- **UI can’t find entry**: We ship `ui/Home.py` wrapper that locates your real Streamlit file; always run `streamlit run ui\Home.py`.
+- **Port 8000 in use**: Set `SERVICE_PORT` in `.env` (and update `API_BASE_URL` for the UI).
+- **Missing Alpaca keys**: `/orders` and `/positions` return 400 with a clear message; add keys to `.env`.
+- **Sentiment slow or noisy**: It’s cached 5 minutes per symbol. Reduce `hours_back` or `limit` in the query.
+
