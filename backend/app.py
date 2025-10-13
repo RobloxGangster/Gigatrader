@@ -1,15 +1,19 @@
 import os, sys, asyncio, threading, subprocess
+import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Callable, Any, Tuple, Dict
-import uuid
+from typing import Optional, Any, Tuple, Dict
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
 
+from app.execution.alpaca_adapter import AlpacaAdapter
+from app.execution.router import ExecIntent, OrderRouter
+from app.risk import RiskManager
+from app.state import ExecutionState
 from core.kill_switch import KillSwitch
 
 _kill_switch = KillSwitch()
@@ -69,28 +73,6 @@ def _import_runner():
 
     raise ImportError("Could not locate app.cli:run")
 
-# ---------- Alpaca helpers (orders/positions) ----------
-def _get_trading_client():
-    from alpaca.trading.client import TradingClient
-    key = os.environ.get("ALPACA_API_KEY_ID")
-    sec = os.environ.get("ALPACA_API_SECRET_KEY")
-    if not key or not sec:
-        raise RuntimeError("Missing ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY")
-    return TradingClient(api_key=key, secret_key=sec, paper=True)
-
-def _safe_dump(obj: Any):
-    for attr in ("model_dump", "dict"):
-        fn: Optional[Callable] = getattr(obj, attr, None)
-        if callable(fn):
-            try:
-                return fn()
-            except Exception:
-                pass
-    try:
-        return {k: v for k, v in vars(obj).items() if not k.startswith("_")}
-    except Exception:
-        return str(obj)
-
 # ---------- Runner plumbing ----------
 runner_task = None
 runner_loop = None
@@ -132,6 +114,34 @@ class RiskSnapshot(BaseModel):
     timestamp: str
 
 app = FastAPI()
+log = logging.getLogger("backend")
+
+_execution_state = ExecutionState()
+_broker = AlpacaAdapter()
+_risk_manager = RiskManager(_execution_state, kill_switch=_kill_switch)
+
+app.state.execution = _execution_state
+app.state.state = _execution_state
+app.state.risk = _risk_manager
+app.state.broker = _broker
+
+
+@app.on_event("startup")
+async def _bg_recon() -> None:
+    async def loop() -> None:
+        while True:
+            try:
+                open_orders = _broker.get_open_orders()
+                positions = _broker.get_positions()
+                account = _broker.get_account()
+                _execution_state.update_orders(open_orders)
+                _execution_state.update_positions(positions)
+                _execution_state.update_account(account)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("reconcile error: %s", exc)
+            await asyncio.sleep(7)
+
+    asyncio.create_task(loop())
 
 def start_background_runner(profile: str = "paper"):
     global runner_task, runner_loop, runner_last_error
@@ -212,38 +222,21 @@ def get_risk():
         max_daily_loss_pct=_env_float("RISK_MAX_DAILY_LOSS_PCT", 0.05),
     )
 
-    # Defaults if no keys / API unavailable
-    equity = 0.0
-    cash = 0.0
-    day_pnl = 0.0
-    leverage = 1.0
-    open_positions = 0
-
-    try:
-        tc = _get_trading_client()
-        acct = tc.get_account()
-
-        def _to_float(v, default=0.0):
-            try:
-                if hasattr(v, "model_dump"):
-                    md = v.model_dump()
-                    return float(md.get("amount", default))
-                return float(v)
-            except Exception:
-                return float(default)
-
-        equity = _to_float(getattr(acct, "equity", 0.0), 0.0)
-        cash = _to_float(getattr(acct, "cash", 0.0), 0.0)
-        day_pnl = _to_float(getattr(acct, "day_pl", 0.0), 0.0)
-        leverage = float(getattr(acct, "multiplier", 1.0) or 1.0)
-
+    snapshot = _execution_state.account_snapshot()
+    if not snapshot.get("id"):
         try:
-            # positions may be a list of dataclasses; len() is fine
-            open_positions = len(tc.get_all_positions())
-        except Exception:
-            open_positions = 0
-    except Exception:
-        pass
+            account = _broker.get_account()
+            _execution_state.update_account(account)
+            snapshot = _execution_state.account_snapshot()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("risk account fetch failed: %s", exc)
+
+    equity = float(snapshot.get("equity", 0.0) or 0.0)
+    cash = float(snapshot.get("cash", 0.0) or 0.0)
+    day_pnl = float(snapshot.get("day_pnl", 0.0) or 0.0)
+    leverage = float(snapshot.get("multiplier", 1.0) or 1.0)
+    portfolio_notional = float(_execution_state.get_portfolio_notional())
+    open_positions = sum(1 for pos in _execution_state.get_positions().values() if abs(pos.qty) > 0)
 
     # Derived & limits from env
     daily_loss_limit_abs = _env_float("DAILY_LOSS_LIMIT", -1.0)   # absolute currency amount
@@ -277,13 +270,52 @@ def get_risk():
         profile=profile,
         equity=float(equity),
         cash=float(cash),
-        exposure_pct=0.0 if equity == 0 else max(0.0, min(1.0, (equity - cash) / max(equity, 1e-9))),
+        exposure_pct=0.0 if equity <= 0 else min(1.0, portfolio_notional / max(equity, 1e-9)),
         day_pnl=float(day_pnl),
         leverage=float(leverage),
         kill_switch=kill,
         limits=limits,
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
+
+
+def _account_payload(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": str(snapshot.get("id", "")),
+        "status": str(snapshot.get("status", "")),
+        "cash": float(snapshot.get("cash", 0.0) or 0.0),
+        "portfolio_value": float(snapshot.get("portfolio_value", 0.0) or 0.0),
+        "equity": float(snapshot.get("equity", snapshot.get("portfolio_value", 0.0)) or 0.0),
+        "pattern_day_trader": bool(snapshot.get("pattern_day_trader", False)),
+        "day_pnl": float(snapshot.get("day_pnl", 0.0) or 0.0),
+    }
+
+
+@app.get("/alpaca/account")
+def alpaca_account():
+    try:
+        account = _broker.get_account()
+        _execution_state.update_account(account)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("alpaca.account fetch failed: %s", exc)
+        payload = _account_payload(_execution_state.account_snapshot())
+        payload["error"] = str(exc)
+        return JSONResponse(status_code=502, content=payload)
+    snapshot = _execution_state.account_snapshot()
+    return _account_payload(snapshot)
+
+
+@app.post("/orders/test")
+def orders_test(
+    symbol: str = "AAPL",
+    side: str = "buy",
+    qty: int = 1,
+    limit_price: float = 1.00,
+    bracket: bool = True,
+):
+    router = OrderRouter(app.state.risk, app.state.state)
+    intent = ExecIntent(symbol=symbol, side=side, qty=qty, limit_price=limit_price, bracket=bracket)
+    return router.submit(intent)
 
 # ---------- Paper controls ----------
 @app.post("/paper/start", response_model=StartResp)
@@ -324,30 +356,21 @@ def paper_flatten():
 @app.get("/orders")
 def orders():
     try:
-        tc = _get_trading_client()
-    except RuntimeError as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"orders init failed: {e}"})
-    try:
-        data = tc.get_orders()
-        return [_safe_dump(o) for o in data]
-    except Exception as e:
-        return JSONResponse(status_code=502, content={"error": f"orders query failed: {e}"})
+        open_orders = _broker.get_open_orders()
+        _execution_state.update_orders(open_orders)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("orders fetch failed: %s", exc)
+    return _execution_state.orders_snapshot()
+
 
 @app.get("/positions")
 def positions():
     try:
-        tc = _get_trading_client()
-    except RuntimeError as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"positions init failed: {e}"})
-    try:
-        data = tc.get_all_positions()
-        return [_safe_dump(p) for p in data]
-    except Exception as e:
-        return JSONResponse(status_code=502, content={"error": f"positions query failed: {e}"})
+        current_positions = _broker.get_positions()
+        _execution_state.update_positions(current_positions)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("positions fetch failed: %s", exc)
+    return _execution_state.positions_snapshot()
 
 # ---------- NEW: Real sentiment via Alpaca News (with graceful fallback) ----------
 @app.get("/sentiment")

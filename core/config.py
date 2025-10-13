@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Literal
 
@@ -13,46 +11,56 @@ except ModuleNotFoundError:  # pragma: no cover - executed in minimal environmen
     yaml = None
     import json
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-@dataclass(slots=True)
-class AlpacaSettings:
-    """Alpaca credentials sourced from environment variables."""
+class AlpacaSettings(BaseSettings):
+    """Credentials and runtime settings for the Alpaca Trading API."""
 
-    key_id: str = ""
-    secret_key: str = ""
-    paper_endpoint: str = "https://paper-api.alpaca.markets"
-    live_endpoint: str = "https://api.alpaca.markets"
+    model_config = SettingsConfigDict(env_prefix="")
 
-    @classmethod
-    def from_env(cls) -> "AlpacaSettings":
-        key_id = (
-            os.getenv("ALPACA_KEY_ID")
-            or os.getenv("ALPACA_API_KEY")
-            or os.getenv("APCA_API_KEY_ID")
-            or ""
+    api_key_id: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "ALPACA_API_KEY_ID",
+            "ALPACA_KEY_ID",
+            "ALPACA_API_KEY",
+            "APCA_API_KEY_ID",
         )
-        secret_key = (
-            os.getenv("ALPACA_SECRET_KEY")
-            or os.getenv("ALPACA_API_SECRET")
-            or os.getenv("APCA_API_SECRET_KEY")
-            or ""
+    )
+    api_secret_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "ALPACA_API_SECRET_KEY",
+            "ALPACA_SECRET_KEY",
+            "ALPACA_API_SECRET",
+            "APCA_API_SECRET_KEY",
         )
-        paper_endpoint = os.getenv(
-            "ALPACA_PAPER_ENDPOINT",
-            os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets"),
-        )
-        live_endpoint = os.getenv(
-            "ALPACA_LIVE_ENDPOINT", os.getenv("APCA_API_BASE_URL", "https://api.alpaca.markets")
-        )
+    )
+    base_url: str = Field(
+        default="https://paper-api.alpaca.markets",
+        validation_alias=AliasChoices("APCA_API_BASE_URL", "ALPACA_BASE_URL", "ALPACA_PAPER_ENDPOINT"),
+    )
+    paper: bool = Field(default=True, validation_alias=AliasChoices("ALPACA_PAPER"))
+    request_timeout_s: float = Field(default=10.0, validation_alias=AliasChoices("ALPACA_REQUEST_TIMEOUT"))
+    max_retries: int = Field(default=3, validation_alias=AliasChoices("ALPACA_MAX_RETRIES"))
+    retry_backoff_s: float = Field(default=0.75, validation_alias=AliasChoices("ALPACA_RETRY_BACKOFF"))
 
-        return cls(
-            key_id=key_id,
-            secret_key=secret_key,
-            paper_endpoint=paper_endpoint,
-            live_endpoint=live_endpoint,
-        )
+
+class OrderDefaults(BaseSettings):
+    """Global defaults applied to order submission flows."""
+
+    model_config = SettingsConfigDict(env_prefix="")
+
+    tif: str = Field(default="day", validation_alias=AliasChoices("DEFAULT_TIF"))
+    allow_brackets: bool = Field(default=True, validation_alias=AliasChoices("ALLOW_BRACKETS"))
+    default_tp_pct: float = Field(default=0.01, validation_alias=AliasChoices("DEFAULT_TP_PCT"))
+    default_sl_pct: float = Field(default=0.005, validation_alias=AliasChoices("DEFAULT_SL_PCT"))
+
+
+alpaca_settings = AlpacaSettings()
+order_defaults = OrderDefaults()
 
 
 class RiskPresetConfig(BaseModel):
@@ -125,6 +133,12 @@ def load_config(path: Path) -> AppConfig:
 
 
 def get_alpaca_settings() -> AlpacaSettings:
-    """Return Alpaca credentials from environment variables."""
+    """Return cached Alpaca configuration settings."""
 
-    return AlpacaSettings.from_env()
+    return alpaca_settings
+
+
+def get_order_defaults() -> OrderDefaults:
+    """Return global order defaults used by the execution layer."""
+
+    return order_defaults
