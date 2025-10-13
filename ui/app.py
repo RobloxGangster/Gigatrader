@@ -55,22 +55,19 @@ def main() -> None:
     load_dotenv(override=False)
     st.set_page_config(page_title="Gigatrader Control Center", layout="wide")
 
-    state: AppSessionState = init_session_state()
-    api = get_backend()
-
     st.sidebar.title("Gigatrader")
+
+    # Always show the sidebar banner when MOCK_MODE is on
     if _is_mock_mode():
         st.sidebar.info("Mock mode is enabled")
-    elif mock_mode():
-        st.sidebar.info("Mock mode enabled – using fixture backend.")
-    st.sidebar.caption(f"API: {api_base_url()}")
-    st.sidebar.caption(f"Profile: {state.profile}")
 
+    # Always provide the Navigation selectbox
     nav_options = ["Control Center", "Option Chain", "Backtest Reports", "Logs"]
     nav_seed = set(nav_options)
     nav_options.extend([key for key in _PAGE_REGISTRY.keys() if key not in nav_seed])
     selection = st.sidebar.selectbox("Navigation", nav_options, index=0)
 
+    # Ensure a Start Paper button exists on first render (mock-safe)
     if _is_mock_mode():
         if st.button("Start Paper"):
             try:
@@ -80,6 +77,14 @@ def main() -> None:
                 requests.post(f"{base}/paper/start", timeout=1)
             except Exception:
                 pass
+
+    state: AppSessionState = init_session_state()
+    api = get_backend()
+
+    if not _is_mock_mode() and mock_mode():
+        st.sidebar.info("Mock mode enabled – using fixture backend.")
+    st.sidebar.caption(f"API: {api_base_url()}")
+    st.sidebar.caption(f"Profile: {state.profile}")
 
     page_key = _NAVIGATION_MAP.get(selection, selection)
     page = _PAGE_REGISTRY.get(page_key, control_center)

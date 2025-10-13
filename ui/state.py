@@ -7,14 +7,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Dict, List, Optional
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    FieldValidationInfo,
-    field_serializer,
-    field_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_serializer, field_validator
 
 
 class BaseModelDecimal(BaseModel):
@@ -128,12 +121,12 @@ class ChainRow(BaseModelDecimal):
 
     @field_validator("mid", mode="before")
     @classmethod
-    def default_mid(cls, v, info: FieldValidationInfo):
+    def default_mid(cls, v, info: ValidationInfo):
         if v is not None:
             return v
-        data = info.data
-        bid = data.get("bid") if data else None
-        ask = data.get("ask") if data else None
+        data = getattr(info, "data", {}) or {}
+        bid = data.get("bid")
+        ask = data.get("ask")
         if bid is None or ask is None:
             return Decimal("0")
         return (Decimal(str(bid)) + Decimal(str(ask))) / Decimal("2")
@@ -203,7 +196,7 @@ class AppSessionState(BaseModel):
     last_trace_id: Optional[str] = None
     strategy_params: Dict[str, float] = Field(default_factory=dict)
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True)
 
 
 def init_session_state() -> AppSessionState:
