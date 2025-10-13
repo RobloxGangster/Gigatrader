@@ -45,6 +45,10 @@ class OptionGateway:
     async def propose_option_trade(self, underlying: str, side: str, qty: float) -> Dict[str, Any]:
         """Fetch the option chain, select a contract, and submit through the execution engine."""
 
+        strategy_side = side.lower()
+        option_type = "call" if strategy_side == "buy" else "put"
+        order_side = "buy"
+
         target_delta = float(_env_cast("OPTIONS_TARGET_DELTA", 0.30))
         delta_band = float(_env_cast("OPTIONS_DELTA_BAND", 0.05))
         min_oi = int(_env_cast("OPTIONS_MIN_OI", 150))
@@ -54,10 +58,9 @@ class OptionGateway:
         price_max = float(_env_cast("OPTIONS_PRICE_MAX", 50.0))
 
         contracts = await self.chain.fetch(underlying)
-        option_side = "call" if side.lower() == "buy" else "put"
         selected = select_contract(
             contracts,
-            option_side,
+            option_type,
             target_delta,
             delta_band,
             min_oi,
@@ -71,7 +74,7 @@ class OptionGateway:
 
         proposal = Proposal(
             symbol=underlying,
-            side=side,
+            side=order_side,
             qty=qty,
             price=selected.mid or 0.0,
             is_option=True,
@@ -87,13 +90,15 @@ class OptionGateway:
 
         intent = ExecIntent(
             symbol=underlying,
-            side=side,
+            side=order_side,
             qty=qty,
             limit_price=selected.mid,
             asset_class="option",
             option_symbol=selected.symbol,
-            submit_side="buy",
+            submit_side=order_side,
             meta={
+                "strategy_side": strategy_side,
+                "option_type": option_type,
                 "selected": {
                     "symbol": selected.symbol,
                     "delta": selected.delta,
