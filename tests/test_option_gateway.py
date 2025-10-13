@@ -29,13 +29,29 @@ class FakeChain:
                 volume=500,
                 oi=1000,
                 dte=14,
-            )
+            ),
+            OptionContract(
+                symbol="AAPL_2025P_95",
+                underlying=underlying,
+                expiry="2025-01-01",
+                strike=95.0,
+                side="put",  # type: ignore[arg-type]
+                delta=-0.32,
+                iv=0.42,
+                bid=2.9,
+                ask=3.1,
+                mid=3.0,
+                volume=450,
+                oi=900,
+                dte=14,
+            ),
         ]
 
 
 class FakeExec(ExecutionEngine):
     def __init__(self, risk: RiskManager) -> None:
         self.risk = risk
+        self.last_intent: ExecIntent | None = None
 
     async def submit(self, intent: ExecIntent):  # type: ignore[override]
         class Result:
@@ -57,6 +73,11 @@ def test_gateway_happy_path() -> None:
     assert result["accepted"] is True
     assert result["client_order_id"] == "cid123"
     assert result["selected"].startswith("AAPL_")
+    assert isinstance(gateway.exec.last_intent, ExecIntent)
+    assert gateway.exec.last_intent.side == "buy"
+    assert gateway.exec.last_intent.submit_side == "buy"
+    assert gateway.exec.last_intent.meta.get("strategy_side") == "buy"
+    assert gateway.exec.last_intent.meta.get("option_type") == "call"
 
 
 class EmptyChain(FakeChain):
@@ -75,3 +96,19 @@ def test_gateway_no_contract() -> None:
 
     assert result["accepted"] is False
     assert result["reason"] == "no_contract_found"
+
+
+def test_gateway_bearish_creates_put_long() -> None:
+    state = InMemoryState()
+    risk = RiskManager(state)
+    exec_engine = FakeExec(risk)
+    gateway = OptionGateway(exec_engine=exec_engine, chain_source=FakeChain(), risk_manager=risk)
+
+    result = asyncio.run(gateway.propose_option_trade("AAPL", "sell", 1))
+
+    assert result["accepted"] is True
+    assert isinstance(exec_engine.last_intent, ExecIntent)
+    assert exec_engine.last_intent.side == "buy"
+    assert exec_engine.last_intent.submit_side == "buy"
+    assert exec_engine.last_intent.meta.get("strategy_side") == "sell"
+    assert exec_engine.last_intent.meta.get("option_type") == "put"
