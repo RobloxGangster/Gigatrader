@@ -7,22 +7,59 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
 
-# --- Ensure repo root is importable (so "app.cli" resolves) ---
+# ---------- Path + .env ----------
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# --- Load .env (so ALPACA_* vars exist for this process) ---
 try:
     from dotenv import load_dotenv, find_dotenv
-    _env_path = find_dotenv(str(ROOT / ".env"), usecwd=True)
-    if _env_path:
-        load_dotenv(_env_path, override=False)
+    _env = find_dotenv(str(ROOT / ".env"), usecwd=True)
+    if _env:
+        load_dotenv(_env, override=False)
 except Exception:
-    # dotenv is optional; if missing we'll rely on shell env
     pass
 
-# ---------- Alpaca helpers ----------
+# ---------- Robust runner import ----------
+import importlib.util
+def _import_runner():
+    """
+    Load app.cli:run even if a top-level module named 'app' shadows the package.
+    """
+    # If 'app' is a module (file), drop it so we can import the package namespace
+    if "app" in sys.modules and not hasattr(sys.modules["app"], "__path__"):
+        del sys.modules["app"]
+
+    # Try normal package import
+    try:
+        from app.cli import run as run_cli
+        return run_cli
+    except Exception:
+        pass
+
+    # Fallback to direct file import
+    cand = ROOT / "app" / "cli.py"
+    if cand.exists():
+        spec = importlib.util.spec_from_file_location("gt_runner.cli", cand)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        if hasattr(mod, "run"):
+            return getattr(mod, "run")
+
+    # Last-resort: scan for app/cli.py anywhere under repo
+    for p in ROOT.rglob("cli.py"):
+        if p.parent.name == "app":
+            spec = importlib.util.spec_from_file_location("gt_runner.cli", p)
+            mod = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(mod)
+            if hasattr(mod, "run"):
+                return getattr(mod, "run")
+
+    raise ImportError("Could not locate app.cli:run")
+
+# ---------- Alpaca helpers (orders/positions) ----------
 def _get_trading_client():
     from alpaca.trading.client import TradingClient
     key = os.environ.get("ALPACA_API_KEY_ID")
@@ -63,7 +100,6 @@ app = FastAPI()
 
 def start_background_runner(profile: str = "paper"):
     global runner_task, runner_loop, runner_last_error
-    # reset last error
     runner_last_error = None
     if runner_task and not runner_task.done():
         return
@@ -73,8 +109,7 @@ def start_background_runner(profile: str = "paper"):
         runner_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(runner_loop)
         try:
-            # this import now works because ROOT is on sys.path and app/ is a package
-            from app.cli import run as run_cli
+            run_cli = _import_runner()
         except Exception as e:
             runner_last_error = f"runner import failed: {e}"
             return
@@ -101,25 +136,9 @@ def status():
         last_error=runner_last_error,
     )
 
-
-@app.get("/sentiment")
-def sentiment(symbol: str):
-    """
-    Stub sentiment endpoint so diagnostics are green.
-    Returns neutral score and an explanatory note.
-    Replace later with real fetch & scoring (e.g., Alpaca news + lightweight polarity).
-    """
-    return {
-        "symbol": symbol.upper(),
-        "score": None,
-        "sources": [],
-        "note": "Sentiment not wired yet; this stub exists so diagnostics can verify the endpoint.",
-    }
-
 # ---------- Paper controls ----------
 @app.post("/paper/start", response_model=StartResp)
 def paper_start(preset: Optional[str] = None):
-    # Clear any previous kill-switch so the runner can start
     try:
         if os.path.exists(".kill_switch"):
             os.remove(".kill_switch")
@@ -132,12 +151,11 @@ def paper_start(preset: Optional[str] = None):
         return JSONResponse(status_code=500, content={"error": runner_last_error})
     return StartResp(run_id="paper-1")
 
-
 @app.get("/paper/start")
 def paper_start_help():
     return JSONResponse(status_code=405, content={
         "error": "Method Not Allowed",
-        "hint": "Use POST /paper/start (e.g., curl -X POST http://127.0.0.1:8000/paper/start?preset=balanced)",
+        "hint": "Use POST /paper/start (e.g., curl -X POST http://127.0.0.1:8000/paper/start?preset=balanced)"
     })
 
 @app.post("/paper/stop")
@@ -154,7 +172,7 @@ def paper_flatten():
         pass
     return {"ok": True}
 
-# ---------- Data endpoints (robust, no 500 on missing keys) ----------
+# ---------- Data endpoints ----------
 @app.get("/orders")
 def orders():
     try:
@@ -183,9 +201,38 @@ def positions():
     except Exception as e:
         return JSONResponse(status_code=502, content={"error": f"positions query failed: {e}"})
 
+# ---------- NEW: Real sentiment via Alpaca News (with graceful fallback) ----------
+@app.get("/sentiment")
+def sentiment(symbol: str, hours_back: int = 24, limit: int = 50):
+    """
+    Compute a simple sentiment score from recent Alpaca news headlines ([-1,1]).
+    Returns 200 with either real scores or a neutral fallback + reason.
+    """
+    try:
+        from services.sentiment.fetchers import AlpacaNewsFetcher
+        from services.sentiment.scoring import heuristic_score
+    except Exception as e:
+        return {
+            "symbol": symbol.upper(),
+            "score": None,
+            "items": [],
+            "note": f"Sentiment modules not available: {e}"
+        }
+
+    try:
+        fetcher = AlpacaNewsFetcher()
+        items = fetcher.fetch_headlines(symbol.upper(), hours_back=hours_back, limit=limit)
+        # items: list of dicts with 'headline' and optional 'summary'
+        if not items:
+            return {"symbol": symbol.upper(), "score": 0.0, "items": [], "note": "No news found"}
+        scores = [heuristic_score(i.get("headline",""), i.get("summary","")) for i in items]
+        score = sum(scores)/len(scores)
+        return {"symbol": symbol.upper(), "score": round(score, 4), "count": len(items), "items": items[:10]}
+    except Exception as e:
+        return {"symbol": symbol.upper(), "score": 0.0, "items": [], "note": f"Fallback: {e}"}
+
 # ---------- Entrypoint ----------
 if __name__ == "__main__":
-    # Honor SERVICE_PORT; invalid/0 -> 8000
     try:
         port = int(os.environ.get("SERVICE_PORT", "8000"))
     except Exception:
