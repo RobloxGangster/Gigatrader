@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from services.execution.engine import ExecutionEngine
@@ -114,3 +115,27 @@ class OptionGateway:
             "client_order_id": result.client_order_id,
             "selected": selected.symbol,
         }
+
+
+@dataclass
+class Intent:
+    side: str   # "buy" or "sell" (bullish/bearish signal)
+    symbol: str
+    qty: int = 1
+
+
+def map_option_order(intent: Intent) -> dict:
+    """
+    Long-only mapping for options:
+      - bullish ("buy")  -> CALL, side="buy"
+      - bearish ("sell") -> PUT, side="buy"
+    """
+    side = "buy"
+    option_type = "call" if intent.side.lower() == "buy" else "put"
+    return {
+        "symbol": intent.symbol,
+        "qty": int(intent.qty),
+        "asset_class": "option",
+        "option_type": option_type,   # "call" | "put"
+        "side": side,                 # always "buy" (no shorting)
+    }
