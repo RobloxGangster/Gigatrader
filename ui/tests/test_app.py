@@ -8,11 +8,11 @@ import pytest
 
 streamlit_testing = pytest.importorskip("streamlit.testing.v1")
 
-import ui.app as app
 
 
 def _run_app() -> "streamlit_testing.AppTest":
-    at = streamlit_testing.AppTest.from_app(app)
+    app_path = Path(__file__).resolve().parents[1] / "app.py"
+    at = streamlit_testing.AppTest.from_file(str(app_path))
     at.run(timeout=10)
     return at
 
@@ -20,7 +20,7 @@ def _run_app() -> "streamlit_testing.AppTest":
 def test_app_loads_mock_mode(monkeypatch) -> None:
     monkeypatch.setenv("MOCK_MODE", "true")
     at = _run_app()
-    assert any("Mock mode" in str(element.value) for element in at.sidebar)
+    assert any("Mock mode" in str(getattr(element, "value", element)) for element in at.sidebar)
 
 
 def test_start_stop_buttons(monkeypatch) -> None:

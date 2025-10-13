@@ -11,7 +11,7 @@ try:
 except Exception as ex:
     raise ImportError(
         "Failed to import alpaca-py. Ensure `alpaca-py` is installed and no local `alpaca/` "
-        "module shadows it. Run `make fix-shadowing` and recompile deps."
+        "module shadows it. Run tools/fix_shadowing.py and reinstall deps."
     ) from ex
 from alpaca.data.live import StockDataStream
 

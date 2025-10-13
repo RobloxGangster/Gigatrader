@@ -93,7 +93,7 @@ class RealAPI:
     """HTTP backed API implementation."""
 
     def __init__(self, base_url: Optional[str] = None) -> None:
-        self.base_url = base_url or os.getenv("API_BASE_URL", "http://localhost:8000")
+        self.base_url = base_url or os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
         self.session = requests.Session()
 
     def _request(
