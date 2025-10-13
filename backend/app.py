@@ -101,6 +101,21 @@ def status():
         last_error=runner_last_error,
     )
 
+
+@app.get("/sentiment")
+def sentiment(symbol: str):
+    """
+    Stub sentiment endpoint so diagnostics are green.
+    Returns neutral score and an explanatory note.
+    Replace later with real fetch & scoring (e.g., Alpaca news + lightweight polarity).
+    """
+    return {
+        "symbol": symbol.upper(),
+        "score": None,
+        "sources": [],
+        "note": "Sentiment not wired yet; this stub exists so diagnostics can verify the endpoint.",
+    }
+
 # ---------- Paper controls ----------
 @app.post("/paper/start", response_model=StartResp)
 def paper_start(preset: Optional[str] = None):

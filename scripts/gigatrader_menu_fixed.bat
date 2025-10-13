@@ -1,12 +1,10 @@
 @echo on
 setlocal EnableExtensions EnableDelayedExpansion
 
-rem === Resolve repo root ===
 cd /d "%~dp0\.."
 set "ROOT=%CD%"
 if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
 
-rem === Ensure venv ===
 if not exist ".venv\Scripts\python.exe" (
   echo [+] Creating venv with py -3.11
   C:\Windows\py.exe -3.11 -m venv .venv || (echo [!] venv create failed & pause & exit /b 1)
@@ -14,9 +12,7 @@ if not exist ".venv\Scripts\python.exe" (
 call ".venv\Scripts\activate.bat" || (echo [!] Failed to activate venv & pause & exit /b 1)
 
 python -m pip install --upgrade pip >nul 2>&1
-if exist requirements.txt python -m pip install -r requirements.txt >nul 2>&1
 
-rem === Shared env for child windows ===
 set SERVICE_PORT=8000
 set API_BASE_URL=http://127.0.0.1:8000
 set MOCK_MODE=false
@@ -51,7 +47,6 @@ start "gigatrader-backend" cmd /k "set PYTHONPATH=%ROOT%&& .venv\Scripts\python.
 goto menu
 
 :start_ui
-rem --- auto-detect Streamlit entry under ui\ first, then repo-wide fallbacks ---
 set "STREAMLIT_TARGET="
 for %%F in ("ui\Home.py" "ui\app.py" "ui\main.py" "ui\index.py") do (
   if not defined STREAMLIT_TARGET if exist %%~F set "STREAMLIT_TARGET=%%~F"
@@ -97,4 +92,3 @@ goto menu
 
 :end
 exit /b 0
-
