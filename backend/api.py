@@ -3,10 +3,13 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from core.kill_switch import is_active
+from core.kill_switch import KillSwitch
 load_dotenv(override=False)
 
 app = FastAPI(title="Gigatrader API")
+
+
+_kill_switch = KillSwitch()
 
 
 @app.get("/health")
@@ -36,7 +39,7 @@ def status():
         "running": _running,
         "profile": _profile,
         "paper": os.getenv("TRADING_MODE","paper")=="paper",
-        "halted": is_active(),
+        "halted": _kill_switch.engaged_sync(),
     }
 
 
@@ -57,13 +60,13 @@ def paper_start(req: StartReq | None = None):
 def paper_stop():
     global _running
     _running = False
-    open(".kill_switch","w").close()
+    _kill_switch.engage_sync()
     return {"ok": True}
 
 
 @app.post("/paper/flatten")
 def flatten_and_halt():
-    open(".kill_switch","w").close()
+    _kill_switch.engage_sync()
     return {"ok": True, "halted": True}
 
 

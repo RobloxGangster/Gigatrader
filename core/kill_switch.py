@@ -1,52 +1,48 @@
-"""Global kill switch implementation."""
-
 from __future__ import annotations
-
-import asyncio
 import os
 from pathlib import Path
-
-KILL_SWITCH_ENV = "TRADE_HALT"
-DISABLE_KILL_SWITCH_ENV = "DISABLE_KILL_SWITCH_FOR_TESTS"
-DEFAULT_KILL_FILE = Path(".kill_switch")
-
-
-def _kill_switch_disabled() -> bool:
-    return os.getenv(DISABLE_KILL_SWITCH_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def is_active(path: Path = DEFAULT_KILL_FILE) -> bool:
-    """Return True when the kill switch should halt trading."""
-
-    if _kill_switch_disabled():
-        return False
-    env_active = os.getenv(KILL_SWITCH_ENV, "false").lower() == "true"
-    return env_active or path.exists()
+from typing import Optional
 
 
 class KillSwitch:
-    """Tracks global halt state with file + env flag."""
+    """
+    File-based kill switch.
+    - If 'path' is provided, use it.
+    - Else if KILL_SWITCH_FILE is set, use that.
+    - Else default to './.kill_switch'.
+    Provides both sync and async helpers so it can be used in any code path.
+    """
 
-    def __init__(self, path: Path = DEFAULT_KILL_FILE) -> None:
-        self._path = path
-        self._lock = asyncio.Lock()
+    def __init__(self, path: Optional[os.PathLike[str] | str] = None):
+        env_path = os.getenv("KILL_SWITCH_FILE")
+        self.path = Path(path if path is not None else (env_path if env_path else ".kill_switch"))
 
-    async def engaged(self) -> bool:
-        """Return whether the switch is active."""
+    # ---------- sync ----------
+    def engage_sync(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.path.write_text("halt", encoding="utf-8")
+        except Exception:
+            # best-effort fallback
+            with open(self.path, "w", encoding="utf-8") as f:
+                f.write("halt")
 
-        return is_active(self._path)
+    def reset_sync(self) -> None:
+        try:
+            if self.path.exists():
+                self.path.unlink()
+        except Exception:
+            pass
 
+    def engaged_sync(self) -> bool:
+        return self.path.exists()
+
+    # ---------- async wrappers ----------
     async def engage(self) -> None:
-        """Activate the kill switch."""
-
-        async with self._lock:
-            self._path.touch()
-            os.environ[KILL_SWITCH_ENV] = "true"
+        self.engage_sync()
 
     async def reset(self) -> None:
-        """Deactivate the kill switch."""
+        self.reset_sync()
 
-        async with self._lock:
-            if self._path.exists():
-                self._path.unlink()
-            os.environ.pop(KILL_SWITCH_ENV, None)
+    async def engaged(self) -> bool:
+        return self.engaged_sync()
