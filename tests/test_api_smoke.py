@@ -10,7 +10,7 @@ except Exception:
 
 os.environ.setdefault("SERVICE_PORT", "8000")
 
-app_module = importlib.import_module("backend.app")
+app_module = importlib.import_module("backend.server")
 app = getattr(app_module, "app")
 client = TestClient(app)
 

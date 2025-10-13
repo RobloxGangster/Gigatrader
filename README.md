@@ -79,7 +79,7 @@ pip install -r requirements.txt
 REM Backend
 set SERVICE_PORT=8000
 set PYTHONPATH=%CD%
-python backend\app.py
+python -m backend.server
 
 REM UI (wrapper auto-detects real app)
 set PYTHONPATH=%CD%

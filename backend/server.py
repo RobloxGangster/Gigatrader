@@ -1,3 +1,11 @@
+# --- import bootstrap: ensure repo root first on sys.path ---
+import sys, pathlib, os
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+os.environ.setdefault("PYTHONPATH", str(ROOT))
+# ------------------------------------------------------------
+
 import asyncio
 import threading
 import subprocess
@@ -11,15 +19,6 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
-
-# --- import bootstrap: ensure repo root is on sys.path ---
-import sys, pathlib, os
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# also export PYTHONPATH for any subprocesses spawned from here
-os.environ.setdefault("PYTHONPATH", str(ROOT))
-# ----------------------------------------------------------
 
 from app.execution.alpaca_adapter import AlpacaAdapter
 from app.execution.router import ExecIntent, OrderRouter

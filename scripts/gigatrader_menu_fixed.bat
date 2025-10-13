@@ -43,7 +43,7 @@ if "%choice%"=="0" goto end
 goto menu
 
 :start_backend
-start "gigatrader-backend" cmd /k "set PYTHONPATH=%ROOT%&& .venv\Scripts\python.exe backend\app.py"
+start "gigatrader-backend" cmd /k "set PYTHONPATH=%ROOT%&& .venv\Scripts\python.exe -m backend.server"
 goto menu
 
 :start_ui
