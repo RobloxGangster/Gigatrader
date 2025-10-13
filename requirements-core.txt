@@ -28,6 +28,10 @@ click==8.3.0
     # via
     #   streamlit
     #   uvicorn
+colorama==0.4.6
+    # via
+    #   click
+    #   pytest
 fastapi==0.119.0
     # via -r requirements-core.in
 gitdb==4.0.12

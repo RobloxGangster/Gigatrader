@@ -4,6 +4,8 @@
 #
 #    pip-compile --output-file=requirements-dev.txt requirements-dev.in
 #
+colorama==0.4.6
+    # via pytest
 coverage[toml]==7.10.7
     # via pytest-cov
 iniconfig==2.1.0
