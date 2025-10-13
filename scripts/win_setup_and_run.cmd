@@ -81,11 +81,40 @@ if errorlevel 3 (echo [ERROR] import probe failed. See logs\setup.log & type "%L
 REM --- 7) readiness check (non-fatal missing keys) ---
 python -m cli.main check >> "%LOG%" 2>&1
 
-REM --- 8) start API (separate window, stays open with /k) ---
+REM --- 8) start API (separate window, stays open) ---
 echo [STEP] starting API on 127.0.0.1:8000
 start "gigatrader-api" cmd /k ".venv\Scripts\python -m uvicorn backend.api:app --host 127.0.0.1 --port 8000"
 
-REM --- 9) start UI (use python -m to avoid PATH issues) ---
+REM --- 9) wait for API health before launching UI (max ~30s) ---
+set "PING_URL=http://127.0.0.1:8000/health"
+set /a tries=0
+:wait_api
+set /a tries+=1
+python - << "PY"
+import sys, os
+import urllib.request
+url = os.getenv("PING_URL", "http://127.0.0.1:8000/health")
+try:
+    with urllib.request.urlopen(url, timeout=2) as response:
+        status = response.status
+        print(status)
+        sys.exit(0 if status == 200 else 2)
+except Exception:
+    sys.exit(2)
+PY
+if not errorlevel 1 goto api_ready
+if %tries% GEQ 15 (
+  echo [WARN] API not responding; launching UI anyway.
+  goto start_ui
+)
+echo [INFO] Waiting for API... (%tries%/15)
+timeout /t 2 >NUL
+goto wait_api
+
+:api_ready
+echo [INFO] API is up.
+
+:start_ui
 echo [STEP] starting UI
 python -m streamlit run "ui\app.py"
 if errorlevel 1 (echo [ERROR] Streamlit failed. See logs\setup.log & type "%LOG%" & pause & exit /b 1)

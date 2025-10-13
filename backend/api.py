@@ -5,6 +5,11 @@ from dotenv import load_dotenv
 load_dotenv(override=False)
 
 app = FastAPI(title="Gigatrader API")
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "service": "gigatrader-api"}
 _runner_thread = None
 _running = False
 _profile = "paper"
@@ -73,3 +78,11 @@ def live_start(req: StartReq | None = None):
     _runner_thread = threading.Thread(target=_run_runner, daemon=True)
     _runner_thread.start()
     return {"run_id":"live"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.getenv("SERVICE_PORT", "8000"))
+    print(f"\n=== Gigatrader API starting on 127.0.0.1:{port} ===")
+    uvicorn.run("backend.api:app", host="127.0.0.1", port=port, reload=False)
