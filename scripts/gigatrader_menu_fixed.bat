@@ -75,7 +75,8 @@ echo [2] Start UI (Streamlit)
 echo [3] Start Paper Runner (headless)
 echo [4] Flatten & Halt (kill-switch + close positions)
 echo [5] Stop All (best-effort)
-echo [A] Architecture Diagnostics
+echo [A] Active Architecture Diagnostics (zip)
+echo [P] Passive Architecture Diagnostics (zip)
 echo [D] Diagnostics (venv/backend smoke)
 echo [0] Exit
 echo.
@@ -86,7 +87,8 @@ if /I "%choice%"=="2" goto start_ui
 if /I "%choice%"=="3" goto start_runner
 if /I "%choice%"=="4" goto flatten
 if /I "%choice%"=="5" goto stop_all
-if /I "%choice%"=="A" goto A_diag
+if /I "%choice%"=="A" goto arch_diag_active
+if /I "%choice%"=="P" goto arch_diag_passive
 if /I "%choice%"=="D" goto diagnostics
 if "%choice%"=="0" goto end
 goto menu
@@ -111,15 +113,19 @@ type nul > .kill_switch
 python backend\tools\flatten_all.py
 goto menu
 
-:A_diag
-start "gigatrader-arch-diag" cmd /k python dev\arch_diag.py --zip
-goto menu
-
 :stop_all
 for /f "tokens=2 delims==," %%p in ('
   wmic process where "name='cmd.exe' and CommandLine like '%%gigatrader-%%'"
   get ProcessId /value ^| find "="
 ') do taskkill /PID %%p /F
+goto menu
+
+:arch_diag_active
+start "gigatrader-arch-diag" cmd /k python dev\arch_diag.py --zip
+goto menu
+
+:arch_diag_passive
+start "gigatrader-arch-diag-passive" cmd /k python dev\arch_diag.py --no-active --zip
 goto menu
 
 :diagnostics

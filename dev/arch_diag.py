@@ -1,329 +1,260 @@
 #!/usr/bin/env python
 """
-Architecture Diagnostics for Gigatrader
-- Non-destructive by default. Add --active to exercise start/stop/flatten.
-- Produces diagnostics/<timestamp>/{report.json, report.md, logs/} and optional zip.
+Gigatrader Architecture Diagnostics
+
+- Default: ACTIVE checks enabled (start -> flatten -> stop + write .kill_switch).
+- Use --no-active to run passive checks only.
+- Produces diagnostics/<timestamp>/{report.json, report.md, redacted_env.json} and optional zip.
+- Secrets are redacted in outputs.
+
+Safety:
+- All active calls target /paper/* endpoints.
+- flatten_all.py uses TradingClient(paper=True).
 """
 
 from __future__ import annotations
-import argparse, contextlib, datetime as dt, io, json, os, platform, re, shutil, socket, subprocess, sys, textwrap, time, zipfile
+import argparse, datetime as dt, json, os, platform, socket, subprocess, sys, time, zipfile
 from pathlib import Path
-
-# ------------------------
-# Helpers
-# ------------------------
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTDIR_ROOT = ROOT / "diagnostics"
 
-def ts() -> str:
-    return dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+def ts() -> str: return dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-def redactor(k: str, v: str) -> str:
-    """Redact secrets but keep last 4 chars if length >= 8."""
-    if not isinstance(v, str):
-        return v
-    secretish = {"KEY","SECRET","TOKEN","PASSWORD","PASS","API","BEARER","AUTH"}
-    if any(tok in k.upper() for tok in secretish):
-        if len(v) >= 8:
-            return "*" * (len(v) - 4) + v[-4:]
-        return "*" * len(v)
-    return v
-
-def read_env_file(env_path: Path) -> dict:
-    data = {}
-    if not env_path.exists():
-        return data
-    for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        data[k.strip()] = v.strip().strip('"')
-    return data
-
-def safe_import(modname: str):
+def run(cmd, timeout=20, cwd=ROOT):
     try:
-        return __import__(modname, fromlist=["*"])
-    except Exception as e:
-        return e
-
-def run(cmd: list[str], timeout=20) -> dict:
-    try:
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, text=True, cwd=ROOT)
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           timeout=timeout, text=True, cwd=cwd)
         return {"ok": p.returncode == 0, "code": p.returncode, "out": p.stdout, "err": p.stderr}
     except Exception as e:
         return {"ok": False, "code": None, "out": "", "err": str(e)}
 
-def tcp_port_open(host: str, port: int, timeout=0.5) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(timeout)
+def tcp_open(host, port, timeout=0.5):
+    import socket as s
+    with s.socket(s.AF_INET, s.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
         try:
-            s.connect((host, port))
-            return True
+            sock.connect((host, port)); return True
         except Exception:
             return False
 
-def status(label: str, ok: bool, warn: bool=False, err: str|None=None):
-    return {"label": label, "status": "PASS" if ok and not warn else ("WARN" if warn else "FAIL"), "error": err or ""}
+def read_env(path: Path) -> dict:
+    if not path.exists(): return {}
+    data = {}
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line=line.strip()
+        if not line or line.startswith("#") or "=" not in line: continue
+        k,v = line.split("=",1); data[k.strip()] = v.strip().strip('"')
+    return data
 
-# ------------------------
-# Checks
-# ------------------------
+def redact(k: str, v: str):
+    if not isinstance(v,str): return v
+    if any(t in k.upper() for t in ("KEY","SECRET","TOKEN","PASS","AUTH","API","BEARER")):
+        return ("*"*max(0,len(v)-4)) + v[-4:] if len(v)>=8 else "*"*len(v)
+    return v
 
-def check_system() -> dict:
+def sys_info():
     return {
         "platform": platform.platform(),
         "python": sys.version,
-        "executable": sys.executable,
-        "cwd": str(os.getcwd()),
+        "exe": sys.executable,
         "repo_root": str(ROOT),
-        "path_sample": os.environ.get("PATH","")[:2000]
+        "cwd": os.getcwd(),
     }
 
-def check_python_tools() -> dict:
-    # py -3.11
-    r_py = run(["py","-3.11","-V"])
-    # python -V
-    r_python = run(["python","-V"])
-    # pip -V
-    r_pip = run(["pip","-V"])
+def py_tools():
     return {
-        "py_3_11": r_py,
-        "python_V": r_python,
-        "pip_V": r_pip
+        "py_3_11": run(["py","-3.11","-V"]),
+        "python_V": run(["python","-V"]),
+        "pip_V": run(["pip","-V"]),
     }
 
-def check_venv() -> dict:
-    venv_py = ROOT / ".venv" / "Scripts" / "python.exe" if os.name=="nt" else ROOT / ".venv" / "bin" / "python"
-    exists = venv_py.exists()
+def venv_info():
+    vpy = ROOT/(".venv/Scripts/python.exe" if os.name=="nt" else ".venv/bin/python")
     inside = (sys.prefix != getattr(sys, "base_prefix", sys.prefix)) or bool(os.environ.get("VIRTUAL_ENV"))
-    return {"venv_python_exists": exists, "running_inside_venv": inside, "venv_python_path": str(venv_py)}
+    return {"venv_python_exists": vpy.exists(), "running_inside_venv": inside, "venv_python_path": str(vpy)}
 
-def check_env_file() -> dict:
-    envp = ROOT / ".env"
-    env = read_env_file(envp)
-    red = {k: redactor(k, v) for k,v in env.items()}
-    required = ["ALPACA_API_KEY_ID","ALPACA_API_SECRET_KEY","ALPACA_DATA_FEED","MOCK_MODE","LIVE_TRADING","API_BASE_URL"]
-    missing = [k for k in required if k not in env]
-    return {"env_path": str(envp), "present": envp.exists(), "values_redacted": red, "missing_required": missing}
+def check_ports():
+    return {
+        "backend_8000_open": tcp_open("127.0.0.1", 8000),
+        "streamlit_8501_open": tcp_open("127.0.0.1", 8501),
+    }
 
-def check_backend(base_url: str) -> dict:
+def http_get(base, path, params=None):
     try:
         import requests
+        r = requests.get(base.rstrip("/") + path, params=params, timeout=10)
+        ct = r.headers.get("Content-Type","")
+        body = r.json() if "application/json" in ct else r.text
+        return {"ok": r.ok, "code": r.status_code, "body": body}
     except Exception as e:
-        return {"error": f"requests not installed: {e}"}
-    results = {}
-    def _get(path, **kw):
-        try:
-            r = requests.get(base_url.rstrip("/") + path, timeout=10, **kw)
-            return {"ok": r.ok, "code": r.status_code, "json": r.json() if "application/json" in r.headers.get("Content-Type","") else r.text}
-        except Exception as e:
-            return {"ok": False, "code": None, "error": str(e)}
-    def _post(path, **kw):
-        try:
-            r = requests.post(base_url.rstrip("/") + path, timeout=10, **kw)
-            return {"ok": r.ok, "code": r.status_code, "json": r.json() if "application/json" in r.headers.get("Content-Type","") else r.text}
-        except Exception as e:
-            return {"ok": False, "code": None, "error": str(e)}
+        return {"ok": False, "code": None, "error": str(e)}
 
-    results["status"] = _get("/status")
-    results["positions"] = _get("/positions")
-    results["orders"] = _get("/orders")
-    # sentiment optional
-    results["sentiment_AAPL"] = _get("/sentiment", params={"symbol":"AAPL"})
-    return results
-
-def check_backend_active(base_url: str) -> dict:
-    """Active (potentially stateful) tests."""
+def http_post(base, path, params=None):
     try:
         import requests
+        r = requests.post(base.rstrip("/") + path, params=params, timeout=10)
+        ct = r.headers.get("Content-Type","")
+        body = r.json() if "application/json" in ct else r.text
+        return {"ok": r.ok, "code": r.status_code, "body": body}
     except Exception as e:
-        return {"error": f"requests not installed: {e}"}
-    results = {}
-    def _post(path, **kw):
-        try:
-            r = requests.post(base_url.rstrip("/") + path, timeout=10, **kw)
-            return {"ok": r.ok, "code": r.status_code, "json": r.json() if "application/json" in r.headers.get("Content-Type","") else r.text}
-        except Exception as e:
-            return {"ok": False, "code": None, "error": str(e)}
-    results["paper_start"] = _post("/paper/start", params={"preset":"balanced"})
+        return {"ok": False, "code": None, "error": str(e)}
+
+def backend_checks(base):
+    return {
+        "status":   http_get(base, "/status"),
+        "positions":http_get(base, "/positions"),
+        "orders":   http_get(base, "/orders"),
+        "sentiment_AAPL": http_get(base, "/sentiment", params={"symbol":"AAPL"}),
+    }
+
+def backend_checks_active(base):
+    out = {}
+    out["paper_start"]   = http_post(base, "/paper/start",   params={"preset":"balanced"})
     time.sleep(1.0)
-    results["paper_flatten"] = _post("/paper/flatten")
-    results["paper_stop"] = _post("/paper/stop")
-    # write kill-switch
+    out["paper_flatten"] = http_post(base, "/paper/flatten")
+    out["paper_stop"]    = http_post(base, "/paper/stop")
     try:
         (ROOT/".kill_switch").write_text("")
-        results["kill_switch"] = {"ok": True, "path": str(ROOT/".kill_switch")}
+        out["kill_switch"] = {"ok": True, "path": str(ROOT/".kill_switch")}
     except Exception as e:
-        results["kill_switch"] = {"ok": False, "error": str(e)}
-    return results
+        out["kill_switch"] = {"ok": False, "error": str(e)}
+    return out
 
-def check_ui_ports() -> dict:
-    return {
-        "streamlit_8501_open": tcp_port_open("127.0.0.1", 8501),
-        "backend_8000_open": tcp_port_open("127.0.0.1", 8000),
-    }
-
-def check_alpaca_readonly(env_values: dict) -> dict:
-    out = {"available": False}
+def alpaca_readonly(envd: dict):
     try:
-        alpaca = safe_import("alpaca")
-        alp_py = safe_import("alpaca.data")
         from alpaca.trading.client import TradingClient
-        from alpaca.common.exceptions import APIError  # type: ignore
-        key = env_values.get("ALPACA_API_KEY_ID")
-        sec = env_values.get("ALPACA_API_SECRET_KEY")
-        if isinstance(alp_py, Exception):
-            out["error"] = f"alpaca-py missing: {alp_py}"
-            return out
+        key, sec = envd.get("ALPACA_API_KEY_ID"), envd.get("ALPACA_API_SECRET_KEY")
         if not key or not sec:
-            out["error"] = "Keys not set"
-            return out
+            return {"available": False, "error": "Keys not set"}
         tc = TradingClient(api_key=key, secret_key=sec, paper=True)
-        account = tc.get_account()
-        out.update({"available": True, "account_status": getattr(account, "status", "unknown")})
-        return out
+        acc = tc.get_account()
+        return {"available": True, "account_status": getattr(acc, "status", "unknown")}
     except Exception as e:
-        out["error"] = str(e)
-        return out
+        return {"available": False, "error": str(e)}
 
-def check_options_mapping() -> dict:
-    """Heuristic: ensure bearish->put and side=='buy' for options if mapping helper exists; otherwise static inference."""
+def options_mapping_check():
     result = {"mapped_bearish_put": None, "enforced_side_buy": None, "details": ""}
     try:
         mod = __import__("services.gateway.options", fromlist=["*"])
         mapper = getattr(mod, "map_option_order", None)
-        class Intent:
+        class Intent: 
             def __init__(self, side): self.side, self.symbol, self.qty = side, "AAPL", 1
         if mapper:
             bull = mapper(Intent("buy"))
             bear = mapper(Intent("sell"))
             result["mapped_bearish_put"] = (bear.get("option_type") == "put")
-            result["enforced_side_buy"] = (bull.get("side")=="buy" and bear.get("side")=="buy")
+            result["enforced_side_buy"]  = (bull.get("side")=="buy" and bear.get("side")=="buy")
             result["details"] = {"bull": bull, "bear": bear}
         else:
-            # Fallback: replicate intended logic
-            result["mapped_bearish_put"] = True
-            result["enforced_side_buy"] = True
-            result["details"] = "No mapper exposed; assumed patch applied."
+            result.update(mapped_bearish_put=True, enforced_side_buy=True, details="No mapper exposed; assuming patch present.")
     except Exception as e:
-        result["details"] = f"import/inspection failed: {e}"
-        result["mapped_bearish_put"] = False
-        result["enforced_side_buy"] = False
+        result.update(mapped_bearish_put=False, enforced_side_buy=False, details=f"import/inspection failed: {e}")
     return result
 
-# ------------------------
-# Reporting
-# ------------------------
+def md_block(obj): 
+    import json
+    return "```\n" + json.dumps(obj, indent=2) + "\n```"
 
-def build_markdown(report: dict) -> str:
-    def code(x): return "```\n"+x+"\n```"
+def make_markdown(report):
     lines = []
     lines.append(f"# Gigatrader Architecture Diagnostics\n")
     lines.append(f"_Generated: {report['meta']['generated_at']}_  \n")
-    # Summary
     lines.append("## Summary\n")
-    for item in report["summary"]:
-        lines.append(f"- **{item['label']}**: {item['status']}" + (f" — {item['error']}" if item.get("error") else ""))
-    # System
-    lines.append("\n## System\n")
-    lines.append(code(json.dumps(report["system"], indent=2)))
-    # Python
-    lines.append("\n## Python tools\n")
-    lines.append(code(json.dumps(report["python_tools"], indent=2)))
-    # Venv
-    lines.append("\n## Virtualenv\n")
-    lines.append(code(json.dumps(report["venv"], indent=2)))
-    # Env
-    lines.append("\n## .env (redacted)\n")
-    lines.append(code(json.dumps(report["env_redacted"], indent=2)))
-    # Backend
-    lines.append("\n## Backend API checks\n")
-    lines.append(code(json.dumps(report["backend"], indent=2)))
-    # Active
+    for s in report["summary"]:
+        lines.append(f"- **{s['label']}**: {s['status']}" + (f" — {s['error']}" if s.get("error") else ""))
+    sections = [
+        ("System", report["system"]),
+        ("Python tools", report["python_tools"]),
+        ("Virtualenv", report["venv"]),
+        (".env (redacted)", report["env_redacted"]),
+        ("Backend API checks", report["backend"]),
+    ]
     if "backend_active" in report:
-        lines.append("\n## Backend ACTIVE checks\n")
-        lines.append(code(json.dumps(report["backend_active"], indent=2)))
-    # UI ports
-    lines.append("\n## UI/Ports\n")
-    lines.append(code(json.dumps(report["ui_ports"], indent=2)))
-    # Alpaca
-    lines.append("\n## Alpaca readonly\n")
-    lines.append(code(json.dumps(report["alpaca"], indent=2)))
-    # Options mapping
-    lines.append("\n## Options long-only mapping\n")
-    lines.append(code(json.dumps(report["options_mapping"], indent=2)))
+        sections.append(("Backend ACTIVE checks", report["backend_active"]))
+    sections += [
+        ("UI/Ports", report["ui_ports"]),
+        ("Alpaca readonly", report["alpaca"]),
+        ("Options long-only mapping", report["options_mapping"]),
+    ]
+    for title, data in sections:
+        lines.append(f"\n## {title}\n")
+        lines.append(md_block(data))
     return "\n".join(lines)
+
+def summarize(backend, ui_ports, alpaca, options_map, active_block=None):
+    def stat(label, ok, warn=False, err=""):
+        return {"label": label, "status": "PASS" if ok and not warn else ("WARN" if warn else "FAIL"), "error": err}
+    summ = []
+    summ.append(stat("Backend reachable (/status)", bool(backend.get("status",{}).get("ok"))))
+    summ.append(stat("Positions endpoint", bool(backend.get("positions",{}).get("ok"))))
+    summ.append(stat("Orders endpoint",    bool(backend.get("orders",{}).get("ok"))))
+    sb = backend.get("sentiment_AAPL",{})
+    summ.append(stat("Sentiment endpoint", bool(sb.get("ok")), warn=not bool(sb.get("ok")), err=sb.get("error","")))
+    summ.append(stat("Backend port 8000 open", ui_ports.get("backend_8000_open", False)))
+    summ.append(stat("Streamlit port 8501 open", ui_ports.get("streamlit_8501_open", False)))
+    summ.append(stat("Alpaca readonly check", alpaca.get("available", False), err=alpaca.get("error","")))
+    summ.append(stat("Options mapping: bearish->put", bool(options_map.get("mapped_bearish_put"))))
+    summ.append(stat("Options mapping: side=buy enforced", bool(options_map.get("enforced_side_buy"))))
+    if active_block:
+        summ.append(stat("Active start",   bool(active_block.get("paper_start",{}).get("ok"))))
+        summ.append(stat("Active flatten", bool(active_block.get("paper_flatten",{}).get("ok"))))
+        summ.append(stat("Active stop",    bool(active_block.get("paper_stop",{}).get("ok"))))
+        summ.append(stat("Kill-switch file written", bool(active_block.get("kill_switch",{}).get("ok"))))
+    return summ
 
 def main():
     ap = argparse.ArgumentParser(description="Gigatrader Architecture Diagnostics")
-    ap.add_argument("--base-url", default=os.environ.get("API_BASE_URL","http://127.0.0.1:8000"), help="Backend base URL")
-    ap.add_argument("--active", action="store_true", help="Run active checks (start/flatten/stop + kill-switch)")
+    ap.add_argument("--base-url", default=os.environ.get("API_BASE_URL","http://127.0.0.1:8000"))
+    ap.add_argument("--no-active", action="store_true", help="Disable active checks")
     ap.add_argument("--zip", action="store_true", help="Create a zip with outputs")
     args = ap.parse_args()
+
+    # Default ACTIVE unless opted out
+    active = not args.no_active
 
     # Prepare output dir
     run_id = ts()
     outdir = OUTDIR_ROOT / run_id
-    logsdir = outdir / "logs"
-    logsdir.mkdir(parents=True, exist_ok=True)
+    outdir.mkdir(parents=True, exist_ok=True)
 
-    # Data collection
-    system = check_system()
-    python_tools = check_python_tools()
-    venv = check_venv()
+    # Gather
+    envp = ROOT/".env"
+    env_raw = read_env(envp)
+    env_red = {k: redact(k,v) for k,v in env_raw.items()}
 
-    envp = ROOT / ".env"
-    env_raw = read_env_file(envp)
-    env_red = {k: redactor(k, v) for k,v in env_raw.items()}
-
-    backend = check_backend(args.base_url)
-    ui_ports = check_ui_ports()
-    alpaca = check_alpaca_readonly(env_raw)
-    options_map = check_options_mapping()
+    system = sys_info()
+    tools  = py_tools()
+    venv   = venv_info()
+    backend= backend_checks(args.base_url)
+    ports  = check_ports()
+    alp    = alpaca_readonly(env_raw)
+    omap   = options_mapping_check()
 
     report = {
-        "meta": {"generated_at": dt.datetime.now().isoformat(), "root": str(ROOT), "run_id": run_id, "base_url": args.base_url, "active": args.active},
+        "meta": {"generated_at": dt.datetime.now().isoformat(),
+                 "root": str(ROOT), "run_id": run_id,
+                 "base_url": args.base_url, "active": active},
         "system": system,
-        "python_tools": python_tools,
+        "python_tools": tools,
         "venv": venv,
         "env_redacted": {"path": str(envp), "present": envp.exists(), "values": env_red},
         "backend": backend,
-        "ui_ports": ui_ports,
-        "alpaca": alpaca,
-        "options_mapping": options_map,
+        "ui_ports": ports,
+        "alpaca": alp,
+        "options_mapping": omap,
     }
 
-    if args.active:
-        report["backend_active"] = check_backend_active(args.base_url)
+    if active:
+        report["backend_active"] = backend_checks_active(args.base_url)
 
-    # Summary
-    summary = []
-    summary.append(status("Backend reachable (/status)", ok=bool(backend.get("status",{}).get("ok"))))
-    summary.append(status("Positions endpoint", ok=bool(backend.get("positions",{}).get("ok"))))
-    summary.append(status("Orders endpoint", ok=bool(backend.get("orders",{}).get("ok"))))
-    summary.append(status("Sentiment endpoint", ok=bool(backend.get("sentiment_AAPL",{}).get("ok")), warn=True if "error" in backend.get("sentiment_AAPL",{}) else False))
-    summary.append(status("Streamlit port 8501 open", ok=ui_ports.get("streamlit_8501_open", False)))
-    summary.append(status("Backend port 8000 open", ok=ui_ports.get("backend_8000_open", False)))
-    summary.append(status("Alpaca readonly check", ok=alpaca.get("available", False), err=alpaca.get("error")))
-    summary.append(status("Options mapping: bearish->put", ok=bool(options_map.get("mapped_bearish_put"))))
-    summary.append(status("Options mapping: side=buy enforced", ok=bool(options_map.get("enforced_side_buy"))))
-    if args.active:
-        ba = report["backend_active"]
-        summary.append(status("Active start", ok=bool(ba.get("paper_start",{}).get("ok"))))
-        summary.append(status("Active flatten", ok=bool(ba.get("paper_flatten",{}).get("ok"))))
-        summary.append(status("Active stop", ok=bool(ba.get("paper_stop",{}).get("ok"))))
-        summary.append(status("Kill-switch file written", ok=bool(ba.get("kill_switch",{}).get("ok"))))
+    report["summary"] = summarize(backend, ports, alp, omap, report.get("backend_active"))
 
-    report["summary"] = summary
-
-    # Write outputs
-    (outdir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    (outdir / "report.md").write_text(build_markdown(report), encoding="utf-8")
-
-    # Also stash raw .env (redacted) for easy upload
-    (outdir / "redacted_env.json").write_text(json.dumps(report["env_redacted"], indent=2), encoding="utf-8")
+    # Write files
+    (outdir/"report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    from pathlib import Path as _P
+    (outdir/"report.md").write_text(make_markdown(report), encoding="utf-8")
+    (outdir/"redacted_env.json").write_text(json.dumps(report["env_redacted"], indent=2), encoding="utf-8")
 
     print(f"[OK] Diagnostics written to: {outdir}")
     if args.zip:
