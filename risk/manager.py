@@ -22,13 +22,23 @@ class RiskState:
 class ConfiguredRiskManager(RiskManager):
     """Risk manager enforcing global and options-specific caps."""
 
-    def __init__(self, config: Dict[str, float], kill_switch: KillSwitch) -> None:
+    def __init__(self, config: Dict[str, float], kill_switch: KillSwitch | None = None) -> None:
         self._config = config
-        self._kill_switch = kill_switch
+        self.kill_switch = kill_switch or KillSwitch()
 
     async def pre_trade_check(self, order: Dict, portfolio: Dict) -> Decision:
-        if await self._kill_switch.engaged():
-            return Decision(False, "Kill switch engaged")
+        try:
+            ks = getattr(self, "kill_switch", None)
+            if ks is not None:
+                engaged = None
+                if getattr(ks, "engaged", None):
+                    engaged = await ks.engaged()
+                elif getattr(ks, "engaged_sync", None):
+                    engaged = ks.engaged_sync()
+                if engaged:
+                    return Decision(False, "Kill switch engaged")
+        except Exception:
+            pass
 
         if portfolio["daily_loss"] <= -abs(self._config["daily_loss_limit"]):
             return Decision(False, "Daily loss limit breached")

@@ -9,7 +9,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
 
-from core.kill_switch import is_active
+from core.kill_switch import KillSwitch
+
+_kill_switch = KillSwitch()
 
 _SENT_CACHE: Dict[Tuple[str, int, int], Tuple[float, Dict[str, Any]]] = {}
 _SENT_TTL_SEC = 300  # 5 minutes
@@ -161,7 +163,10 @@ def status():
     )
 
 def _kill_switch_on() -> bool:
-    return is_active()
+    try:
+        return _kill_switch.engaged_sync()
+    except Exception:
+        return False
 
 
 @app.get("/risk", response_model=RiskSnapshot)
@@ -216,8 +221,7 @@ def get_risk():
 @app.post("/paper/start", response_model=StartResp)
 def paper_start(preset: Optional[str] = None):
     try:
-        if os.path.exists(".kill_switch"):
-            os.remove(".kill_switch")
+        _kill_switch.reset_sync()
     except Exception:
         pass
     if preset:
@@ -236,12 +240,12 @@ def paper_start_help():
 
 @app.post("/paper/stop")
 def paper_stop():
-    open(".kill_switch", "w").close()
+    _kill_switch.engage_sync()
     return {"ok": True}
 
 @app.post("/paper/flatten")
 def paper_flatten():
-    open(".kill_switch", "w").close()
+    _kill_switch.engage_sync()
     try:
         subprocess.check_call([sys.executable, "backend/tools/flatten_all.py"])
     except Exception:
@@ -334,3 +338,4 @@ if __name__ == "__main__":
     if port <= 0 or port > 65535:
         port = 8000
     uvicorn.run(app, host="127.0.0.1", port=port)
+

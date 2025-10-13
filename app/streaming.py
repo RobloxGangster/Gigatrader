@@ -32,7 +32,7 @@ except Exception:  # pragma: no cover - testing fallback
             )
 
 from app.data.entitlement import select_feed
-from core.kill_switch import is_active
+from core.kill_switch import KillSwitch
 
 
 def _staleness_threshold() -> float:
@@ -127,9 +127,15 @@ async def stream_bars(symbols: Iterable[str], minutes: int | None = None, on_hea
     stream.subscribe_bars(on_bar, *symbols)
     publish()
 
+    kill_switch = KillSwitch()
+
     async def watchdog():
         while True:
-            if is_active():
+            try:
+                engaged = kill_switch.engaged_sync()
+            except Exception:
+                engaged = False
+            if engaged:
                 print("[health] kill switch engaged; stopping stream.")
                 await stream.stop()
                 break

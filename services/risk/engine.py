@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
-from core.kill_switch import is_active
+from core.kill_switch import KillSwitch
 from services.risk.presets import PRESETS, RiskPreset
 from services.risk.state import Position, StateProvider
 
@@ -65,7 +64,7 @@ def _env_bool(name: str, default: bool) -> bool:
 class RiskManager:
     """Central risk engine enforcing static caps before broker interaction."""
 
-    def __init__(self, state: StateProvider) -> None:
+    def __init__(self, state: StateProvider, kill_switch: KillSwitch | None = None) -> None:
         profile = os.getenv("RISK_PROFILE", "balanced").strip().lower()
         preset: RiskPreset = PRESETS.get(profile, PRESETS["balanced"])
         self.cfg = RiskPreset(
@@ -81,19 +80,7 @@ class RiskManager:
             options_delta_max=_env_float("OPTIONS_DELTA_MAX", preset.options_delta_max),
         )
         self.state = state
-        self._kill_default = _env_bool("KILL_SWITCH", False)
-        self._kill_file = os.getenv("KILL_SWITCH_FILE", ".kill_switch")
-
-    def _kill_switch_engaged(self) -> bool:
-        if _env_bool("KILL_SWITCH", self._kill_default):
-            return True
-        if not self._kill_file:
-            return is_active()
-        try:
-            return is_active(Path(self._kill_file))
-        except OSError:
-            # Fail closed if we cannot determine the kill switch state.
-            return True
+        self.kill_switch = kill_switch or KillSwitch()
 
     def _risk_budget_dollars(self) -> float:
         """Return the per-trade dollar risk budget."""
@@ -126,7 +113,17 @@ class RiskManager:
         symbol_oi: Optional[int] = None,
         symbol_vol: Optional[int] = None,
     ) -> Decision:
-        if self._kill_switch_engaged():
+        try:
+            ks = getattr(self, "kill_switch", None)
+            if ks is None:
+                ks = KillSwitch()
+                self.kill_switch = ks
+            if getattr(ks, "engaged_sync", None) and ks.engaged_sync():
+                return Decision(False, "kill_switch_active")
+        except Exception:
+            pass
+
+        if _env_bool("KILL_SWITCH", False):
             return Decision(False, "kill_switch_active")
 
         day_pnl = self.state.get_day_pnl()
