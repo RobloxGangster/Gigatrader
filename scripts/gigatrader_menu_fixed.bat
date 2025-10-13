@@ -75,6 +75,7 @@ echo [2] Start UI (Streamlit)
 echo [3] Start Paper Runner (headless)
 echo [4] Flatten & Halt (kill-switch + close positions)
 echo [5] Stop All (best-effort)
+echo [A] Architecture Diagnostics
 echo [D] Diagnostics (venv/backend smoke)
 echo [0] Exit
 echo.
@@ -85,6 +86,7 @@ if /I "%choice%"=="2" goto start_ui
 if /I "%choice%"=="3" goto start_runner
 if /I "%choice%"=="4" goto flatten
 if /I "%choice%"=="5" goto stop_all
+if /I "%choice%"=="A" goto A_diag
 if /I "%choice%"=="D" goto diagnostics
 if "%choice%"=="0" goto end
 goto menu
@@ -107,6 +109,10 @@ goto menu
 echo [+] Engaging kill-switch and attempting flatten...
 type nul > .kill_switch
 python backend\tools\flatten_all.py
+goto menu
+
+:A_diag
+start "gigatrader-arch-diag" cmd /k python dev\arch_diag.py --zip
 goto menu
 
 :stop_all
