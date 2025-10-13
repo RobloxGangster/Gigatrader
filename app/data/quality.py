@@ -264,8 +264,8 @@ class FeedHealth:
             raise RuntimeError("alpaca-py is required for historical data") from exc
 
         settings = get_alpaca_settings()
-        key = settings.key_id or None
-        secret = settings.secret_key or None
+        key = settings.api_key_id or None
+        secret = settings.api_secret_key or None
         self._historical_client = StockHistoricalDataClient(api_key=key, secret_key=secret)
         return self._historical_client
 
