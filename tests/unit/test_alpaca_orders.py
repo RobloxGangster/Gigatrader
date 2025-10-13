@@ -1,6 +1,18 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from dataclasses import dataclass
+
+
+@dataclass
+class _StubClient:
+    response: dict
+
+    def __post_init__(self) -> None:
+        self.calls: list[object] = []
+
+    def submit_order(self, *, order_data):
+        self.calls.append(order_data)
+        return self.response
 
 
 def _install_alpaca_stubs() -> None:
@@ -60,24 +72,22 @@ from app.execution.alpaca_orders import submit_order_async, submit_order_sync  #
 
 
 def test_submit_order_sync_forwards_to_client() -> None:
-    client = MagicMock()
+    client = _StubClient(response={"id": "sync"})
     order_req = object()
-    client.submit_order.return_value = {"id": "sync"}
 
     result = submit_order_sync(client, order_req)
 
-    client.submit_order.assert_called_once_with(order_data=order_req)
+    assert client.calls == [order_req]
     assert result == {"id": "sync"}
 
 
 def test_submit_order_async_runs_in_executor() -> None:
     import asyncio
 
-    client = MagicMock()
+    client = _StubClient(response={"id": "async"})
     order_req = object()
-    client.submit_order.return_value = {"id": "async"}
 
     result = asyncio.run(submit_order_async(client, order_req))
 
-    client.submit_order.assert_called_once_with(order_data=order_req)
+    assert client.calls == [order_req]
     assert result == {"id": "async"}
