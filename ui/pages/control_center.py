@@ -19,6 +19,8 @@ from ui.state import (
     RiskSnapshot,
     update_session_state,
 )
+from ui.utils.compat import rerun as st_rerun
+from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
 
 
@@ -129,16 +131,16 @@ def _live_controls(api: BrokerAPI, state: AppSessionState, preset: str) -> None:
 def _risk_overview(snapshot: RiskSnapshot) -> None:
     st.subheader("Risk Snapshot")
     cols = st.columns(5)
-    cols[0].metric("Equity", f"${to_float(snapshot.equity):,.2f}")
-    cols[1].metric("Cash", f"${to_float(snapshot.cash):,.2f}")
-    cols[2].metric("Daily P&L", f"${to_float(snapshot.day_pnl):,.2f}")
+    cols[0].metric("Equity", fmt_currency(snapshot.equity))
+    cols[1].metric("Cash", fmt_currency(snapshot.cash))
+    cols[2].metric("Daily P&L", fmt_signed_currency(snapshot.day_pnl))
     cols[3].metric("Leverage", f"{to_float(snapshot.leverage):.2f}×")
-    cols[4].metric("Open Positions", f"{int(snapshot.open_positions)}")
+    cols[4].metric("Open Positions", int(snapshot.open_positions))
 
     cols = st.columns(3)
-    cols[0].metric("Daily Loss %", f"{to_float(snapshot.daily_loss_pct) * 100:.2f}%")
-    cols[1].metric("Exposure %", f"{to_float(snapshot.exposure_pct) * 100:.2f}%")
-    cols[2].metric("Max Exposure", f"${to_float(snapshot.max_exposure):,.0f}")
+    cols[0].metric("Daily Loss %", fmt_pct(snapshot.daily_loss_pct))
+    cols[1].metric("Exposure %", fmt_pct(snapshot.exposure_pct))
+    cols[2].metric("Max Exposure", fmt_currency(snapshot.max_exposure, digits=0))
 
     if snapshot.breached:
         if snapshot.kill_switch:
@@ -176,7 +178,7 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
         st.code(f"{exc}")
         st.info("Start the API first, then click 'Retry'.")
         if st.button("Retry"):
-            st.rerun()
+            st_rerun()
         return
     update_session_state(last_trace_id=status.get("trace_id"))
 
