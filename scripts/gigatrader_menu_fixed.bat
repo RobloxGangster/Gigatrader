@@ -1,83 +1,37 @@
 @echo on
 setlocal EnableExtensions EnableDelayedExpansion
 
-rem --- Resolve repo root from scripts folder ---
+rem === Resolve repo root ===
 cd /d "%~dp0\.."
 set "ROOT=%CD%"
 if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
-set "LOG=%ROOT%\logs\setup.log"
-echo [INFO] Logging to "%LOG%"
 
-echo [INFO] Start %DATE% %TIME% > "%LOG%"
-echo [INFO] ROOT=%ROOT% >> "%LOG%"
-
-rem --- Pick Python (prefer py -3.11), fallback to python.exe ---
-set "PYTHON_EXE="
-set "PYTHON_ARGS="
-
-for /F "delims=" %%I in ('where py 2^>NUL') do if not defined PYTHON_EXE (
-  set "PYTHON_EXE=%%~fI"
-  set "PYTHON_ARGS=-3.11"
+rem === Ensure venv ===
+if not exist ".venv\Scripts\python.exe" (
+  echo [+] Creating venv with py -3.11
+  C:\Windows\py.exe -3.11 -m venv .venv || (echo [!] venv create failed & pause & exit /b 1)
 )
-if not defined PYTHON_EXE if exist "C:\Windows\py.exe" (
-  set "PYTHON_EXE=C:\Windows\py.exe"
-  set "PYTHON_ARGS=-3.11"
-)
-if not defined PYTHON_EXE for /F "delims=" %%I in ('where python 2^>NUL') do (
-  if not defined PYTHON_EXE set "PYTHON_EXE=%%~fI"
-)
+call ".venv\Scripts\activate.bat" || (echo [!] Failed to activate venv & pause & exit /b 1)
 
-if not defined PYTHON_EXE (
-  echo [ERROR] Python 3.11+ not found in PATH. >> "%LOG%"
-  type "%LOG%"
-  echo Press any key to exit...
-  pause >nul
-  exit /b 1
-)
+python -m pip install --upgrade pip >nul 2>&1
+if exist requirements.txt python -m pip install -r requirements.txt >nul 2>&1
 
-echo [INFO] Using: "%PYTHON_EXE%" %PYTHON_ARGS% >> "%LOG%"
-
-rem --- 1) venv create/activate ---
-echo [STEP] venv create/activate
-"%PYTHON_EXE%" %PYTHON_ARGS% -m venv ".venv" 1>>"%LOG%" 2>&1
-if errorlevel 1 (
-  echo [ERROR] venv creation failed. Full log:
-  type "%LOG%"
-  echo Press any key to exit...
-  pause >nul
-  exit /b 1
-)
-
-rem IMPORTANT: do NOT redirect activation; we want to SEE errors
-call ".venv\Scripts\activate.bat"
-if errorlevel 1 (
-  echo [ERROR] Failed to activate venv. Full log:
-  type "%LOG%"
-  echo Press any key to exit...
-  pause >nul
-  exit /b 1
-)
-
-rem sanity check
-python -V || ( echo [ERROR] Python not available after activation & echo Press any key... & pause >nul & exit /b 1 )
-
-python -m pip install --upgrade pip 1>>"%LOG%" 2>&1
-if exist requirements.txt (
-  echo [+] Installing requirements (skip if already satisfied)...
-  python -m pip install -r requirements.txt 1>>"%LOG%" 2>&1
-)
+rem === Shared env for child windows ===
+set SERVICE_PORT=8000
+set API_BASE_URL=http://127.0.0.1:8000
+set MOCK_MODE=false
+set PYTHONPATH=%ROOT%
 
 :menu
 echo.
 echo ========== Gigatrader ==========
-echo [1] Start Backend (FastAPI) on http://127.0.0.1:8000
-echo [2] Start UI (Streamlit)
+echo [1] Start Backend (FastAPI) on %API_BASE_URL%
+echo [2] Start UI (Streamlit - auto detect)
 echo [3] Start Paper Runner (headless)
 echo [4] Flatten & Halt (kill-switch + close positions)
 echo [5] Stop All (best-effort)
 echo [A] Active Architecture Diagnostics (zip)
 echo [P] Passive Architecture Diagnostics (zip)
-echo [D] Diagnostics (venv/backend smoke)
 echo [0] Exit
 echo.
 set /p choice="Select> "
@@ -89,28 +43,41 @@ if /I "%choice%"=="4" goto flatten
 if /I "%choice%"=="5" goto stop_all
 if /I "%choice%"=="A" goto arch_diag_active
 if /I "%choice%"=="P" goto arch_diag_passive
-if /I "%choice%"=="D" goto diagnostics
 if "%choice%"=="0" goto end
 goto menu
 
 :start_backend
-start "gigatrader-backend" cmd /k python backend\app.py
+start "gigatrader-backend" cmd /k "set PYTHONPATH=%ROOT%&& .venv\Scripts\python.exe backend\app.py"
 goto menu
 
 :start_ui
-set MOCK_MODE=false
-set API_BASE_URL=http://127.0.0.1:8000
-start "gigatrader-ui" cmd /k python -m streamlit run ui\Home.py
+rem --- auto-detect Streamlit entry under ui\ first, then repo-wide fallbacks ---
+set "STREAMLIT_TARGET="
+for %%F in ("ui\Home.py" "ui\app.py" "ui\main.py" "ui\index.py") do (
+  if not defined STREAMLIT_TARGET if exist %%~F set "STREAMLIT_TARGET=%%~F"
+)
+if not defined STREAMLIT_TARGET (
+  for /f "delims=" %%F in ('where /r . streamlit_app.py app.py Home.py main.py index.py 2^>nul') do (
+    if not defined STREAMLIT_TARGET set "STREAMLIT_TARGET=%%~F"
+  )
+)
+if not defined STREAMLIT_TARGET (
+  echo [ERROR] No Streamlit entrypoint found. Candidates under ui\ :
+  dir /s /b /a:-d ui\*.py 2^>nul
+  goto menu
+)
+echo [INFO] STREAMLIT_TARGET=%STREAMLIT_TARGET%
+start "gigatrader-ui" cmd /k "set PYTHONPATH=%ROOT%&& .venv\Scripts\python.exe -m streamlit run "%STREAMLIT_TARGET%""
 goto menu
 
 :start_runner
-start "gigatrader-runner" cmd /k python -m app.cli run
+start "gigatrader-runner" cmd /k "set PYTHONPATH=%ROOT%&& .venv\Scripts\python.exe -m app.cli run"
 goto menu
 
 :flatten
 echo [+] Engaging kill-switch and attempting flatten...
 type nul > .kill_switch
-python backend\tools\flatten_all.py
+.venv\Scripts\python.exe backend\tools\flatten_all.py
 goto menu
 
 :stop_all
@@ -121,17 +88,13 @@ for /f "tokens=2 delims==," %%p in ('
 goto menu
 
 :arch_diag_active
-start "gigatrader-arch-diag" cmd /k python dev\arch_diag.py --zip
+start "gigatrader-arch-diag" cmd /k ".venv\Scripts\python.exe" dev\arch_diag.py --zip
 goto menu
 
 :arch_diag_passive
-start "gigatrader-arch-diag-passive" cmd /k python dev\arch_diag.py --no-active --zip
-goto menu
-
-:diagnostics
-call dev\diag_venv.bat
-if exist dev\smoke.py python dev\smoke.py
+start "gigatrader-arch-diag-passive" cmd /k ".venv\Scripts\python.exe" dev\arch_diag.py --no-active --zip
 goto menu
 
 :end
 exit /b 0
+
