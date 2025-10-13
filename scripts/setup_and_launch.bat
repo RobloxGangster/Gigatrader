@@ -82,7 +82,7 @@ if errorlevel 1 (
 
 REM === Start backend (new window) ===
 echo [STEP] Starting backend on %API_BASE_URL%>> "%SETUP_LOG%"
-start "gigatrader-backend" cmd /k "set PYTHONPATH=%ROOT%&& .venv\Scripts\python.exe backend\app.py"
+start "gigatrader-backend" cmd /k "set PYTHONPATH=%CD%&& .venv\Scripts\python.exe -m backend.server"
 
 REM === Start Streamlit UI via wrapper (new window) ===
 echo [STEP] Starting UI (Streamlit)>> "%SETUP_LOG%"
