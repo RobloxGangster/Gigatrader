@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import streamlit as st
 
@@ -42,7 +44,10 @@ def _greeks_panel(api: BrokerAPI, symbol: str, expiry: str | None) -> None:
     default_contract = f"{symbol} {expiry or 'Next'} 150C"
     contract = st.text_input("Contract", value=default_contract)
     greeks = api.get_greeks(contract)
-    st.json(greeks.model_dump(mode="json"))
+    try:
+        st.json(json.loads(greeks.model_dump_json()))
+    except Exception:
+        st.json(greeks.model_dump(exclude_none=True, serialize_as_any=True))
 
 
 def _spread_builder(df: pd.DataFrame) -> None:
