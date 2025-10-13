@@ -2,6 +2,24 @@
 
 from __future__ import annotations
 
+# Ensure .env is loaded early
+try:
+    from dotenv import load_dotenv  # python-dotenv
+
+    load_dotenv()
+except Exception:
+    # optional dependency; safe to continue if not present
+    pass
+
+# Require pydantic-settings for Pydantic v2 configs
+try:
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ImportError as e:  # pragma: no cover - import guard exercised indirectly
+    raise RuntimeError(
+        "Missing dependency 'pydantic-settings'. "
+        "Install with: pip install 'pydantic-settings>=2.2,<3'"
+    ) from e
+
 from pathlib import Path
 from typing import Any, Dict, Literal
 
@@ -12,7 +30,6 @@ except ModuleNotFoundError:  # pragma: no cover - executed in minimal environmen
     import json
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AlpacaSettings(BaseSettings):
