@@ -134,7 +134,15 @@ def _risk_overview(snapshot: RiskSnapshot) -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Control Center")
-    status = api.get_status()
+    try:
+        status = api.get_status()
+    except Exception as exc:  # noqa: BLE001 - surface backend failures
+        st.error("Backend API is not reachable at the configured address.")
+        st.code(f"{exc}")
+        st.info("Start the API first, then click 'Retry'.")
+        if st.button("Retry"):
+            st.rerun()
+        return
     update_session_state(last_trace_id=status.get("trace_id"))
 
     with st.sidebar:

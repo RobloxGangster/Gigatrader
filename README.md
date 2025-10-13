@@ -9,6 +9,10 @@ This step pins Python, locks dependencies, defines a clean .env schema, adds a p
    - Probes imports; starts API (new window) and Streamlit UI
 3) If it fails, check logs\setup.log and the API window for errors.
 
+- Start with `scripts\win_setup_and_run.cmd`.
+- If the UI shows “Backend API is not reachable”, close it and double-click the “gigatrader-api” window to verify errors, or run:
+  `python -m uvicorn backend.api:app --host 127.0.0.1 --port 8000`
+
 ## Local testing (mirrors CI)
 ```
 pytest -q
