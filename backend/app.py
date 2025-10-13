@@ -117,6 +117,14 @@ def paper_start(preset: Optional[str] = None):
         return JSONResponse(status_code=500, content={"error": runner_last_error})
     return StartResp(run_id="paper-1")
 
+
+@app.get("/paper/start")
+def paper_start_help():
+    return JSONResponse(status_code=405, content={
+        "error": "Method Not Allowed",
+        "hint": "Use POST /paper/start (e.g., curl -X POST http://127.0.0.1:8000/paper/start?preset=balanced)",
+    })
+
 @app.post("/paper/stop")
 def paper_stop():
     open(".kill_switch", "w").close()
