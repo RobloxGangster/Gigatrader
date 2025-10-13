@@ -36,7 +36,7 @@ def test_option_chain_filter(monkeypatch) -> None:
     monkeypatch.setenv("MOCK_MODE", "true")
     at = _run_app()
     nav = next(widget for widget in at.selectbox if widget.label == "Navigation")
-    nav.select("Option Chain & Greeks").run()
+    nav.select("Option Chain").run()
     df_value = at.dataframe[0].value
     if hasattr(df_value, "data"):
         df = df_value.data
@@ -59,7 +59,7 @@ def test_repro_bundle_creation(monkeypatch, tmp_path) -> None:
 
     at = _run_app()
     nav = next(widget for widget in at.selectbox if widget.label == "Navigation")
-    nav.select("Logs & Pacing").run()
+    nav.select("Logs").run()
     button = next(widget for widget in at.button if widget.label == "Create Repro Bundle")
     button.click().run()
     repros = list((tmp_path / "repros").glob("repro_*.zip"))
