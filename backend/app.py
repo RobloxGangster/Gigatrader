@@ -1,11 +1,15 @@
 import os, sys, asyncio, threading, subprocess
+import time
 from pathlib import Path
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Tuple, Dict
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
+
+_SENT_CACHE: Dict[Tuple[str, int, int], Tuple[float, Dict[str, Any]]] = {}
+_SENT_TTL_SEC = 300  # 5 minutes
 
 # ---------- Path + .env ----------
 ROOT = Path(__file__).resolve().parents[1]
@@ -206,30 +210,48 @@ def positions():
 def sentiment(symbol: str, hours_back: int = 24, limit: int = 50):
     """
     Compute a simple sentiment score from recent Alpaca news headlines ([-1,1]).
-    Returns 200 with either real scores or a neutral fallback + reason.
+    Returns 200 with real scores or a neutral fallback + reason.
+    Caches per (symbol,hours_back,limit) for 5 minutes.
     """
+    key = (symbol.upper(), int(hours_back), int(limit))
+    now = time.time()
+    cached = _SENT_CACHE.get(key)
+    if cached:
+        ts, payload = cached
+        if (now - ts) < _SENT_TTL_SEC:
+            payload = dict(payload)  # shallow copy
+            payload["cached"] = True
+            return payload
+
     try:
         from services.sentiment.fetchers import AlpacaNewsFetcher
         from services.sentiment.scoring import heuristic_score
     except Exception as e:
-        return {
+        payload = {
             "symbol": symbol.upper(),
             "score": None,
             "items": [],
             "note": f"Sentiment modules not available: {e}"
         }
+        _SENT_CACHE[key] = (now, payload)
+        return payload
 
     try:
         fetcher = AlpacaNewsFetcher()
         items = fetcher.fetch_headlines(symbol.upper(), hours_back=hours_back, limit=limit)
-        # items: list of dicts with 'headline' and optional 'summary'
         if not items:
-            return {"symbol": symbol.upper(), "score": 0.0, "items": [], "note": "No news found"}
+            payload = {"symbol": symbol.upper(), "score": 0.0, "items": [], "note": "No news found"}
+            _SENT_CACHE[key] = (now, payload)
+            return payload
         scores = [heuristic_score(i.get("headline",""), i.get("summary","")) for i in items]
         score = sum(scores)/len(scores)
-        return {"symbol": symbol.upper(), "score": round(score, 4), "count": len(items), "items": items[:10]}
+        payload = {"symbol": symbol.upper(), "score": round(score, 4), "count": len(items), "items": items[:10]}
+        _SENT_CACHE[key] = (now, payload)
+        return payload
     except Exception as e:
-        return {"symbol": symbol.upper(), "score": 0.0, "items": [], "note": f"Fallback: {e}"}
+        payload = {"symbol": symbol.upper(), "score": 0.0, "items": [], "note": f"Fallback: {e}"}
+        _SENT_CACHE[key] = (now, payload)
+        return payload
 
 # ---------- Entrypoint ----------
 if __name__ == "__main__":
