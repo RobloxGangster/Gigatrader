@@ -11,9 +11,14 @@ from typing import Any, Optional
 try:  # pragma: no cover - exercised when alpaca-py is optional
     from alpaca.common.exceptions import APIError
     from alpaca.trading.client import TradingClient
-    from alpaca.trading.enums import AssetClass, OrderSide, TimeInForce
+    from alpaca.trading.enums import AssetClass, OrderSide, QueryOrderStatus, TimeInForce
     from alpaca.trading.models import Order
-    from alpaca.trading.requests import LimitOrderRequest, StopLossRequest, TakeProfitRequest
+    from alpaca.trading.requests import (
+        GetOrdersRequest,
+        LimitOrderRequest,
+        StopLossRequest,
+        TakeProfitRequest,
+    )
 except ModuleNotFoundError as exc:  # pragma: no cover - easier local testing without alpaca
     raise RuntimeError("alpaca-py must be installed to use AlpacaAdapter") from exc
 
@@ -148,7 +153,8 @@ class AlpacaAdapter:
 
         if self.client is None:
             raise RuntimeError("Alpaca client not configured")
-        return list(self.client.get_orders(status="open", nested=True, limit=500))
+        req = GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=500)
+        return list(self.client.get_orders(filter=req))
 
     def get_positions(self) -> list[Any]:
         """Return the list of positions from Alpaca."""
