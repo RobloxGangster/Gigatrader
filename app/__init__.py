@@ -1,1 +1,1 @@
-"""Application package."""
+# makes "app" a real package
