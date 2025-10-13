@@ -5,5 +5,7 @@ pyarrow
 psycopg2-binary
 fastapi
 uvicorn
+streamlit
+plotly
 ruff
 pytest
