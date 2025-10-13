@@ -47,22 +47,8 @@ start "gigatrader-backend" cmd /k "set PYTHONPATH=%ROOT%&& .venv\Scripts\python.
 goto menu
 
 :start_ui
-set "STREAMLIT_TARGET="
-for %%F in ("ui\Home.py" "ui\app.py" "ui\main.py" "ui\index.py") do (
-  if not defined STREAMLIT_TARGET if exist %%~F set "STREAMLIT_TARGET=%%~F"
-)
-if not defined STREAMLIT_TARGET (
-  for /f "delims=" %%F in ('where /r . streamlit_app.py app.py Home.py main.py index.py 2^>nul') do (
-    if not defined STREAMLIT_TARGET set "STREAMLIT_TARGET=%%~F"
-  )
-)
-if not defined STREAMLIT_TARGET (
-  echo [ERROR] No Streamlit entrypoint found. Candidates under ui\ :
-  dir /s /b /a:-d ui\*.py 2^>nul
-  goto menu
-)
-echo [INFO] STREAMLIT_TARGET=%STREAMLIT_TARGET%
-start "gigatrader-ui" cmd /k "set PYTHONPATH=%ROOT%&& .venv\Scripts\python.exe -m streamlit run "%STREAMLIT_TARGET%""
+rem Always run the wrapper; it finds the real entry and executes it
+start "gigatrader-ui" cmd /k "set PYTHONPATH=%ROOT%&& .venv\Scripts\python.exe" -m streamlit run ui\Home.py
 goto menu
 
 :start_runner
