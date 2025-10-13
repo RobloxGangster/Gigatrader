@@ -6,16 +6,33 @@ import time
 from datetime import datetime, timezone
 from typing import Dict, Iterable
 
-try:
+try:  # pragma: no cover - optional dependency
     from alpaca.data.enums import DataFeed
-except Exception as ex:
-    raise ImportError(
-        "Failed to import alpaca-py. Ensure `alpaca-py` is installed and no local `alpaca/` "
-        "module shadows it. Run scripts\\win_setup_and_run.cmd (it fixes shadowing)."
-    ) from ex
-from alpaca.data.live import StockDataStream
+except Exception:  # pragma: no cover - testing fallback
+    class _StubFeed:
+        def __init__(self, name: str) -> None:
+            self._name = name.upper()
 
-from app.data.entitlement import sip_entitled
+        def __str__(self) -> str:
+            return f"DataFeed.{self._name}"
+
+    class _StubDataFeed:
+        SIP = _StubFeed("SIP")
+        IEX = _StubFeed("IEX")
+
+    DataFeed = _StubDataFeed()  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional dependency
+    from alpaca.data.live import StockDataStream
+except Exception:  # pragma: no cover - testing fallback
+    class StockDataStream:  # type: ignore[override]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise ImportError(
+                "alpaca-py streaming components unavailable; install alpaca-py to stream"
+            )
+
+from app.data.entitlement import select_feed
+from core.kill_switch import is_active
 
 
 def _staleness_threshold() -> float:
@@ -27,11 +44,21 @@ def _staleness_threshold() -> float:
 
 def _select_feed_with_probe() -> DataFeed:
     strict = os.getenv("STRICT_SIP", "").lower() == "true"
-    if sip_entitled():
+    feed_name = select_feed(strict_sip=strict)
+    feed_key = (feed_name or "sip").strip().lower()
+
+    if feed_key == "sip":
         return DataFeed.SIP
+    if feed_key == "iex":
+        if strict:
+            raise RuntimeError("STRICT_SIP=true but SIP entitlement not available.")
+        return DataFeed.IEX
+
+    # Allow custom feeds; only reject when STRICT_SIP forces SIP usage.
     if strict:
         raise RuntimeError("STRICT_SIP=true but SIP entitlement not available.")
-    return DataFeed.IEX
+
+    return getattr(DataFeed, feed_key.upper(), DataFeed.IEX)
 
 
 def _credentials():
@@ -102,7 +129,7 @@ async def stream_bars(symbols: Iterable[str], minutes: int | None = None, on_hea
 
     async def watchdog():
         while True:
-            if os.path.exists(".kill_switch"):
+            if is_active():
                 print("[health] kill switch engaged; stopping stream.")
                 await stream.stop()
                 break
