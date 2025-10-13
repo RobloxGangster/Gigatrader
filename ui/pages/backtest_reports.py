@@ -9,15 +9,16 @@ import streamlit as st
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState
 from ui.utils.charts import render_equity_curve
+from ui.utils.format import fmt_currency, fmt_num, fmt_pct, fmt_signed_currency
+from ui.utils.num import to_float
 
 
 def _metrics(report) -> None:
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Sharpe", report.sharpe)
-    col2.metric("Sortino", report.sortino)
-    col3.metric("MDD", report.max_drawdown)
-    col4.metric("Win Rate", report.win_rate)
-    col5.metric("Turnover", report.turnover)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Sharpe", f"{to_float(report.sharpe):.2f}")
+    col2.metric("Win Rate", fmt_pct(report.win_rate))
+    col3.metric("CAGR", fmt_pct(report.cagr))
+    col4.metric("Max Drawdown", fmt_pct(report.max_drawdown))
 
 
 def _equity_section(report) -> None:

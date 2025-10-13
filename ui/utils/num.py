@@ -1,10 +1,7 @@
 from __future__ import annotations
-
 from decimal import Decimal
-from typing import Any
 
-
-def to_float(x: Any):
+def to_float(x):
     if isinstance(x, Decimal):
         return float(x)
     if isinstance(x, (int, float)):
@@ -12,4 +9,4 @@ def to_float(x: Any):
     try:
         return float(x)
     except Exception:
-        return x  # let caller decide; safe for strings
+        return x
