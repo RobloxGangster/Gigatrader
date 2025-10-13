@@ -9,6 +9,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
 
+from core.kill_switch import is_active
+
 _SENT_CACHE: Dict[Tuple[str, int, int], Tuple[float, Dict[str, Any]]] = {}
 _SENT_TTL_SEC = 300  # 5 minutes
 
@@ -159,7 +161,7 @@ def status():
     )
 
 def _kill_switch_on() -> bool:
-    return os.path.exists(".kill_switch")
+    return is_active()
 
 
 @app.get("/risk", response_model=RiskSnapshot)

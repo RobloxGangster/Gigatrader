@@ -2,6 +2,8 @@ import os, threading
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
+
+from core.kill_switch import is_active
 load_dotenv(override=False)
 
 app = FastAPI(title="Gigatrader API")
@@ -34,7 +36,7 @@ def status():
         "running": _running,
         "profile": _profile,
         "paper": os.getenv("TRADING_MODE","paper")=="paper",
-        "halted": os.path.exists(".kill_switch"),
+        "halted": is_active(),
     }
 
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from core.kill_switch import is_active
 from services.risk.presets import PRESETS, RiskPreset
 from services.risk.state import Position, StateProvider
 
@@ -87,9 +88,9 @@ class RiskManager:
         if _env_bool("KILL_SWITCH", self._kill_default):
             return True
         if not self._kill_file:
-            return False
+            return is_active()
         try:
-            return Path(self._kill_file).exists()
+            return is_active(Path(self._kill_file))
         except OSError:
             # Fail closed if we cannot determine the kill switch state.
             return True

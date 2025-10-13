@@ -6,7 +6,7 @@ def test_probe_fallback(monkeypatch):
     import app.data.entitlement as entitlement
 
     reload(entitlement)
-    entitlement.sip_entitled = lambda symbol="SPY": False  # type: ignore[assignment]
+    entitlement.select_feed = lambda strict_sip=None: "iex"  # type: ignore[assignment]
     import app.streaming as streaming
 
     reload(streaming)
@@ -19,7 +19,7 @@ def test_strict_sip(monkeypatch):
     import app.data.entitlement as entitlement
 
     reload(entitlement)
-    entitlement.sip_entitled = lambda symbol="SPY": False  # type: ignore[assignment]
+    entitlement.select_feed = lambda strict_sip=None: "iex"  # type: ignore[assignment]
     import app.streaming as streaming
 
     reload(streaming)

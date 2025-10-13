@@ -7,7 +7,21 @@ import os
 from pathlib import Path
 
 KILL_SWITCH_ENV = "TRADE_HALT"
+DISABLE_KILL_SWITCH_ENV = "DISABLE_KILL_SWITCH_FOR_TESTS"
 DEFAULT_KILL_FILE = Path(".kill_switch")
+
+
+def _kill_switch_disabled() -> bool:
+    return os.getenv(DISABLE_KILL_SWITCH_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def is_active(path: Path = DEFAULT_KILL_FILE) -> bool:
+    """Return True when the kill switch should halt trading."""
+
+    if _kill_switch_disabled():
+        return False
+    env_active = os.getenv(KILL_SWITCH_ENV, "false").lower() == "true"
+    return env_active or path.exists()
 
 
 class KillSwitch:
@@ -20,9 +34,7 @@ class KillSwitch:
     async def engaged(self) -> bool:
         """Return whether the switch is active."""
 
-        env = os.getenv(KILL_SWITCH_ENV, "false").lower() == "true"
-        file_state = self._path.exists()
-        return env or file_state
+        return is_active(self._path)
 
     async def engage(self) -> None:
         """Activate the kill switch."""
