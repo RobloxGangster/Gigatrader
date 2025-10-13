@@ -78,13 +78,45 @@ class EquityPoint(BaseModelDecimal):
     exposure: Decimal
 
 
+class RiskLimits(BaseModelDecimal):
+    max_position_pct: float
+    max_leverage: float
+    max_daily_loss_pct: float
+
+
 class RiskSnapshot(BaseModelDecimal):
-    run_id: Optional[str]
-    daily_loss_pct: Decimal
-    max_exposure: Decimal
+    run_id: str
+    daily_loss_pct: float
+    max_exposure: float
     open_positions: int
-    leverage: Decimal
-    breached: Dict[str, Decimal]
+    breached: bool
+
+    profile: str
+    equity: float
+    cash: float
+    exposure_pct: float
+    day_pnl: float
+    leverage: float
+    kill_switch: bool
+    limits: RiskLimits
+    timestamp: str
+
+    _NUM_FIELDS = [
+        "daily_loss_pct",
+        "max_exposure",
+        "equity",
+        "cash",
+        "exposure_pct",
+        "day_pnl",
+        "leverage",
+    ]
+
+    @field_validator(*_NUM_FIELDS, mode="before")
+    @classmethod
+    def _num_to_float(cls, v):
+        if isinstance(v, Decimal):
+            return float(v)
+        return v
 
 
 class IndicatorSeries(BaseModelDecimal):

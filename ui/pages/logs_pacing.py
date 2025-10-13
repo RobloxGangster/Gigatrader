@@ -89,7 +89,13 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     _logs_table(log_events)
 
     pacing = api.get_pacing_stats()
-    st.plotly_chart(pacing_history_chart(pacing.history, pacing.max_rpm), use_container_width=True)
+    pacing_chart = pacing_history_chart(pacing.history, pacing.max_rpm)
+    if pacing_chart is not None:
+        st.plotly_chart(pacing_chart, use_container_width=True)
+    else:
+        st.warning("Plotly not installed, showing basic pacing line chart.")
+        history_df = pd.DataFrame({"rpm": [float(v) for v in pacing.history]})
+        st.line_chart(history_df["rpm"])
     st.caption(
         f"RPM {pacing.rpm} · backoff events {pacing.backoff_events} · retries {pacing.retries}"
     )
