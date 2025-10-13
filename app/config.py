@@ -41,7 +41,15 @@ def get_settings() -> Settings:
             "ALPACA_API_SECRET_KEY/ALPACA_API_SECRET in environment."
         )
 
-    paper = _bool("ALPACA_PAPER", True)
+    paper_requested = _bool("ALPACA_PAPER", True)
+    trading_mode = os.getenv("TRADING_MODE", "paper").lower()
+    live_flag = os.getenv("LIVE_TRADING", "false").lower() == "true"
+    live_requested = trading_mode == "live" or not paper_requested
+    if live_requested and not live_flag:
+        raise RuntimeError(
+            "Refusing to enable live trading without LIVE_TRADING=true."
+        )
+    paper = not live_requested
     data_feed = os.getenv("ALPACA_DATA_FEED", "iex").lower()
     symbols = [
         s.strip().upper()

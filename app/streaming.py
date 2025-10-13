@@ -102,6 +102,10 @@ async def stream_bars(symbols: Iterable[str], minutes: int | None = None, on_hea
 
     async def watchdog():
         while True:
+            if os.path.exists(".kill_switch"):
+                print("[health] kill switch engaged; stopping stream.")
+                await stream.stop()
+                break
             now = time.time()
             changed = False
             for sym in list(state["ok"] | state["stale"]):
