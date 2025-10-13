@@ -110,7 +110,7 @@ class Runner:
         self._env_bool = env_bool
         self.market_enabled = self._env_bool("RUN_MARKET", True)
         self.mock_market = self._env_bool("MOCK_MARKET", True)
-        self.sentiment_enabled = self._env_bool("RUN_SENTIMENT", True)
+        self.sentiment_enabled = self._env_bool("RUN_SENTIMENT", False)
         self.ready_timeout = int(os.getenv("READY_CHECK_TIMEOUT_SEC", "5"))
         self.state = InMemoryState()
         self.risk = RiskManager(self.state)
@@ -207,25 +207,17 @@ class Runner:
     def _build_poller(self) -> Optional[Poller]:
         if not self.sentiment_enabled:
             return None
-        from services.sentiment.fetchers import (
-            NewsAPIFetcher,
-            StubFetcher,
-        )  # local import to avoid heavy deps by default
+        from services.sentiment.fetchers import AlpacaNewsFetcher
 
-        api_key = os.getenv("NEWS_API_KEY", "").strip()
-        fetchers: List[object]
-        if api_key:
-            try:
-                fetchers = [NewsAPIFetcher(api_key)]
-            except RuntimeError as exc:
-                self.log.warning(
-                    "sentiment.fetcher.missing_dep",
-                    extra=with_trace({"error": str(exc)}),
-                )
-                fetchers = [StubFetcher("stub")]
-        else:
-            fetchers = [StubFetcher("stub")]
-        return Poller(store=self.senti_store, fetchers=fetchers, symbols=self.symbols)
+        key, secret = self._alpaca_credentials()
+        if not key or not secret:
+            self.log.warning(
+                "sentiment.disabled.missing_creds",
+                extra=with_trace(),
+            )
+            return None
+        fetcher = AlpacaNewsFetcher(key, secret)
+        return Poller(store=self.senti_store, symbols=self.symbols, fetcher=fetcher)
 
     async def _sentiment_task(self) -> None:
         if not self.poller:
