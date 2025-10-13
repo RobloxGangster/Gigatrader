@@ -31,9 +31,9 @@ DEBUG_UI = os.getenv("UI_DEBUG", "").strip().lower() in ("1", "true", "yes")
 
 PAGE_MAP: Dict[str, object] = {
     "Control Center": control_center,
-    "Option Chain": option_chain,
+    "Option Chain & Greeks": option_chain,
     "Backtest Reports": backtest_reports,
-    "Logs": logs_pacing,
+    "Logs & Pacing": logs_pacing,
     "Diagnostics": diagnostics,
 }
 
@@ -49,7 +49,12 @@ def main() -> None:
         st.sidebar.info("Mock mode is enabled")
 
     # Always provide the Navigation selectbox
-    nav_options = ["Control Center", "Option Chain", "Backtest Reports", "Logs"]
+    nav_options = [
+        "Control Center",
+        "Option Chain & Greeks",
+        "Backtest Reports",
+        "Logs & Pacing",
+    ]
     if DEBUG_UI or _is_mock_mode():
         nav_options.append("Diagnostics")
     selection = st.sidebar.selectbox("Navigation", nav_options, index=0)
