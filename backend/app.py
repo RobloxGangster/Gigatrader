@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable, Any, Tuple, Dict
+import uuid
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -112,6 +113,14 @@ class RiskLimits(BaseModel):
 
 
 class RiskSnapshot(BaseModel):
+    # UI-required top-level fields
+    run_id: str
+    daily_loss_pct: float            # fraction of equity lost today [0..1]
+    max_exposure: float              # portfolio notional cap (e.g., MAX_NOTIONAL)
+    open_positions: int
+    breached: bool                   # true if any hard risk breach or kill switch
+
+    # Existing/aux fields
     profile: str
     equity: float
     cash: float
@@ -166,33 +175,60 @@ def _kill_switch_on() -> bool:
     try:
         return _kill_switch.engaged_sync()
     except Exception:
-        return False
+        return os.path.exists(".kill_switch")
+
+
+def _read_run_id() -> str:
+    """Try to read current run id from a file set by paper runner; else 'idle'."""
+    p = Path(".run_id")
+    if p.exists():
+        try:
+            s = p.read_text(encoding="utf-8").strip()
+            if s:
+                return s
+        except Exception:
+            pass
+    return "idle"
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        v = os.environ.get(name)
+        return float(v) if v not in (None, "", "None") else default
+    except Exception:
+        return default
 
 
 @app.get("/risk", response_model=RiskSnapshot)
 def get_risk():
     """
-    Return current risk snapshot from Alpaca account + local controls.
-    Stays 200 OK even without keys, so the UI can render.
+    Return current risk snapshot from Alpaca (if keys present) + local settings.
+    Always returns 200 with safe defaults so the UI can render.
     """
-    limits = RiskLimits(
-        max_position_pct=float(os.environ.get("RISK_MAX_POSITION_PCT", 0.2)),
-        max_leverage=float(os.environ.get("RISK_MAX_LEVERAGE", 2.0)),
-        max_daily_loss_pct=float(os.environ.get("RISK_MAX_DAILY_LOSS_PCT", 0.05)),
-    )
     profile = os.environ.get("RISK_PROFILE", "balanced")
+    limits = RiskLimits(
+        max_position_pct=_env_float("RISK_MAX_POSITION_PCT", 0.2),
+        max_leverage=_env_float("RISK_MAX_LEVERAGE", 2.0),
+        max_daily_loss_pct=_env_float("RISK_MAX_DAILY_LOSS_PCT", 0.05),
+    )
+
+    # Defaults if no keys / API unavailable
+    equity = 0.0
+    cash = 0.0
+    day_pnl = 0.0
+    leverage = 1.0
+    open_positions = 0
 
     try:
         tc = _get_trading_client()
         acct = tc.get_account()
 
-        def _to_float(value: Any, default: float = 0.0) -> float:
+        def _to_float(v, default=0.0):
             try:
-                if hasattr(value, "model_dump"):
-                    dumped = value.model_dump()
-                    if isinstance(dumped, dict):
-                        return float(dumped.get("amount", default))
-                return float(value)
+                if hasattr(v, "model_dump"):
+                    md = v.model_dump()
+                    return float(md.get("amount", default))
+                return float(v)
             except Exception:
                 return float(default)
 
@@ -200,19 +236,51 @@ def get_risk():
         cash = _to_float(getattr(acct, "cash", 0.0), 0.0)
         day_pnl = _to_float(getattr(acct, "day_pl", 0.0), 0.0)
         leverage = float(getattr(acct, "multiplier", 1.0) or 1.0)
-    except Exception:
-        equity, cash, day_pnl, leverage = 0.0, 0.0, 0.0, 1.0
 
-    exposure_pct = 0.0 if equity == 0 else max(0.0, min(1.0, (equity - cash) / max(equity, 1e-9)))
+        try:
+            # positions may be a list of dataclasses; len() is fine
+            open_positions = len(tc.get_all_positions())
+        except Exception:
+            open_positions = 0
+    except Exception:
+        pass
+
+    # Derived & limits from env
+    daily_loss_limit_abs = _env_float("DAILY_LOSS_LIMIT", -1.0)   # absolute currency amount
+    max_notional = _env_float("MAX_NOTIONAL", -1.0)
+
+    # daily loss percent (treat gains as 0% loss)
+    loss_abs = max(0.0, -float(day_pnl))
+    daily_loss_pct = 0.0 if equity <= 0 else (loss_abs / max(equity, 1e-9))
+
+    # max exposure defaults: if not set, approximate from equity * leverage
+    if max_notional <= 0:
+        max_exposure = (equity * max(leverage, 1.0)) or 0.0
+    else:
+        max_exposure = max_notional
+
+    # breach logic: kill switch OR (configured daily loss limit exceeded)
+    limit_breached = False
+    if daily_loss_limit_abs is not None and daily_loss_limit_abs > 0:
+        limit_breached = (loss_abs >= daily_loss_limit_abs)
+
+    kill = _kill_switch_on()
+    breached = bool(kill or limit_breached)
 
     return RiskSnapshot(
+        run_id=_read_run_id(),
+        daily_loss_pct=float(daily_loss_pct),
+        max_exposure=float(max_exposure),
+        open_positions=int(open_positions),
+        breached=breached,
+
         profile=profile,
         equity=float(equity),
         cash=float(cash),
-        exposure_pct=float(exposure_pct),
+        exposure_pct=0.0 if equity == 0 else max(0.0, min(1.0, (equity - cash) / max(equity, 1e-9))),
         day_pnl=float(day_pnl),
         leverage=float(leverage),
-        kill_switch=_kill_switch_on(),
+        kill_switch=kill,
         limits=limits,
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
