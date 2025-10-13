@@ -16,3 +16,30 @@ build/
 /temp
 /notes
 *.log
+# diagnostics & archive
+diagnostics/
+archive/
+
+# caches & coverage
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage*
+coverage.xml
+
+# logs & switch
+logs/
+.kill_switch
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# local env
+.env
+.venv/
