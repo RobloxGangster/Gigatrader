@@ -164,6 +164,13 @@ class RealAPI:
                 },
                 "timestamp": now,
             }
+        # Backward-compat: older backends may not include these keys
+        payload.setdefault("run_id", "idle")
+        payload.setdefault("daily_loss_pct", 0.0)
+        payload.setdefault("max_exposure", float(os.getenv("MAX_NOTIONAL", "0") or 0))
+        payload.setdefault("open_positions", 0)
+        # 'breached' tracks hard risk/kill — default to kill_switch if missing
+        payload.setdefault("breached", bool(payload.get("kill_switch", False)))
         return RiskSnapshot(**payload)
 
     def get_orders(self) -> List[Order]:
