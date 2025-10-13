@@ -14,7 +14,7 @@ from ui.state import AppSessionState, Order, Position
 
 def _orders_table(orders: List[Order]) -> None:
     st.subheader("Live Orders")
-    render_table("orders", [order.dict() for order in orders])
+    render_table("orders", [order.model_dump() for order in orders])
     if not orders:
         return
     with st.expander("Order diagnostics"):
@@ -46,10 +46,10 @@ def _order_actions(orders: List[Order], state: AppSessionState) -> None:
 
 def _positions_section(positions: List[Position]) -> None:
     st.subheader("Positions")
-    render_table("positions", [position.dict() for position in positions])
+    render_table("positions", [position.model_dump() for position in positions])
     if not positions:
         return
-    df = pd.DataFrame([position.dict() for position in positions])
+    df = pd.DataFrame([position.model_dump() for position in positions])
     summary_cols = st.columns(4)
     summary_cols[0].metric("Net Qty", df["qty"].sum())
     summary_cols[1].metric("Unrealized", f"${df['unrealized'].sum():,.2f}")

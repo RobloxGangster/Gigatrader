@@ -23,7 +23,7 @@ def _metrics(report) -> None:
 def _equity_section(report) -> None:
     st.subheader("Equity Curve")
     st.plotly_chart(equity_curve_chart(report.equity_curve), use_container_width=True)
-    df = pd.DataFrame([point.dict() for point in report.equity_curve])
+    df = pd.DataFrame([point.model_dump() for point in report.equity_curve])
     buffer = io.StringIO()
     df.to_csv(buffer, index=False)
     st.download_button(
