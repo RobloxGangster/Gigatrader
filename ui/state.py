@@ -7,16 +7,19 @@ from decimal import Decimal
 from enum import Enum
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, validator
 
 
 class BaseModelDecimal(BaseModel):
     """Base model ensuring Decimals are kept during json serialization."""
 
-    class Config:
-        json_encoders = {Decimal: lambda v: str(v)}
-        arbitrary_types_allowed = True
-        orm_mode = True
+    model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True)
+
+    @field_serializer("*", when_used="json")
+    def _serialize_decimal(cls, value):
+        if isinstance(value, Decimal):
+            return str(value)
+        return value
 
 
 class OrderStatus(str, Enum):
@@ -191,8 +194,7 @@ class AppSessionState(BaseModel):
     last_trace_id: Optional[str] = None
     strategy_params: Dict[str, float] = Field(default_factory=dict)
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 def init_session_state() -> AppSessionState:

@@ -23,7 +23,7 @@ def _indicator_panel(api: BrokerAPI, symbol: str, lookback: int) -> Dict[str, fl
     st.caption(f"Last updated {indicators.updated_at}")
 
     if indicators.series:
-        df = pd.DataFrame([series.dict() for series in indicators.series])
+        df = pd.DataFrame([series.model_dump() for series in indicators.series])
         st.dataframe(df, hide_index=True)
     return {
         "atr": float(indicators.atr),

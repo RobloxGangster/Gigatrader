@@ -76,7 +76,7 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     component = st.text_input("Component contains", value="")
     correlation = st.text_input("Correlation id", value="")
 
-    log_events = [event.dict() for event in api.get_logs(200, level or None)]
+    log_events = [event.model_dump() for event in api.get_logs(200, level or None)]
     if component:
         log_events = [log for log in log_events if component.lower() in log["component"].lower()]
     if correlation:
@@ -95,7 +95,7 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     )
 
     if st.button("Create Repro Bundle"):
-        orders = [order.dict() for order in api.get_orders()]
-        trades = [trade.dict() for trade in api.get_trades(None)]
+        orders = [order.model_dump() for order in api.get_orders()]
+        trades = [trade.model_dump() for trade in api.get_trades(None)]
         bundle = _create_repro_bundle(state, log_events, orders, trades)
         st.success(f"Bundle created: {bundle}")

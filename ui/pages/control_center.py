@@ -144,7 +144,7 @@ def _orders_preview(orders: List[Order]) -> None:
     if not orders:
         st.caption("No working orders.")
         return
-    render_table("cc_orders", [order.dict() for order in orders], page_size=5)
+    render_table("cc_orders", [order.model_dump() for order in orders], page_size=5)
 
 
 def _positions_preview(positions: List[Position]) -> None:
@@ -152,7 +152,7 @@ def _positions_preview(positions: List[Position]) -> None:
     if not positions:
         st.caption("No open positions.")
         return
-    render_table("cc_positions", [position.dict() for position in positions], page_size=5)
+    render_table("cc_positions", [position.model_dump() for position in positions], page_size=5)
 
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:

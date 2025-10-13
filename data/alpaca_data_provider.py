@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import AsyncIterator, Iterable, List
+from typing import Any, AsyncIterator, Iterable, List
 
 from alpaca.data.historical import OptionHistoricalDataClient, StockHistoricalDataClient
 from alpaca.data.live import OptionDataStream, StockDataStream
@@ -14,6 +14,14 @@ from alpaca.data.timeframe import TimeFrame
 from core.interfaces import DataProvider
 
 logger = logging.getLogger(__name__)
+
+
+def _as_dict(payload: Any) -> dict:
+    if hasattr(payload, "model_dump"):
+        return payload.model_dump()
+    if hasattr(payload, "dict"):
+        return payload.dict()
+    raise TypeError(f"Unsupported payload type for serialization: {type(payload)!r}")
 
 
 class AlpacaDataProvider(DataProvider):
@@ -37,7 +45,7 @@ class AlpacaDataProvider(DataProvider):
             limit=1000,
         )
         response = await asyncio.to_thread(self._stock_client.get_stock_bars, request)
-        return [bar.dict() for bar in response]
+        return [_as_dict(bar) for bar in response]
 
     async def get_snapshot(self, symbol: str) -> dict:
         # TODO: Implement snapshot retrieval using alpaca-py once available for options.

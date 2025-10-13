@@ -13,7 +13,7 @@ def _chain_dataframe(
     api: BrokerAPI, symbol: str, expiry: str | None, liquidity_only: bool
 ) -> pd.DataFrame:
     chain = api.get_option_chain(symbol, expiry or None)
-    rows = [row.dict() for row in chain.rows]
+    rows = [row.model_dump() for row in chain.rows]
     df = pd.DataFrame(rows)
     if liquidity_only:
         df = df[df["is_liquid"]]
@@ -42,7 +42,7 @@ def _greeks_panel(api: BrokerAPI, symbol: str, expiry: str | None) -> None:
     default_contract = f"{symbol} {expiry or 'Next'} 150C"
     contract = st.text_input("Contract", value=default_contract)
     greeks = api.get_greeks(contract)
-    st.json(greeks.dict())
+    st.json(greeks.model_dump(mode="json"))
 
 
 def _spread_builder(df: pd.DataFrame) -> None:

@@ -30,7 +30,7 @@ def _filters_form(state: AppSessionState) -> Dict[str, str]:
 def _trade_metrics(trades: List[Trade]) -> None:
     if not trades:
         return
-    df = pd.DataFrame([trade.dict() for trade in trades])
+    df = pd.DataFrame([trade.model_dump() for trade in trades])
     total_pnl = df["pnl"].sum()
     wins = (df["outcome"] == "win").sum()
     win_rate = (wins / len(df)) * 100
@@ -47,10 +47,10 @@ def _trade_inspector(trades: List[Trade]) -> None:
         return
     selection = st.selectbox("Trade", [trade.trade_id for trade in trades], key="trade_select")
     trade: Trade = next(trade for trade in trades if trade.trade_id == selection)
-    st.json(trade.dict())
+    st.json(trade.model_dump(mode="json"))
     st.download_button(
         "Export trade JSON",
-        json.dumps(trade.dict(), indent=2, default=str),
+        json.dumps(trade.model_dump(mode="json"), indent=2),
         file_name=f"trade_{trade.trade_id}.json",
         mime="application/json",
         key="trade_download",
@@ -72,5 +72,5 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     trades = api.get_trades(filters)
 
     _trade_metrics(trades)
-    render_table("trades", [trade.dict() for trade in trades])
+    render_table("trades", [trade.model_dump() for trade in trades])
     _trade_inspector(trades)
