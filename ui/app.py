@@ -6,6 +6,16 @@ from pathlib import Path
 from typing import Dict
 
 import streamlit as st
+
+
+def _hide_streamlit_sidebar_nav() -> None:
+    """Hides Streamlit's automatic multipage sidebar navigator."""
+
+    st.markdown(
+        "<style>section[data-testid='stSidebarNav']{display:none;}</style>",
+        unsafe_allow_html=True,
+    )
+
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,9 +41,9 @@ DEBUG_UI = os.getenv("UI_DEBUG", "").strip().lower() in ("1", "true", "yes")
 
 PAGE_MAP: Dict[str, object] = {
     "Control Center": control_center,
-    "Option Chain & Greeks": option_chain,
+    "Option Chain": option_chain,
     "Backtest Reports": backtest_reports,
-    "Logs & Pacing": logs_pacing,
+    "Logs": logs_pacing,
     "Diagnostics": diagnostics,
 }
 
@@ -41,6 +51,7 @@ PAGE_MAP: Dict[str, object] = {
 def main() -> None:
     load_dotenv(override=False)
     st.set_page_config(page_title="Gigatrader Control Center", layout="wide")
+    _hide_streamlit_sidebar_nav()
 
     st.sidebar.title("Gigatrader")
 
@@ -51,9 +62,9 @@ def main() -> None:
     # Always provide the Navigation selectbox
     nav_options = [
         "Control Center",
-        "Option Chain & Greeks",
+        "Option Chain",
         "Backtest Reports",
-        "Logs & Pacing",
+        "Logs",
     ]
     if DEBUG_UI or _is_mock_mode():
         nav_options.append("Diagnostics")
