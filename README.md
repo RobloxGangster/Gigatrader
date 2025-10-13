@@ -3,12 +3,13 @@ Trading Project – Step 0: Repo hardening & env bootstrap
 This step pins Python, locks dependencies, defines a clean .env schema, adds a paper-trading smoke test that connects to the Alpaca Market Data WebSocket, and sets up CI + linting.
 
 ## Windows Quick Start
-1. Open **Command Prompt** (`cmd.exe`) in the repository folder.
-2. Run `scripts\windows_setup.cmd`.
-   - Creates a Python 3.11 virtual environment, compiles & installs dependencies, and copies `.env` from `.env.example` if needed.
-   - Resolves any local `alpaca/` shadowing via `tools\fix_shadowing.py`.
-   - Starts the FastAPI backend on http://127.0.0.1:8000 and the Streamlit UI.
-3. Populate `.env` with your Alpaca paper credentials. Paper mode is default. Live trading requires setting `LIVE_TRADING=true` and using the **Start Live** button (with confirmation) in the UI.
+1. Run: `scripts\archive_old_scripts.cmd` (one-time) — moves legacy batch files to `scripts\_legacy\`.
+2. Run: `scripts\win_setup_and_run.cmd`
+   - Sets up `.venv`, installs dependencies, fixes Alpaca shadowing
+   - Starts API (kept open) and then Streamlit UI
+3. Edit `.env` with your Alpaca paper keys if not set.
+   - `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`, `APCA_API_BASE_URL=https://paper-api.alpaca.markets`
+Troubleshooting: see `logs\setup.log` and the API window for errors.
 
 ## Local testing (mirrors CI)
 ```
