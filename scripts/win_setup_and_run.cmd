@@ -11,12 +11,27 @@ set "LOG=%ROOT%\logs\setup.log"
 echo [INFO] Starting setup at %DATE% %TIME% > "%LOG%"
 echo [INFO] ROOT=%ROOT% >> "%LOG%"
 
-REM Prefer Python Launcher
-where py >NUL 2>&1 && (set "PY=py -3.11") || (set "PY=python")
+REM Prefer Python Launcher (py.exe) but fall back to python.exe
+set "PYTHON_EXE="
+set "PYTHON_ARGS="
+for /f "delims=" %%I in ('where py 2^>NUL') do if not defined PYTHON_EXE (
+  set "PYTHON_EXE=%%~fI"
+  set "PYTHON_ARGS=-3.11"
+)
+if not defined PYTHON_EXE (
+  for /f "delims=" %%I in ('where python 2^>NUL') do if not defined PYTHON_EXE set "PYTHON_EXE=%%~fI"
+)
+if not defined PYTHON_EXE (
+  echo [ERROR] Python 3.11+ not found in PATH. >> "%LOG%"
+  type "%LOG%"
+  pause
+  exit /b 1
+)
+echo [INFO] Using Python at %PYTHON_EXE% %PYTHON_ARGS% >> "%LOG%"
 
 REM 1) venv
 echo [STEP] Creating/using .venv >> "%LOG%"
-"%PY%" -m venv ".venv" >> "%LOG%" 2>&1
+call "%PYTHON_EXE%" %PYTHON_ARGS% -m venv ".venv" >> "%LOG%" 2>&1
 if errorlevel 1 (
   echo [ERROR] venv creation failed. See logs\setup.log
   type "%LOG%"
