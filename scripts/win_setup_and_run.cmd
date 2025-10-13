@@ -1,85 +1,54 @@
 @echo on
 setlocal EnableExtensions EnableDelayedExpansion
-REM Resolve repo root as the parent of scripts folder
-set "THIS=%~f0"
+
+REM --- Resolve repo root from scripts folder ---
 set "SCRIPTS=%~dp0"
-pushd "%SCRIPTS%\.." || (echo Failed to cd to repo root & pause & exit /b 1)
+pushd "%SCRIPTS%\.." || (echo [FATAL] Failed to cd to repo root & pause & exit /b 1)
 set "ROOT=%CD%"
 if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
 set "LOG=%ROOT%\logs\setup.log"
+echo [INFO] Logging to "%LOG%"
+echo [INFO] Start %DATE% %TIME% > "%LOG%"
+echo [INFO] ROOT=%ROOT%>>"%LOG%"
 
-echo [INFO] Starting setup at %DATE% %TIME% > "%LOG%"
-echo [INFO] ROOT=%ROOT% >> "%LOG%"
-
-REM Prefer Python Launcher (py.exe) but fall back to python.exe
+REM --- Pick Python (prefer py -3.11) ---
 set "PYTHON_EXE="
 set "PYTHON_ARGS="
-for /f "delims=" %%I in ('where py 2^>NUL') do if not defined PYTHON_EXE (
-  set "PYTHON_EXE=%%~fI"
-  set "PYTHON_ARGS=-3.11"
-)
-if not defined PYTHON_EXE (
-  for /f "delims=" %%I in ('where python 2^>NUL') do if not defined PYTHON_EXE set "PYTHON_EXE=%%~fI"
-)
+for /F "delims=" %%I in ('where py 2^>NUL') do if not defined PYTHON_EXE (set "PYTHON_EXE=%%~fI" & set "PYTHON_ARGS=-3.11")
+if not defined PYTHON_EXE if exist "C:\Windows\py.exe" (set "PYTHON_EXE=C:\Windows\py.exe" & set "PYTHON_ARGS=-3.11")
+if not defined PYTHON_EXE for /F "delims=" %%I in ('where python 2^>NUL') do if not defined PYTHON_EXE set "PYTHON_EXE=%%~fI"
 if not defined PYTHON_EXE (
   echo [ERROR] Python 3.11+ not found in PATH. >> "%LOG%"
-  type "%LOG%"
-  pause
-  exit /b 1
+  type "%LOG%" & pause & exit /b 1
 )
-echo [INFO] Using Python at %PYTHON_EXE% %PYTHON_ARGS% >> "%LOG%"
+echo [INFO] Using: "%PYTHON_EXE%" %PYTHON_ARGS% >> "%LOG%"
 
-REM 1) venv
-echo [STEP] Creating/using .venv >> "%LOG%"
+REM --- 1) venv ---
+echo [STEP] venv create/activate
 call "%PYTHON_EXE%" %PYTHON_ARGS% -m venv ".venv" >> "%LOG%" 2>&1
-if errorlevel 1 (
-  echo [ERROR] venv creation failed. See logs\setup.log
-  type "%LOG%"
-  pause
-  exit /b 1
-)
-
+if errorlevel 1 (echo [ERROR] venv creation failed & type "%LOG%" & pause & exit /b 1)
 call ".venv\Scripts\activate.bat" >> "%LOG%" 2>&1
 
-REM 2) pip + pip-tools
-echo [STEP] Upgrading pip and installing pip-tools >> "%LOG%"
-python -m pip install --upgrade pip pip-tools >> "%LOG%" 2>&1 || (
-  echo [ERROR] pip/pip-tools install failed. >> "%LOG%"
-  type "%LOG%"
-  pause
-  exit /b 1
-)
+REM --- 2) ensure pip/pip-tools ---
+echo [STEP] upgrade pip + install pip-tools
+python -m ensurepip --upgrade >> "%LOG%" 2>&1
+python -m pip install --upgrade pip >> "%LOG%" 2>&1
+python -m pip install --upgrade pip-tools >> "%LOG%" 2>&1 || (echo [ERROR] pip-tools install failed & type "%LOG%" & pause & exit /b 1)
 
-REM 3) compile lockfiles if *.in exist
-if exist "requirements-core.in" (
-  ".venv\Scripts\pip-compile.exe" -q requirements-core.in -o requirements-core.txt >> "%LOG%" 2>&1 || (
-    echo [WARN] pip-compile core failed; continuing with existing lockfile >> "%LOG%"
-  )
-)
-if exist "requirements-dev.in" (
-  ".venv\Scripts\pip-compile.exe" -q requirements-dev.in -o requirements-dev.txt >> "%LOG%" 2>&1 || (
-    echo [WARN] pip-compile dev failed; continuing with existing lockfile >> "%LOG%"
-  )
-)
+REM --- 3) lock & install deps (compile if *.in exist; else use existing *.txt) ---
+echo [STEP] compile lockfiles (if present)
+if exist "requirements-core.in" ".venv\Scripts\pip-compile.exe" -q requirements-core.in -o requirements-core.txt >> "%LOG%" 2>&1
+if exist "requirements-dev.in"  ".venv\Scripts\pip-compile.exe" -q requirements-dev.in  -o requirements-dev.txt  >> "%LOG%" 2>&1
 
-REM 4) install deps
-echo [STEP] Installing dependencies >> "%LOG%"
-if exist "requirements-core.txt" (
-  pip install -r requirements-core.txt >> "%LOG%" 2>&1 || goto :pipfail
-) else (
-  echo [ERROR] requirements-core.txt not found. >> "%LOG%"
-  type "%LOG%"
-  pause
-  exit /b 1
-)
-if exist "requirements-dev.txt" (
-  pip install -r requirements-dev.txt >> "%LOG%" 2>&1 || echo [WARN] dev deps failed >> "%LOG%"
-)
+echo [STEP] install from lockfiles
+if not exist "requirements-core.txt" (echo [ERROR] requirements-core.txt missing & type "%LOG%" & pause & exit /b 1)
+pip install -r requirements-core.txt >> "%LOG%" 2>&1 || (echo [ERROR] core install failed & type "%LOG%" & pause & exit /b 1)
+if exist "requirements-dev.txt" pip install -r requirements-dev.txt >> "%LOG%" 2>&1
 
-REM 5) ensure .env
+REM --- 4) scaffold .env ---
 if not exist ".env" if exist ".env.example" copy /Y ".env.example" ".env" >NUL
 
-REM 6) fix alpaca shadowing
+REM --- 5) fix local alpaca shadowing ---
 if not exist "tools" mkdir "tools"
 > "tools\fix_shadowing.py" (
   echo from pathlib import Path
@@ -95,33 +64,32 @@ if not exist "tools" mkdir "tools"
 )
 python "tools\fix_shadowing.py" >> "%LOG%" 2>&1
 
-REM 7) readiness (non-fatal in paper)
+REM --- 6) probe critical imports (alpaca, uvicorn, streamlit) ---
+echo [STEP] import probes
+python - << "PY"  >> "%LOG%" 2>&1
+import sys
+def chk(m):
+    try:
+        __import__(m); print("[OK] import", m)
+    except Exception as e:
+        print("[FAIL] import", m, "->", e); sys.exit(3)
+for m in ("alpaca.data","uvicorn","streamlit"): chk(m)
+print("[OK] probes passed")
+PY
+if errorlevel 3 (echo [ERROR] import probe failed. See logs\setup.log & type "%LOG%" & pause & exit /b 1)
+
+REM --- 7) readiness check (non-fatal missing keys) ---
 python -m cli.main check >> "%LOG%" 2>&1
 
-REM 8) start API (kept in its own window, shows uvicorn logs)
+REM --- 8) start API (separate window, stays open with /k) ---
+echo [STEP] starting API on 127.0.0.1:8000
 start "gigatrader-api" cmd /k ".venv\Scripts\python -m uvicorn backend.api:app --host 127.0.0.1 --port 8000"
-if errorlevel 1 (
-  echo [ERROR] Failed to start API. >> "%LOG%"
-  type "%LOG%"
-  pause
-  exit /b 1
-)
 
-REM 9) start UI here
-".venv\Scripts\streamlit.exe" run "ui\app.py"
-if errorlevel 1 (
-  echo [ERROR] Streamlit failed. >> "%LOG%"
-  type "%LOG%"
-  pause
-  exit /b 1
-)
+REM --- 9) start UI (use python -m to avoid PATH issues) ---
+echo [STEP] starting UI
+python -m streamlit run "ui\app.py"
+if errorlevel 1 (echo [ERROR] Streamlit failed. See logs\setup.log & type "%LOG%" & pause & exit /b 1)
 
-echo [DONE] Completed at %DATE% %TIME% >> "%LOG%"
+echo [DONE] Completed %DATE% %TIME% >> "%LOG%"
 popd
 exit /b 0
-
-:pipfail
-echo [ERROR] pip install failed. See logs\setup.log
-type "%LOG%"
-pause
-exit /b 1
