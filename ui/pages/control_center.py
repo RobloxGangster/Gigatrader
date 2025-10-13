@@ -5,13 +5,20 @@ from __future__ import annotations
 import json
 from difflib import unified_diff
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 import streamlit as st
 
 from ui.components.badges import status_pill
+from ui.components.tables import render_table
 from ui.services.backend import BrokerAPI
-from ui.state import AppSessionState, RiskSnapshot, update_session_state
+from ui.state import (
+    AppSessionState,
+    Order,
+    Position,
+    RiskSnapshot,
+    update_session_state,
+)
 
 
 def _load_config(path: Path) -> str:
@@ -132,6 +139,22 @@ def _risk_overview(snapshot: RiskSnapshot) -> None:
     st.caption(f"Run ID: {snapshot.run_id or '—'}")
 
 
+def _orders_preview(orders: List[Order]) -> None:
+    st.subheader("Orders Snapshot")
+    if not orders:
+        st.caption("No working orders.")
+        return
+    render_table("cc_orders", [order.dict() for order in orders], page_size=5)
+
+
+def _positions_preview(positions: List[Position]) -> None:
+    st.subheader("Positions Snapshot")
+    if not positions:
+        st.caption("No open positions.")
+        return
+    render_table("cc_positions", [position.dict() for position in positions], page_size=5)
+
+
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Control Center")
     try:
@@ -160,5 +183,10 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
 
     snapshot: RiskSnapshot = api.get_risk_snapshot()
     _risk_overview(snapshot)
+
+    orders = api.get_orders()
+    positions = api.get_positions()
+    _orders_preview(orders)
+    _positions_preview(positions)
 
     _run_config_preview()

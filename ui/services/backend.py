@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol
 import requests
 from pydantic import BaseModel, Field
 
+from .config import api_base_url, mock_mode
 from ui.state import (
     EquityPoint,
     Greeks,
@@ -30,7 +31,6 @@ from ui.state import (
 
 _FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "fixtures"
 _DEFAULT_TIMEOUT = 8
-DEFAULT_API = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
 
 class BackendError(RuntimeError):
@@ -94,7 +94,7 @@ class RealAPI:
     """HTTP backed API implementation."""
 
     def __init__(self, base_url: Optional[str] = None) -> None:
-        self.base_url = (base_url or DEFAULT_API).rstrip("/")
+        self.base_url = (base_url or api_base_url()).rstrip("/")
         self.session = requests.Session()
 
     def _request(
@@ -355,6 +355,6 @@ class MockAPI:
 
 def get_backend() -> BrokerAPI:
     """Return the proper backend implementation based on environment variables."""
-    if os.getenv("MOCK_MODE", "false").lower() == "true":
+    if mock_mode():
         return MockAPI()
     return RealAPI()

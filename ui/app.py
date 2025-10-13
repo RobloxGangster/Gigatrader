@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import sys
 from typing import Dict
@@ -24,6 +23,7 @@ from ui.pages import (  # noqa: E402  - Streamlit entrypoint import order
     trade_blotter,
 )
 from ui.services.backend import get_backend
+from ui.services.config import api_base_url, mock_mode
 from ui.state import AppSessionState, init_session_state
 
 _PAGE_REGISTRY: Dict[str, object] = {
@@ -40,10 +40,10 @@ _PAGE_REGISTRY: Dict[str, object] = {
 
 
 def _render_sidebar(state: AppSessionState) -> str:
-    api_base = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+    api_base = api_base_url()
     with st.sidebar:
         st.title("Gigatrader")
-        if os.getenv("MOCK_MODE", "false").lower() == "true":
+        if mock_mode():
             st.info("Mock mode enabled – using fixture backend.")
         st.caption(f"API: {api_base}")
         st.caption(f"Profile: {state.profile}")
