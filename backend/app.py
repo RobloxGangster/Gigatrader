@@ -1,5 +1,5 @@
 import os, asyncio, threading, subprocess, sys
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
@@ -17,6 +17,11 @@ class StatusResp(BaseModel):
     preset: Optional[str] = None
 
 app = FastAPI()
+
+try:
+    from services.sentiment.poller import compute_sentiment
+except Exception:  # pragma: no cover - optional dependency wiring
+    compute_sentiment = None
 
 def start_background_runner(profile: str = "paper"):
     global runner_task, runner_loop
@@ -74,6 +79,41 @@ def positions():
     from app.alpaca_client import get_trading_client
     tc = get_trading_client(paper=True)
     return [getattr(p, "__dict__", dict(p)) for p in tc.get_all_positions()]
+
+
+@app.get("/sentiment")
+def sentiment(symbol: str = Query(..., min_length=1, max_length=10)):
+    if not compute_sentiment:
+        return {"error": "sentiment not available"}
+    result = compute_sentiment(symbol)
+
+    score_value = None
+    features = {}
+
+    if isinstance(result, tuple):
+        if result:
+            score_value = result[0]
+        if len(result) > 1 and isinstance(result[1], dict):
+            features = result[1]
+    elif isinstance(result, dict):
+        score_value = result.get("score")
+        features = result.get("features", {}) or {}
+    elif hasattr(result, "score"):
+        score_value = getattr(result, "score")
+        maybe_features = getattr(result, "features", {})
+        if isinstance(maybe_features, dict):
+            features = maybe_features
+    else:
+        score_value = result
+
+    score = float(score_value if score_value is not None else 0.0)
+    if not isinstance(features, dict):
+        try:
+            features = dict(features)
+        except Exception:
+            features = {}
+
+    return {"symbol": symbol.upper(), "score": score, "features": features}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
