@@ -106,6 +106,7 @@ class RiskLimits(BaseModel):
     max_leverage: float = 2.0
     max_daily_loss_pct: float = 0.05
 
+
 class RiskSnapshot(BaseModel):
     profile: str
     equity: float
@@ -160,13 +161,12 @@ def status():
 def _kill_switch_on() -> bool:
     return os.path.exists(".kill_switch")
 
+
 @app.get("/risk", response_model=RiskSnapshot)
 def get_risk():
     """
-    Return current risk snapshot derived from Alpaca account + local controls.
-    - Uses TradingClient (paper) to read equity/cash/day pnl/leverage.
-    - Limits come from env (optional) or sensible defaults.
-    - kill_switch reflects presence of .kill_switch file.
+    Return current risk snapshot from Alpaca account + local controls.
+    Stays 200 OK even without keys, so the UI can render.
     """
     limits = RiskLimits(
         max_position_pct=float(os.environ.get("RISK_MAX_POSITION_PCT", 0.2)),
@@ -179,36 +179,20 @@ def get_risk():
         tc = _get_trading_client()
         acct = tc.get_account()
 
-        def to_float(value: Any) -> float:
-            if hasattr(value, "model_dump"):
-                try:
+        def _to_float(value: Any, default: float = 0.0) -> float:
+            try:
+                if hasattr(value, "model_dump"):
                     dumped = value.model_dump()
                     if isinstance(dumped, dict):
-                        return float(dumped.get("amount", dumped))
-                except Exception:
-                    pass
-            try:
+                        return float(dumped.get("amount", default))
                 return float(value)
             except Exception:
-                return 0.0
+                return float(default)
 
-        equity = to_float(getattr(acct, "equity", 0.0))
-        cash = to_float(getattr(acct, "cash", 0.0))
-        day_pnl = to_float(getattr(acct, "daytrading_buying_power", 0.0)) * 0.0
-        try:
-            day_pnl = float(getattr(acct, "daytrading_buying_power", 0.0)) * 0.0
-            if hasattr(acct, "daytrade_count"):
-                _ = acct.daytrade_count
-        except Exception:
-            pass
-        try:
-            day_pnl = float(getattr(acct, "day_pl", day_pnl))
-        except Exception:
-            pass
-        try:
-            leverage = float(getattr(acct, "multiplier", 1.0))
-        except Exception:
-            leverage = 1.0
+        equity = _to_float(getattr(acct, "equity", 0.0), 0.0)
+        cash = _to_float(getattr(acct, "cash", 0.0), 0.0)
+        day_pnl = _to_float(getattr(acct, "day_pl", 0.0), 0.0)
+        leverage = float(getattr(acct, "multiplier", 1.0) or 1.0)
     except Exception:
         equity, cash, day_pnl, leverage = 0.0, 0.0, 0.0, 1.0
 
