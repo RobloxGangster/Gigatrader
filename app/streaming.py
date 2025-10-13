@@ -35,13 +35,28 @@ def _select_feed_with_probe() -> DataFeed:
 
 
 def _credentials():
-    return os.getenv("ALPACA_API_KEY"), os.getenv("ALPACA_API_SECRET")
+    """Return Alpaca credentials supporting legacy and new env var names."""
+
+    key = (
+        os.getenv("ALPACA_API_KEY")
+        or os.getenv("ALPACA_API_KEY_ID")
+        or os.getenv("APCA_API_KEY_ID")
+    )
+    secret = (
+        os.getenv("ALPACA_API_SECRET")
+        or os.getenv("ALPACA_API_SECRET_KEY")
+        or os.getenv("APCA_API_SECRET_KEY")
+    )
+    return key, secret
 
 
 async def stream_bars(symbols: Iterable[str], minutes: int | None = None, on_health=None):
     key, secret = _credentials()
     if not key or not secret:
-        raise RuntimeError("Missing ALPACA_API_KEY/ALPACA_API_SECRET.")
+        raise RuntimeError(
+            "Missing Alpaca credentials. Ensure ALPACA_API_KEY/ALPACA_API_SECRET or "
+            "APCA_API_KEY_ID/APCA_API_SECRET_KEY are set."
+        )
     feed = _select_feed_with_probe()
     stream = StockDataStream(key, secret, feed=feed)
     last_update: Dict[str, float] = {}
