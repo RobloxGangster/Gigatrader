@@ -146,7 +146,8 @@ def _equity_section(report) -> None:
 
 
 def _trade_tree_placeholder() -> None:
-    with st.expander("Trade tree / diagnostics"):
+    st.subheader("Trade tree / diagnostics")
+    with st.container():
         st.write("Detailed trade attribution to be sourced from backend HTML report.")
 
 
