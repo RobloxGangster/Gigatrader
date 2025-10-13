@@ -1,9 +1,37 @@
 import os, asyncio, threading, subprocess, sys
 from fastapi import FastAPI, Query
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Callable, Any
 import uvicorn
 
+# --- NEW: direct Alpaca client helper (do not depend on app.alpaca_client) ---
+def _get_trading_client():
+    """Create a paper TradingClient using env credentials."""
+    from alpaca.trading.client import TradingClient
+    key = os.environ.get("ALPACA_API_KEY_ID")
+    sec = os.environ.get("ALPACA_API_SECRET_KEY")
+    if not key or not sec:
+        raise RuntimeError("Missing ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY in environment")
+    # Always paper for safety
+    return TradingClient(api_key=key, secret_key=sec, paper=True)
+
+
+def _safe_dump(obj: Any):
+    """Serialize Alpaca objects without assuming Pydantic version."""
+    # Pydantic v2: model_dump; v1: dict; fallback: public attrs
+    for attr in ("model_dump", "dict"):
+        fn: Optional[Callable] = getattr(obj, attr, None)
+        if callable(fn):
+            try:
+                return fn()
+            except Exception:
+                pass
+    try:
+        return {k: v for k, v in vars(obj).items() if not k.startswith("_")}
+    except Exception:
+        return str(obj)
+
+# --- Runner plumbing unchanged ---
 runner_task = None
 runner_loop = None
 
@@ -36,21 +64,34 @@ def start_background_runner(profile: str = "paper"):
         runner_task = runner_loop.create_task(run_cli(async_mode=True, profile=profile))
         runner_loop.run_until_complete(runner_task)
 
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
+    threading.Thread(target=_run, daemon=True).start()
+
+
+# --- NEW: health endpoint
+@app.get("/health")
+def health():
+    return {"ok": True}
+
 
 @app.get("/status", response_model=StatusResp)
 def status():
     return StatusResp(
         profile=os.environ.get("LIVE_TRADING", "false") == "true" and "live" or "paper",
-        mode="running" if runner_task else "stopped",
+        mode="running" if runner_task and not runner_task.done() else "stopped",
         market_open=False,
         preset=os.environ.get("RISK_PROFILE", "balanced"),
     )
 
 @app.post("/paper/start", response_model=StartResp)
 def paper_start(preset: Optional[str] = None):
-    os.environ["RISK_PROFILE"] = preset or os.environ.get("RISK_PROFILE", "balanced")
+    # Clear any prior kill-switch so the runner can actually start
+    try:
+        if os.path.exists(".kill_switch"):
+            os.remove(".kill_switch")
+    except Exception:
+        pass
+    if preset:
+        os.environ["RISK_PROFILE"] = preset
     start_background_runner(profile="paper")
     return StartResp(run_id="paper-1")
 
@@ -70,15 +111,21 @@ def paper_flatten():
 
 @app.get("/orders")
 def orders():
-    from app.alpaca_client import get_trading_client
-    tc = get_trading_client(paper=True)
-    return [getattr(o, "__dict__", dict(o)) for o in tc.get_orders()]
+    tc = _get_trading_client()
+    try:
+        data = tc.get_orders()
+        return [_safe_dump(o) for o in data]
+    except Exception as e:
+        return {"error": f"orders failed: {e}"}
 
 @app.get("/positions")
 def positions():
-    from app.alpaca_client import get_trading_client
-    tc = get_trading_client(paper=True)
-    return [getattr(p, "__dict__", dict(p)) for p in tc.get_all_positions()]
+    tc = _get_trading_client()
+    try:
+        data = tc.get_all_positions()
+        return [_safe_dump(p) for p in data]
+    except Exception as e:
+        return {"error": f"positions failed: {e}"}
 
 
 @app.get("/sentiment")
@@ -116,4 +163,11 @@ def sentiment(symbol: str = Query(..., min_length=1, max_length=10)):
     return {"symbol": symbol.upper(), "score": score, "features": features}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Honor SERVICE_PORT, but treat 0/invalid as 8000
+    try:
+        port = int(os.environ.get("SERVICE_PORT", "8000"))
+    except Exception:
+        port = 8000
+    if port <= 0 or port > 65535:
+        port = 8000
+    uvicorn.run(app, host="127.0.0.1", port=port)
