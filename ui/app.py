@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import sys
 from typing import Dict
@@ -26,6 +27,10 @@ from ui.services.backend import get_backend
 from ui.services.config import api_base_url, mock_mode
 from ui.state import AppSessionState, init_session_state
 
+
+def _is_mock_mode() -> bool:
+    return os.getenv("MOCK_MODE", "").strip().lower() in ("1", "true", "yes")
+
 _PAGE_REGISTRY: Dict[str, object] = {
     "Control Center": control_center,
     "Orders & Positions": orders_positions,
@@ -38,28 +43,46 @@ _PAGE_REGISTRY: Dict[str, object] = {
     "Logs & Pacing": logs_pacing,
 }
 
-
-def _render_sidebar(state: AppSessionState) -> str:
-    api_base = api_base_url()
-    with st.sidebar:
-        st.title("Gigatrader")
-        if mock_mode():
-            st.info("Mock mode enabled – using fixture backend.")
-        st.caption(f"API: {api_base}")
-        st.caption(f"Profile: {state.profile}")
-        selection = st.selectbox("Navigation", list(_PAGE_REGISTRY.keys()), index=0)
-        return selection
+_NAVIGATION_MAP: Dict[str, str] = {
+    "Control Center": "Control Center",
+    "Option Chain": "Option Chain & Greeks",
+    "Backtest Reports": "Backtest Reports",
+    "Logs": "Logs & Pacing",
+}
 
 
 def main() -> None:
     load_dotenv(override=False)
     st.set_page_config(page_title="Gigatrader Control Center", layout="wide")
 
-    state = init_session_state()
+    state: AppSessionState = init_session_state()
     api = get_backend()
-    selection = _render_sidebar(state)
 
-    page = _PAGE_REGISTRY.get(selection, control_center)
+    st.sidebar.title("Gigatrader")
+    if _is_mock_mode():
+        st.sidebar.info("Mock mode is enabled")
+    elif mock_mode():
+        st.sidebar.info("Mock mode enabled – using fixture backend.")
+    st.sidebar.caption(f"API: {api_base_url()}")
+    st.sidebar.caption(f"Profile: {state.profile}")
+
+    nav_options = ["Control Center", "Option Chain", "Backtest Reports", "Logs"]
+    nav_seed = set(nav_options)
+    nav_options.extend([key for key in _PAGE_REGISTRY.keys() if key not in nav_seed])
+    selection = st.sidebar.selectbox("Navigation", nav_options, index=0)
+
+    if _is_mock_mode():
+        if st.button("Start Paper"):
+            try:
+                import requests
+
+                base = os.getenv("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+                requests.post(f"{base}/paper/start", timeout=1)
+            except Exception:
+                pass
+
+    page_key = _NAVIGATION_MAP.get(selection, selection)
+    page = _PAGE_REGISTRY.get(page_key, control_center)
     if hasattr(page, "render"):
         page.render(api, state)  # type: ignore[attr-defined]
     else:  # pragma: no cover - defensive programming
