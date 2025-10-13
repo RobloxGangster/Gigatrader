@@ -8,6 +8,8 @@ from typing import Any, Dict, Iterable, List
 import pandas as pd
 import streamlit as st
 
+from ui.utils.compat import rerun as st_rerun
+
 
 def render_table(name: str, rows: Iterable[Dict[str, Any]], *, page_size: int = 25) -> None:
     """Render a paginated table with CSV download support."""
@@ -29,12 +31,12 @@ def render_table(name: str, rows: Iterable[Dict[str, Any]], *, page_size: int = 
         if st.button("Prev", disabled=page == 0, key=f"{name}_prev"):
             page = max(page - 1, 0)
             st.session_state[f"{name}_page"] = page
-            st.experimental_rerun()
+            st_rerun()
     with col3:
         if st.button("Next", disabled=end >= total_rows, key=f"{name}_next"):
             page = min(page + 1, (total_rows - 1) // page_size)
             st.session_state[f"{name}_page"] = page
-            st.experimental_rerun()
+            st_rerun()
 
     st.dataframe(df.iloc[start:end])
 
