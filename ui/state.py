@@ -7,7 +7,14 @@ from decimal import Decimal
 from enum import Enum
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FieldValidationInfo,
+    field_serializer,
+    field_validator,
+)
 
 
 class BaseModelDecimal(BaseModel):
@@ -119,12 +126,14 @@ class ChainRow(BaseModelDecimal):
     option_type: str
     is_liquid: bool = True
 
-    @validator("mid", pre=True, always=True)
-    def default_mid(cls, v, values):  # type: ignore[override]
+    @field_validator("mid", mode="before")
+    @classmethod
+    def default_mid(cls, v, info: FieldValidationInfo):
         if v is not None:
             return v
-        bid = values.get("bid")
-        ask = values.get("ask")
+        data = info.data
+        bid = data.get("bid") if data else None
+        ask = data.get("ask") if data else None
         if bid is None or ask is None:
             return Decimal("0")
         return (Decimal(str(bid)) + Decimal(str(ask))) / Decimal("2")
