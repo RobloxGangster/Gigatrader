@@ -1,4 +1,6 @@
-import os, sys, asyncio, threading, subprocess
+import asyncio
+import threading
+import subprocess
 import logging
 import time
 from datetime import datetime, timezone
@@ -9,6 +11,15 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
+
+# --- import bootstrap: ensure repo root is on sys.path ---
+import sys, pathlib, os
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+# also export PYTHONPATH for any subprocesses spawned from here
+os.environ.setdefault("PYTHONPATH", str(ROOT))
+# ----------------------------------------------------------
 
 from app.execution.alpaca_adapter import AlpacaAdapter
 from app.execution.router import ExecIntent, OrderRouter
@@ -22,9 +33,6 @@ _SENT_CACHE: Dict[Tuple[str, int, int], Tuple[float, Dict[str, Any]]] = {}
 _SENT_TTL_SEC = 300  # 5 minutes
 
 # ---------- Path + .env ----------
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 try:
     from dotenv import load_dotenv, find_dotenv
