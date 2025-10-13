@@ -9,13 +9,26 @@ import streamlit as st
 
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState, EquityPoint
-from ui.utils.charts import equity_curve_chart, exposure_chart, risk_gauge_chart
+from ui.utils.charts import exposure_chart, render_equity_curve, risk_gauge_chart
 
 
 def _equity_summary(points: list[EquityPoint]) -> None:
     st.subheader("Equity Overview")
-    st.plotly_chart(equity_curve_chart(points), use_container_width=True)
-    st.plotly_chart(exposure_chart(points), use_container_width=True)
+    render_equity_curve(points)
+
+    exposure_fig = exposure_chart(points)
+    if exposure_fig is not None:
+        st.plotly_chart(exposure_fig, use_container_width=True)
+    else:
+        st.warning("Plotly not installed, showing basic exposure line chart.")
+        exposure_df = pd.DataFrame(
+            {
+                "timestamp": [point.timestamp for point in points],
+                "exposure": [float(point.exposure) for point in points],
+            }
+        )
+        exposure_df["timestamp"] = pd.to_datetime(exposure_df["timestamp"])
+        st.line_chart(exposure_df.set_index("timestamp")["exposure"].to_frame())
 
     trailing_points = points[-10:]
     avg_drawdown = mean(float(point.drawdown) for point in trailing_points)
@@ -29,24 +42,32 @@ def _risk_dials(points: list[EquityPoint], snapshot) -> None:
     st.subheader("Risk Dials")
     current_exposure = float(points[-1].exposure)
     cols = st.columns(4)
-    cols[0].plotly_chart(
-        risk_gauge_chart(
-            abs(float(snapshot.daily_loss_pct)), limit=8, title="Daily Loss", suffix="%"
-        ),
-        use_container_width=True,
+    fallback_used = False
+
+    def _render_gauge(col, value: float, *, limit: float, title: str, suffix: str = "") -> bool:
+        fig = risk_gauge_chart(value, limit=limit, title=title, suffix=suffix)
+        if fig is not None:
+            col.plotly_chart(fig, use_container_width=True)
+            return False
+        formatted_value = f"{value:.2f}{suffix}" if suffix else f"{value:.2f}"
+        col.metric(title, formatted_value)
+        return True
+
+    fallback_used |= _render_gauge(
+        cols[0], abs(float(snapshot.daily_loss_pct)), limit=8, title="Daily Loss", suffix="%"
     )
-    cols[1].plotly_chart(
-        risk_gauge_chart(current_exposure, limit=100, title="Exposure", suffix="%"),
-        use_container_width=True,
+    fallback_used |= _render_gauge(
+        cols[1], current_exposure, limit=100, title="Exposure", suffix="%"
     )
-    cols[2].plotly_chart(
-        risk_gauge_chart(float(snapshot.open_positions), limit=20, title="Open Positions"),
-        use_container_width=True,
+    fallback_used |= _render_gauge(
+        cols[2], float(snapshot.open_positions), limit=20, title="Open Positions"
     )
-    cols[3].plotly_chart(
-        risk_gauge_chart(float(snapshot.leverage), limit=6, title="Leverage"),
-        use_container_width=True,
+    fallback_used |= _render_gauge(
+        cols[3], float(snapshot.leverage), limit=6, title="Leverage"
     )
+
+    if fallback_used:
+        st.warning("Plotly not installed, displaying numeric values instead of gauges.")
 
 
 def _risk_table(snapshot) -> None:

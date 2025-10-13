@@ -8,7 +8,7 @@ import streamlit as st
 
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState
-from ui.utils.charts import equity_curve_chart
+from ui.utils.charts import render_equity_curve
 
 
 def _metrics(report) -> None:
@@ -22,7 +22,7 @@ def _metrics(report) -> None:
 
 def _equity_section(report) -> None:
     st.subheader("Equity Curve")
-    st.plotly_chart(equity_curve_chart(report.equity_curve), use_container_width=True)
+    render_equity_curve(report.equity_curve)
     df = pd.DataFrame([point.model_dump() for point in report.equity_curve])
     buffer = io.StringIO()
     df.to_csv(buffer, index=False)
