@@ -5,7 +5,7 @@ from __future__ import annotations
 # --- Robust .env bootstrap (search repo root & parents) ---
 import os
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional, Tuple
+from typing import Any, Dict, Literal, Optional
 
 try:
     from dotenv import load_dotenv, find_dotenv  # python-dotenv
@@ -34,38 +34,22 @@ except ModuleNotFoundError:  # pragma: no cover - executed in minimal environmen
     yaml = None
     import json
 
-from pydantic import BaseModel, Field, field_validator
-
-
-def _getenv(name: str) -> Optional[str]:
-    v = os.environ.get(name)
-    if v is None or str(v).strip() == "":
-        return None
-    return v.strip()
-
-
-def _normalize_base_url(url: Optional[str]) -> Optional[str]:
-    if not url:
-        return None
-    u = url.strip()
-    # Users sometimes paste '/v2' or trailing slashes; strip them.
-    u = u.rstrip('/')
-    # standard paper host
-    if u.lower().endswith("/v2"):
-        u = u[:-3]
-    return u
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 
 class AlpacaSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
-    # Defaults are benign; we will override with explicit envs below
-    api_key_id: str = Field(default="")
-    api_secret_key: str = Field(default="")
-    base_url: str = Field(default="https://paper-api.alpaca.markets")
+    api_key_id: str | None = Field(default=None, validation_alias="ALPACA_API_KEY_ID")
+    api_secret_key: str | None = Field(default=None, validation_alias="ALPACA_API_SECRET_KEY")
+    apca_key_id: str | None = Field(default=None, validation_alias="APCA_API_KEY_ID")
+    apca_secret_key: str | None = Field(default=None, validation_alias="APCA_API_SECRET_KEY")
+    base_url: str | None = Field(default=None, validation_alias=AliasChoices("APCA_API_BASE_URL", "ALPACA_API_BASE_URL"))
     paper: bool = True
-    request_timeout_s: float = 10.0
-    max_retries: int = 3
-    retry_backoff_s: float = 0.75
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 class OrderDefaults(BaseSettings):
@@ -75,70 +59,6 @@ class OrderDefaults(BaseSettings):
     allow_brackets: bool = Field(default=True, env="ALLOW_BRACKETS")
     default_tp_pct: float = Field(default=0.01, env="DEFAULT_TP_PCT")
     default_sl_pct: float = Field(default=0.005, env="DEFAULT_SL_PCT")
-
-
-def _resolve_alpaca_from_env() -> Dict[str, Tuple[Optional[str], str]]:
-    """
-    Returns a mapping of field -> (value, source) without exposing secrets.
-    Tries both ALPACA_* and APCA_* names; base URL from APCA_API_BASE_URL or ALPACA_API_BASE_URL.
-    """
-
-    key_env = _getenv("ALPACA_API_KEY_ID")
-    fallback_key_env = _getenv("APCA_API_KEY_ID")
-    key = key_env or fallback_key_env
-    key_src = (
-        "ALPACA_API_KEY_ID"
-        if key_env
-        else ("APCA_API_KEY_ID" if fallback_key_env else "-")
-    )
-
-    sec_env = _getenv("ALPACA_API_SECRET_KEY")
-    fallback_sec_env = _getenv("APCA_API_SECRET_KEY")
-    sec = sec_env or fallback_sec_env
-    sec_src = (
-        "ALPACA_API_SECRET_KEY"
-        if sec_env
-        else ("APCA_API_SECRET_KEY" if fallback_sec_env else "-")
-    )
-
-    url_env = _getenv("APCA_API_BASE_URL")
-    fallback_url_env = _getenv("ALPACA_API_BASE_URL")
-    url = _normalize_base_url(url_env or fallback_url_env)
-    url_src = (
-        "APCA_API_BASE_URL"
-        if url_env
-        else ("ALPACA_API_BASE_URL" if fallback_url_env else "-")
-    )
-
-    return {
-        "api_key_id": (key, key_src),
-        "api_secret_key": (sec, sec_src),
-        "base_url": (url, url_src),
-    }
-
-
-def _effective_alpaca_settings() -> AlpacaSettings:
-    """
-    Merge dotenv/pydantic defaults with explicit env resolution; normalize base_url.
-    """
-
-    base = AlpacaSettings()  # loads from .env/etc
-    env = _resolve_alpaca_from_env()
-    key = env["api_key_id"][0] or base.api_key_id or ""
-    sec = env["api_secret_key"][0] or base.api_secret_key or ""
-    url = env["base_url"][0] or base.base_url or "https://paper-api.alpaca.markets"
-    url = _normalize_base_url(url) or "https://paper-api.alpaca.markets"
-
-    eff = AlpacaSettings(
-        api_key_id=key,
-        api_secret_key=sec,
-        base_url=url,
-        paper=("paper" in url.lower()),
-        request_timeout_s=base.request_timeout_s,
-        max_retries=base.max_retries,
-        retry_backoff_s=base.retry_backoff_s,
-    )
-    return eff
 
 
 class RiskPresetConfig(BaseModel):
@@ -210,10 +130,29 @@ def load_config(path: Path) -> AppConfig:
     return AppConfig(**payload)
 
 
-def get_alpaca_settings() -> AlpacaSettings:
+def get_alpaca_settings():
     """Instantiate Alpaca configuration settings from the environment."""
 
-    return _effective_alpaca_settings()
+    cfg = AlpacaSettings()
+    key = cfg.api_key_id or cfg.apca_key_id or None
+    sec = cfg.api_secret_key or cfg.apca_secret_key or None
+    base = (cfg.base_url or "").strip().rstrip("/")
+    base = base or None
+    paper = "paper-api.alpaca.markets" in base if base else cfg.paper
+
+    return type(
+        "Cfg",
+        (),
+        dict(
+            api_key_id=key,
+            api_secret_key=sec,
+            base_url=base,
+            paper=paper,
+            max_retries=3,
+            retry_backoff_s=2.0,
+            request_timeout_s=15.0,
+        ),
+    )()
 
 
 def get_order_defaults() -> OrderDefaults:
@@ -224,7 +163,7 @@ def get_order_defaults() -> OrderDefaults:
 
 def alpaca_config_ok() -> bool:
     s = get_alpaca_settings()
-    return bool(s.api_key_id and s.api_secret_key and s.base_url)
+    return bool(s.api_key_id and s.api_secret_key)
 
 
 def masked_tail(s: Optional[str]) -> Optional[str]:
@@ -249,17 +188,12 @@ def resolved_env_sources() -> Dict[str, bool]:
 
 
 def debug_alpaca_snapshot() -> Dict[str, Any]:
-    base = AlpacaSettings()
-    env = _resolve_alpaca_from_env()
-    eff = _effective_alpaca_settings()
+    cfg = get_alpaca_settings()
+    env_flags = resolved_env_sources()
     return {
         "configured": alpaca_config_ok(),
-        "base_url": eff.base_url,
-        "paper": eff.paper,
-        "key_tail": masked_tail(eff.api_key_id),
-        "sources": {
-            "api_key_id": env["api_key_id"][1] if env["api_key_id"][0] else ("BaseSettings" if base.api_key_id else "-"),
-            "api_secret_key": env["api_secret_key"][1] if env["api_secret_key"][0] else ("BaseSettings" if base.api_secret_key else "-"),
-            "base_url": env["base_url"][1] if env["base_url"][0] else ("BaseSettings" if base.base_url else "-"),
-        },
+        "base_url": cfg.base_url or ("paper" if cfg.paper else "live"),
+        "paper": cfg.paper,
+        "key_tail": masked_tail(cfg.api_key_id),
+        "env": env_flags,
     }

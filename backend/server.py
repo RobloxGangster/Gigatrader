@@ -26,23 +26,17 @@ from app.execution.alpaca_adapter import AlpacaAdapter
 from app.execution.router import ExecIntent, OrderRouter
 from app.risk import RiskManager
 from app.state import ExecutionState
-from core.config import alpaca_config_ok, debug_alpaca_snapshot, resolved_env_sources
+from core.config import alpaca_config_ok, get_alpaca_settings
 from core.kill_switch import KillSwitch
+
+from dotenv import load_dotenv
+
+load_dotenv(override=False)
 
 _kill_switch = KillSwitch()
 
 _SENT_CACHE: Dict[Tuple[str, int, int], Tuple[float, Dict[str, Any]]] = {}
 _SENT_TTL_SEC = 300  # 5 minutes
-
-# ---------- Path + .env ----------
-
-try:
-    from dotenv import load_dotenv, find_dotenv
-    _env = find_dotenv(str(ROOT / ".env"), usecwd=True)
-    if _env:
-        load_dotenv(_env, override=False)
-except Exception:
-    pass
 
 # ---------- Robust runner import ----------
 import importlib.util
@@ -343,9 +337,31 @@ def get_risk():
     )
 @app.get("/debug/alpaca")
 def debug_alpaca():
-    snap = debug_alpaca_snapshot()
-    snap["env_vars_present"] = resolved_env_sources()
-    return snap
+    cfg = get_alpaca_settings()
+    tail = (cfg.api_key_id[-4:] if cfg.api_key_id else None)
+    return {
+        "paper": cfg.paper,
+        "base_url": cfg.base_url or ("paper" if cfg.paper else "live"),
+        "has_key": bool(cfg.api_key_id),
+        "key_tail": tail,
+    }
+
+
+@app.get("/alpaca/ping")
+def alpaca_ping():
+    try:
+        acct = _broker.get_account_summary()
+        return {
+            "auth_ok": True,
+            "status": acct.get("status"),
+            "currency": acct.get("currency"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "auth_ok": False,
+            "error": exc.__class__.__name__,
+            "detail": str(exc),
+        }
 
 
 @app.get("/alpaca/account")

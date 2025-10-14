@@ -55,6 +55,7 @@ class AlpacaAdapter:
     """Thin wrapper around ``TradingClient`` with retry/backoff semantics."""
 
     def __init__(self) -> None:
+        self.client: Optional[TradingClient] = None
         if not alpaca_config_ok():
             snap = debug_alpaca_snapshot()
             envp = resolved_env_sources()
@@ -84,6 +85,12 @@ class AlpacaAdapter:
         sleep_s = min(4.0, self.backoff * (2**attempt))
         log.debug("alpaca.retry sleeping %.2fs (attempt=%s)", sleep_s, attempt)
         time.sleep(sleep_s)
+
+    def get_account_summary(self) -> dict:
+        if not self.client:
+            raise RuntimeError("alpaca_unconfigured")
+        acct = self.client.get_account()
+        return {k: acct.get(k) for k in ("id", "status", "currency", "cash", "portfolio_value") if k in acct}
 
     def place_limit_bracket(
         self,
