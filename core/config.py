@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-# Ensure .env is loaded early
+# --- .env bootstrap ---
 try:
     from dotenv import load_dotenv  # python-dotenv
 
     load_dotenv()
 except Exception:
-    # optional dependency; safe to continue if not present
     pass
 
-# Require pydantic-settings for Pydantic v2 configs
+# --- pydantic settings requirement (v2) ---
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
-except ImportError as e:  # pragma: no cover - import guard exercised indirectly
+except ImportError as e:
     raise RuntimeError(
         "Missing dependency 'pydantic-settings'. "
-        "Install with: pip install 'pydantic-settings>=2.2,<3'"
+        "Install it via: pip install 'pydantic-settings>=2.2,<3'"
     ) from e
 
 from pathlib import Path
@@ -29,55 +28,32 @@ except ModuleNotFoundError:  # pragma: no cover - executed in minimal environmen
     yaml = None
     import json
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class AlpacaSettings(BaseSettings):
-    """Credentials and runtime settings for the Alpaca Trading API."""
+    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
-    model_config = SettingsConfigDict(env_prefix="")
-
-    api_key_id: str = Field(
-        default="",
-        validation_alias=AliasChoices(
-            "ALPACA_API_KEY_ID",
-            "ALPACA_KEY_ID",
-            "ALPACA_API_KEY",
-            "APCA_API_KEY_ID",
-        )
-    )
-    api_secret_key: str = Field(
-        default="",
-        validation_alias=AliasChoices(
-            "ALPACA_API_SECRET_KEY",
-            "ALPACA_SECRET_KEY",
-            "ALPACA_API_SECRET",
-            "APCA_API_SECRET_KEY",
-        )
-    )
-    base_url: str = Field(
-        default="https://paper-api.alpaca.markets",
-        validation_alias=AliasChoices("APCA_API_BASE_URL", "ALPACA_BASE_URL", "ALPACA_PAPER_ENDPOINT"),
-    )
-    paper: bool = Field(default=True, validation_alias=AliasChoices("ALPACA_PAPER"))
-    request_timeout_s: float = Field(default=10.0, validation_alias=AliasChoices("ALPACA_REQUEST_TIMEOUT"))
-    max_retries: int = Field(default=3, validation_alias=AliasChoices("ALPACA_MAX_RETRIES"))
-    retry_backoff_s: float = Field(default=0.75, validation_alias=AliasChoices("ALPACA_RETRY_BACKOFF"))
+    api_key_id: str = Field(default="", env="ALPACA_API_KEY_ID")
+    api_secret_key: str = Field(default="", env="ALPACA_API_SECRET_KEY")
+    base_url: str = Field(default="https://paper-api.alpaca.markets", env="APCA_API_BASE_URL")
+    paper: bool = True
+    request_timeout_s: float = 10.0
+    max_retries: int = 3
+    retry_backoff_s: float = 0.75
 
 
 class OrderDefaults(BaseSettings):
-    """Global defaults applied to order submission flows."""
+    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
-    model_config = SettingsConfigDict(env_prefix="")
-
-    tif: str = Field(default="day", validation_alias=AliasChoices("DEFAULT_TIF"))
-    allow_brackets: bool = Field(default=True, validation_alias=AliasChoices("ALLOW_BRACKETS"))
-    default_tp_pct: float = Field(default=0.01, validation_alias=AliasChoices("DEFAULT_TP_PCT"))
-    default_sl_pct: float = Field(default=0.005, validation_alias=AliasChoices("DEFAULT_SL_PCT"))
+    tif: str = Field(default="day", env="DEFAULT_TIF")
+    allow_brackets: bool = Field(default=True, env="ALLOW_BRACKETS")
+    default_tp_pct: float = Field(default=0.01, env="DEFAULT_TP_PCT")
+    default_sl_pct: float = Field(default=0.005, env="DEFAULT_SL_PCT")
 
 
-alpaca_settings = AlpacaSettings()
-order_defaults = OrderDefaults()
+_alpaca = AlpacaSettings()
+_orders = OrderDefaults()
 
 
 class RiskPresetConfig(BaseModel):
@@ -152,10 +128,16 @@ def load_config(path: Path) -> AppConfig:
 def get_alpaca_settings() -> AlpacaSettings:
     """Return cached Alpaca configuration settings."""
 
-    return alpaca_settings
+    return _alpaca
 
 
 def get_order_defaults() -> OrderDefaults:
     """Return global order defaults used by the execution layer."""
 
-    return order_defaults
+    return _orders
+
+
+def masked_key_tail(k: str | None) -> str | None:
+    """Return the last 4 characters of a credential for safe logging."""
+
+    return k[-4:] if k else None
