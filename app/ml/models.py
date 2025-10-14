@@ -23,7 +23,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
@@ -138,6 +138,43 @@ except ModuleNotFoundError:  # pragma: no cover - lightweight fallback
             return self.base_estimator.predict_proba(X)
 
 from .features import FEATURE_LIST
+from .utils import ensure_2d_frame
+
+
+class SafeModel:
+    """
+    Thin proxy around an sklearn model/pipeline that guarantees
+    2-D, properly ordered inputs for predict / predict_proba.
+    """
+
+    def __init__(self, model: Any, feature_names: Sequence[str]):
+        self._model = model
+        self.feature_names_ = list(feature_names)
+
+    def predict(self, X: Any):
+        X_df = ensure_2d_frame(X, feature_order=self.feature_names_)
+        return self._model.predict(X_df)
+
+    def predict_proba(self, X: Any):
+        X_df = ensure_2d_frame(X, feature_order=self.feature_names_)
+        if hasattr(self._model, "predict_proba"):
+            return self._model.predict_proba(X_df)
+        if hasattr(self._model, "decision_function"):
+            z = self._model.decision_function(X_df)
+            p = 1 / (1 + np.exp(-z))
+            return np.c_[1 - p, p]
+        yhat = self._model.predict(X_df)
+        prob = np.zeros((len(yhat), 2))
+        for i, v in enumerate(yhat):
+            prob[i, 1 if int(v) == 1 else 0] = 1.0
+        return prob
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            model = object.__getattribute__(self, "_model")
+        except AttributeError as exc:  # pragma: no cover - defensive during unpickling
+            raise AttributeError(name) from exc
+        return getattr(model, name)
 
 logger = logging.getLogger(__name__)
 
@@ -154,12 +191,9 @@ class SklearnModel:
     _clf: Any | None = field(default=None, init=False, repr=False)
     _calibrated: bool = field(default=False, init=False, repr=False)
 
-    def _prepare_X(self, X_df: pd.DataFrame) -> pd.DataFrame:
-        X_df = X_df.copy()
-        missing = [c for c in FEATURE_LIST if c not in X_df.columns]
-        for col in missing:
-            X_df[col] = 0.0
-        return X_df[FEATURE_LIST]
+    def _prepare_X(self, X_df: Any) -> pd.DataFrame:
+        df = ensure_2d_frame(X_df, feature_order=FEATURE_LIST)
+        return df.fillna(0.0).astype(float)
 
     def fit(self, X_df: pd.DataFrame, y: pd.Series) -> "SklearnModel":
         if len(X_df) != len(y):
@@ -192,9 +226,7 @@ class SklearnModel:
             ("estimator", estimator_clone),
         ])
 
-        X_train_np = X_train.to_numpy(dtype=float)
-        y_train_np = y_train.to_numpy(dtype=float)
-        pipeline.fit(X_train_np, y_train_np)
+        pipeline.fit(X_train, y_train)
 
         clf: Any = pipeline
         calibrated = False
@@ -203,23 +235,31 @@ class SklearnModel:
             y_val_np = y_val.to_numpy(dtype=float)
             if len(np.unique(y_val_np)) > 1:
                 calibrator = CalibratedClassifierCV(estimator=pipeline, method="sigmoid", cv="prefit")
-                calibrator.fit(X_val.to_numpy(dtype=float), y_val_np)
+                calibrator.fit(X_val, y_val_np)
                 clf = calibrator
                 calibrated = True
 
-        self._clf = clf
+        feature_names = list(X_df.columns)
+        safe_clf = SafeModel(clf, feature_names=feature_names)
+
+        self._clf = safe_clf
         self._calibrated = calibrated
 
         eval_X = X_val if X_val is not None and not X_val.empty else X_train
         eval_y = y_val if y_val is not None and not y_val.empty else y_train
-        eval_X_np = eval_X.to_numpy(dtype=float)
         eval_y_np = eval_y.to_numpy(dtype=float)
 
         try:
-            proba = clf.predict_proba(eval_X_np)[:, 1]
+            proba_full = safe_clf.predict_proba(eval_X)
+            proba_arr = np.asarray(proba_full, dtype=float)
+            if proba_arr.ndim == 1:
+                proba_arr = np.column_stack([1 - proba_arr, proba_arr])
+            elif proba_arr.ndim == 2 and proba_arr.shape[1] == 1:
+                proba_arr = np.hstack([1 - proba_arr, proba_arr])
+            proba = proba_arr[:, -1]
         except Exception:
             # pragma: no cover - compatibility for stub implementations
-            proba = np.zeros(len(eval_X_np), dtype=float)
+            proba = np.zeros(len(eval_y_np), dtype=float)
 
         unique_labels = np.unique(eval_y_np)
         if unique_labels.size > 1:
@@ -247,21 +287,25 @@ class SklearnModel:
         self._clf = value
         self._calibrated = bool(value is not None)
 
-    def predict_proba(self, X_df: pd.DataFrame) -> float | list[float]:
+    def predict_proba(self, X_df: Any) -> np.ndarray:
         if self._clf is None:
             raise RuntimeError("Model not fitted")
         prepared = self._prepare_X(X_df)
-        proba = self._clf.predict_proba(prepared.to_numpy(dtype=float))
-        up = proba[:, 1]
-        if len(up) == 1:
-            return float(up.tolist()[0])
-        return [float(v) for v in up.tolist()]
+        proba = self._clf.predict_proba(prepared)
+        proba_arr = np.asarray(proba, dtype=float)
+        if proba_arr.ndim == 1:
+            proba_arr = np.column_stack([1 - proba_arr, proba_arr])
+        elif proba_arr.ndim == 2 and proba_arr.shape[1] == 1:
+            proba_arr = np.hstack([1 - proba_arr, proba_arr])
+        return proba_arr
 
     def save(self, path: Path) -> None:
         if self._clf is None:
             raise RuntimeError("Nothing to save")
+        feature_names = getattr(self._clf, "feature_names_", FEATURE_LIST)
         artifact = {
             "feature_list": FEATURE_LIST,
+            "feature_names": feature_names,
             "model": self._clf,
             "metrics": self.metrics or {},
             "created_at": self.created_at or datetime.utcnow(),
@@ -273,7 +317,14 @@ class SklearnModel:
     def load(cls, path: Path) -> "SklearnModel":
         data = joblib.load(path)
         model = cls()
-        model._clf = data["model"]
+        raw_model = data["model"]
+        feature_names = data.get("feature_names") or data.get("feature_list", FEATURE_LIST)
+        if isinstance(feature_names, np.ndarray):
+            feature_names = feature_names.tolist()
+        if hasattr(raw_model, "feature_names_"):
+            model._clf = raw_model
+        else:
+            model._clf = SafeModel(raw_model, feature_names=feature_names)
         model._calibrated = bool(data.get("calibrated", False))
         model.metrics = {k: float(v) for k, v in data.get("metrics", {}).items()}
         created = data.get("created_at")
