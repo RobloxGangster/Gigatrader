@@ -7,6 +7,7 @@ os.environ.setdefault("PYTHONPATH", str(ROOT))
 # ------------------------------------------------------------
 
 import asyncio
+import copy
 import threading
 import subprocess
 import logging
@@ -15,9 +16,9 @@ from decimal import Decimal
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any, Tuple, Dict, Iterable, Literal
+from typing import Optional, Any, Tuple, Dict, Iterable, Literal, List
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, Query, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
@@ -28,7 +29,7 @@ from app.backtest.engine import run_trade_backtest
 from app.ml.models import load_from_registry, DEFAULT_MODEL_NAME
 from app.ml.trainer import latest_feature_row, train_intraday_classifier
 from app.ml.features import FEATURE_LIST
-from core.config import MOCK_MODE, TradeLoopConfig, get_signal_defaults
+from core.config import MOCK_MODE, TradeLoopConfig, get_signal_defaults, get_audit_config
 from app.execution.alpaca_adapter import AlpacaAdapter, AlpacaOrderError, AlpacaUnauthorized
 
 from app.execution.router import ExecIntent, OrderRouter
@@ -37,6 +38,8 @@ from app.state import ExecutionState
 from core.config import alpaca_config_ok
 from core.kill_switch import KillSwitch
 from app.trade.orchestrator import TradeOrchestrator
+from app.execution.audit import AuditLog
+from app.execution.reconcile import Reconciler
 
 from dotenv import load_dotenv
 
@@ -180,6 +183,124 @@ _trade_orchestrator = TradeOrchestrator(
 )
 
 
+def _resolve_path(path: Path) -> Path:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = ROOT / candidate
+    return candidate
+
+
+class LiveBrokerFacade:
+    def __init__(self, adapter: AlpacaAdapter) -> None:
+        self.adapter = adapter
+
+    def list_orders(self, status: str = "all") -> List[Any]:
+        if not self.adapter.is_configured():
+            raise AlpacaUnauthorized("not configured")
+        client = self.adapter._ensure_client()
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+
+        scopes = []
+        if status == "all":
+            scopes = [QueryOrderStatus.OPEN, QueryOrderStatus.CLOSED]
+        elif status == "open":
+            scopes = [QueryOrderStatus.OPEN]
+        elif status == "closed":
+            scopes = [QueryOrderStatus.CLOSED]
+        else:
+            raise ValueError(f"invalid status scope: {status}")
+
+        orders: List[Any] = []
+        for scope in scopes:
+            req = GetOrdersRequest(status=scope)
+            result = client.get_orders(req)
+            if result:
+                orders.extend(result)
+        return orders
+
+    def list_positions(self) -> List[Any]:
+        if not self.adapter.is_configured():
+            raise AlpacaUnauthorized("not configured")
+        client = self.adapter._ensure_client()
+        return list(client.get_all_positions())
+
+    def cancel_all(self) -> Dict[str, Any]:
+        return self.adapter.cancel_all()
+
+
+class InMemoryMockBroker:
+    def __init__(self) -> None:
+        self._orders: List[Dict[str, Any]] = [copy.deepcopy(o) for o in Reconciler.mock_sample_orders()]
+        self._positions: List[Dict[str, Any]] = [
+            {
+                "symbol": "AAPL",
+                "qty": 10.0,
+                "avg_entry": 145.0,
+                "market_price": 150.0,
+                "unrealized_pl": 50.0,
+                "last_updated": None,
+            },
+            {
+                "symbol": "MSFT",
+                "qty": -5.0,
+                "avg_entry": 325.0,
+                "market_price": 320.0,
+                "unrealized_pl": 25.0,
+                "last_updated": None,
+            },
+        ]
+
+    def list_orders(self, status: str = "all") -> List[Dict[str, Any]]:
+        open_statuses = {"new", "accepted", "partially_filled"}
+        closed_statuses = {"filled", "canceled", "rejected", "expired", "replaced"}
+        filtered: List[Dict[str, Any]] = []
+        for order in self._orders:
+            status_value = order.get("status", "")
+            if status == "open" and status_value not in open_statuses:
+                continue
+            if status == "closed" and status_value not in closed_statuses:
+                continue
+            filtered.append(copy.deepcopy(order))
+        if status == "all":
+            return [copy.deepcopy(o) for o in self._orders]
+        return filtered
+
+    def list_positions(self) -> List[Dict[str, Any]]:
+        return [copy.deepcopy(p) for p in self._positions]
+
+    def cancel_all(self) -> Dict[str, int]:
+        open_statuses = {"new", "accepted", "partially_filled"}
+        canceled = 0
+        now = datetime.now(timezone.utc).isoformat()
+        for order in self._orders:
+            if order.get("status") in open_statuses:
+                order["status"] = "canceled"
+                order["updated_at"] = now
+                canceled += 1
+        return {"canceled": canceled, "failed": 0}
+
+
+_audit_config = get_audit_config()
+_audit_dir = _resolve_path(_audit_config.audit_dir)
+_audit_dir.mkdir(parents=True, exist_ok=True)
+_audit_log = AuditLog(_audit_dir / _audit_config.audit_file)
+_reconcile_state_path = _audit_dir / _audit_config.reconcile_state_file
+
+_use_mock_broker = MOCK_MODE or not _broker.is_configured()
+if _use_mock_broker:
+    _reconcile_broker = InMemoryMockBroker()
+else:
+    _reconcile_broker = LiveBrokerFacade(_broker)
+
+_reconciler = Reconciler(
+    broker=_reconcile_broker,
+    audit=_audit_log,
+    state_store_path=_reconcile_state_path,
+    mock_mode=_use_mock_broker,
+)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.execution = _execution_state
@@ -187,6 +308,9 @@ async def lifespan(app: FastAPI):
     app.state.risk = _risk_manager
     app.state.broker = _broker
     app.state.trade_orchestrator = _trade_orchestrator
+    app.state.audit_log = _audit_log
+    app.state.reconciler = _reconciler
+    app.state.reconcile_broker = _reconcile_broker
 
     stop_flag = False
 
@@ -581,15 +705,13 @@ def orders_test(
 
 @app.post("/orders/cancel_all")
 def cancel_all_orders():
-    if not _broker.is_configured():
-        return {"error": "alpaca_not_configured"}
     try:
-        result = _broker.cancel_all()
-        return result
+        result = _reconcile_broker.cancel_all()
+        if isinstance(result, dict):
+            return result
+        return {"canceled": int(result or 0)}
     except AlpacaUnauthorized:
         return {"error": "alpaca_unauthorized"}
-    except AlpacaOrderError as exc:
-        return {"error": f"alpaca_error:{exc}"}
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -821,34 +943,48 @@ def ml_train(payload: TrainRequest | None = None):
 
 
 # ---------- Data endpoints ----------
+
+
+@app.post("/orders/sync")
+def orders_sync(status: Literal["open", "closed", "all"] = Query("all")):
+    try:
+        summary = _reconciler.sync_once(status_scope=status)
+    except ValueError as exc:  # invalid scope
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return summary
+
+
+@app.get("/trade/debug/audit_tail")
+def audit_tail(n: int = Query(50, ge=0, le=500)):
+    return _audit_log.tail(n)
+
+
+@app.get("/trade/debug/reconcile_state")
+def reconcile_state():
+    return _reconciler.get_state_summary()
+
+
 @app.get("/orders")
-def orders():
-    if _broker.is_configured():
-        try:
-            open_orders = _broker.fetch_orders()
-            _execution_state.update_orders(open_orders)
-        except AlpacaUnauthorized:
-            log.warning("orders fetch paused: alpaca unauthorized")
-        except AlpacaOrderError as exc:
-            log.warning("orders fetch failed: %s", exc)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("orders fetch failed: %s", exc)
-    return _execution_state.orders_snapshot()
+def orders(status: Literal["open", "closed", "all"] = Query("all")):
+    try:
+        normalized_orders = _reconciler.fetch_orders(status_scope=status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        _execution_state.update_orders(normalized_orders)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("execution state update failed: %s", exc)
+    return normalized_orders
 
 
 @app.get("/positions")
 def positions():
-    if _broker.is_configured():
-        try:
-            current_positions = _broker.fetch_positions()
-            _execution_state.update_positions(current_positions)
-        except AlpacaUnauthorized:
-            log.warning("positions fetch paused: alpaca unauthorized")
-        except AlpacaOrderError as exc:
-            log.warning("positions fetch failed: %s", exc)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("positions fetch failed: %s", exc)
-    return _execution_state.positions_snapshot()
+    positions_payload = _reconciler.fetch_positions()
+    try:
+        _execution_state.update_positions(positions_payload)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("execution state positions update failed: %s", exc)
+    return positions_payload
 
 # ---------- NEW: Real sentiment via Alpaca News (with graceful fallback) ----------
 @app.get("/sentiment")
