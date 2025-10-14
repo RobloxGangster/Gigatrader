@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import time
-import uuid
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -22,6 +21,7 @@ try:  # pragma: no cover - exercised when alpaca-py is optional
 except ModuleNotFoundError as exc:  # pragma: no cover - easier local testing without alpaca
     raise RuntimeError("alpaca-py must be installed to use AlpacaAdapter") from exc
 
+from app.execution.router import _unique_cid
 from core.config import (
     get_alpaca_settings,
     get_order_defaults,
@@ -114,7 +114,7 @@ class AlpacaAdapter:
         side_enum = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         tif_enum = TimeInForce.GTC if tif_value == "GTC" else TimeInForce.DAY
 
-        cid = client_order_id or f"gt-{uuid.uuid4().hex[:20]}"
+        cid = client_order_id or _unique_cid()
 
         take_profit = None
         stop_loss = None
@@ -141,6 +141,7 @@ class AlpacaAdapter:
         )
 
         attempt = 0
+        retried_unique = False
         while True:
             try:
                 order = self.client.submit_order(order_data=request)
@@ -150,6 +151,7 @@ class AlpacaAdapter:
                 return order
             except APIError as exc:
                 code = getattr(exc, "status_code", None)
+                err_code = getattr(exc, "code", None)
                 if code == 401:
                     log.error(
                         "alpaca unauthorized; check ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY/APCA_API_BASE_URL",
@@ -158,6 +160,24 @@ class AlpacaAdapter:
                     raise
 
                 msg = str(exc)
+                msg_lower = msg.lower()
+                if (
+                    not retried_unique
+                    and (err_code == 40010001 or "client_order_id must be unique" in msg_lower)
+                ):
+                    retried_unique = True
+                    prev_cid = request.client_order_id
+                    cid = _unique_cid()
+                    request.client_order_id = cid
+                    log.warning(
+                        "alpaca.submit_order duplicate_cid",
+                        extra={
+                            "client_order_id": prev_cid,
+                            "new_client_order_id": cid,
+                            "error": msg,
+                        },
+                    )
+                    continue
                 log.warning(
                     "alpaca.submit_order apierror", extra={"client_order_id": cid, "status_code": code, "error": msg}
                 )
