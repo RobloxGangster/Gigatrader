@@ -189,7 +189,7 @@ async def lifespan(app: FastAPI):
                 else:
                     log.warning("reconcile runtime error: %s", re)
             except Exception as exc:  # noqa: BLE001
-                log.warning("reconcile error: %s", exc)
+                log.error("reconcile error (%s): %s", exc.__class__.__name__, exc)
             await asyncio.sleep(backoff)
             backoff = min(max_backoff, backoff * 1.7)
 
