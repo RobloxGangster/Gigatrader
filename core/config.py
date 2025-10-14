@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # --- Robust .env bootstrap (search repo root & parents) ---
 from pathlib import Path
+from typing import Any, Dict, Literal, Optional
 
 try:
     from dotenv import load_dotenv, find_dotenv  # python-dotenv
@@ -26,22 +27,26 @@ except ImportError as e:
     raise RuntimeError(
         "Missing dependency 'pydantic-settings'. Install with: pip install 'pydantic-settings>=2.2,<3'"
     ) from e
-from typing import Any, Dict, Literal
-
 try:  # pragma: no cover - import guard exercised indirectly
     import yaml  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - executed in minimal environments
     yaml = None
     import json
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 
 class AlpacaSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
-    api_key_id: str = Field(default="", env="ALPACA_API_KEY_ID")
-    api_secret_key: str = Field(default="", env="ALPACA_API_SECRET_KEY")
+    api_key_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("ALPACA_API_KEY_ID", "APCA_API_KEY_ID"),
+    )
+    api_secret_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("ALPACA_API_SECRET_KEY", "APCA_API_SECRET_KEY"),
+    )
     base_url: str = Field(default="https://paper-api.alpaca.markets", env="APCA_API_BASE_URL")
     paper: bool = True
     request_timeout_s: float = 10.0
@@ -56,10 +61,6 @@ class OrderDefaults(BaseSettings):
     allow_brackets: bool = Field(default=True, env="ALLOW_BRACKETS")
     default_tp_pct: float = Field(default=0.01, env="DEFAULT_TP_PCT")
     default_sl_pct: float = Field(default=0.005, env="DEFAULT_SL_PCT")
-
-
-_alpaca = AlpacaSettings()
-_orders = OrderDefaults()
 
 
 class RiskPresetConfig(BaseModel):
@@ -132,15 +133,15 @@ def load_config(path: Path) -> AppConfig:
 
 
 def get_alpaca_settings() -> AlpacaSettings:
-    """Return cached Alpaca configuration settings."""
+    """Instantiate Alpaca configuration settings from the environment."""
 
-    return _alpaca
+    return AlpacaSettings()
 
 
 def get_order_defaults() -> OrderDefaults:
-    """Return global order defaults used by the execution layer."""
+    """Instantiate order defaults from the environment."""
 
-    return _orders
+    return OrderDefaults()
 
 
 def alpaca_config_ok() -> bool:
@@ -148,5 +149,20 @@ def alpaca_config_ok() -> bool:
     return bool(s.api_key_id and s.api_secret_key and s.base_url)
 
 
-def masked_key_tail(k: str | None) -> str | None:
+def masked_key_tail(k: Optional[str]) -> Optional[str]:
     return k[-4:] if k else None
+
+
+def debug_alpaca_snapshot() -> dict:
+    s = get_alpaca_settings()
+    return {
+        "base_url": s.base_url,
+        "paper": s.paper,
+        "configured": alpaca_config_ok(),
+        "key_tail": masked_key_tail(s.api_key_id),
+        "using_env": {
+            "api_key_id": "ALPACA_API_KEY_ID or APCA_API_KEY_ID",
+            "api_secret_key": "ALPACA_API_SECRET_KEY or APCA_API_SECRET_KEY",
+            "base_url": "APCA_API_BASE_URL",
+        },
+    }

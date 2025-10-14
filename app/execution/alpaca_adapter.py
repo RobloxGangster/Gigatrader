@@ -22,7 +22,7 @@ try:  # pragma: no cover - exercised when alpaca-py is optional
 except ModuleNotFoundError as exc:  # pragma: no cover - easier local testing without alpaca
     raise RuntimeError("alpaca-py must be installed to use AlpacaAdapter") from exc
 
-from core.config import alpaca_config_ok, get_alpaca_settings, get_order_defaults
+from core.config import get_alpaca_settings, get_order_defaults, alpaca_config_ok
 
 log = logging.getLogger("alpaca")
 
