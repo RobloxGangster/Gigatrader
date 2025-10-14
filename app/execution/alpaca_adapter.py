@@ -53,9 +53,8 @@ class AlpacaAdapter:
             "api_key": cfg.api_key_id or None,
             "secret_key": cfg.api_secret_key or None,
             "paper": cfg.paper,
+            "url": cfg.base_url or None,
         }
-        if cfg.base_url:
-            client_kwargs["url_override"] = cfg.base_url
 
         if not client_kwargs["api_key"] or not client_kwargs["secret_key"]:
             log.warning("alpaca adapter initialised without credentials; broker calls disabled")
@@ -129,6 +128,13 @@ class AlpacaAdapter:
                 return order
             except APIError as exc:
                 code = getattr(exc, "status_code", None)
+                if code == 401:
+                    log.error(
+                        "alpaca unauthorized; check ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY/APCA_API_BASE_URL",
+                        extra={"client_order_id": cid},
+                    )
+                    raise
+
                 msg = str(exc)
                 log.warning(
                     "alpaca.submit_order apierror", extra={"client_order_id": cid, "status_code": code, "error": msg}
@@ -154,7 +160,13 @@ class AlpacaAdapter:
         if self.client is None:
             raise RuntimeError("Alpaca client not configured")
         req = GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=500)
-        return list(self.client.get_orders(filter=req))
+        try:
+            return list(self.client.get_orders(filter=req))
+        except APIError as exc:
+            # If unauthorized, bubble a clean hint and let caller decide (recon will back off)
+            if getattr(exc, "status_code", None) == 401:
+                raise RuntimeError("alpaca_unauthorized") from exc
+            raise
 
     def get_positions(self) -> list[Any]:
         """Return the list of positions from Alpaca."""

@@ -11,11 +11,12 @@ import threading
 import subprocess
 import logging
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Any, Tuple, Dict
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
@@ -24,6 +25,7 @@ from app.execution.alpaca_adapter import AlpacaAdapter
 from app.execution.router import ExecIntent, OrderRouter
 from app.risk import RiskManager
 from app.state import ExecutionState
+from core.config import get_alpaca_settings, masked_key_tail
 from core.kill_switch import KillSwitch
 
 _kill_switch = KillSwitch()
@@ -120,35 +122,63 @@ class RiskSnapshot(BaseModel):
     limits: RiskLimits
     timestamp: str
 
-app = FastAPI()
+
 log = logging.getLogger("backend")
 
 _execution_state = ExecutionState()
 _broker = AlpacaAdapter()
 _risk_manager = RiskManager(_execution_state, kill_switch=_kill_switch)
 
-app.state.execution = _execution_state
-app.state.state = _execution_state
-app.state.risk = _risk_manager
-app.state.broker = _broker
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.execution = _execution_state
+    app.state.state = _execution_state
+    app.state.risk = _risk_manager
+    app.state.broker = _broker
 
-@app.on_event("startup")
-async def _bg_recon() -> None:
-    async def loop() -> None:
-        while True:
+    stop_flag = False
+
+    async def recon_loop() -> None:
+        nonlocal stop_flag
+        broker = _broker
+        backoff = 2.0
+        max_backoff = 60.0
+        while not stop_flag:
             try:
-                open_orders = _broker.get_open_orders()
-                positions = _broker.get_positions()
-                account = _broker.get_account()
+                open_orders = broker.get_open_orders()  # may raise RuntimeError("alpaca_unauthorized")
+                positions = broker.get_positions()
+                account = broker.get_account()
                 _execution_state.update_orders(open_orders)
                 _execution_state.update_positions(positions)
                 _execution_state.update_account(account)
+                backoff = 2.0
+            except RuntimeError as re:
+                if str(re) == "alpaca_unauthorized":
+                    log.warning(
+                        "reconcile paused: alpaca unauthorized. Check credentials. Backing off %.0fs",
+                        backoff,
+                    )
+                else:
+                    log.warning("reconcile runtime error: %s", re)
             except Exception as exc:  # noqa: BLE001
                 log.warning("reconcile error: %s", exc)
-            await asyncio.sleep(7)
+            await asyncio.sleep(backoff)
+            backoff = min(max_backoff, backoff * 1.7)
 
-    asyncio.create_task(loop())
+    task = asyncio.create_task(recon_loop())
+    try:
+        yield
+    finally:
+        stop_flag = True
+        task.cancel()
+        try:
+            await task
+        except Exception:
+            pass
+
+
+app = FastAPI(lifespan=lifespan)
 
 def start_background_runner(profile: str = "paper"):
     global runner_task, runner_loop, runner_last_error
@@ -284,45 +314,50 @@ def get_risk():
         limits=limits,
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
-
-
-def _account_payload(snapshot: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "id": str(snapshot.get("id", "")),
-        "status": str(snapshot.get("status", "")),
-        "cash": float(snapshot.get("cash", 0.0) or 0.0),
-        "portfolio_value": float(snapshot.get("portfolio_value", 0.0) or 0.0),
-        "equity": float(snapshot.get("equity", snapshot.get("portfolio_value", 0.0)) or 0.0),
-        "pattern_day_trader": bool(snapshot.get("pattern_day_trader", False)),
-        "day_pnl": float(snapshot.get("day_pnl", 0.0) or 0.0),
-    }
-
-
 @app.get("/alpaca/account")
 def alpaca_account():
     try:
-        account = _broker.get_account()
-        _execution_state.update_account(account)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("alpaca.account fetch failed: %s", exc)
-        payload = _account_payload(_execution_state.account_snapshot())
-        payload["error"] = str(exc)
-        return JSONResponse(status_code=502, content=payload)
-    snapshot = _execution_state.account_snapshot()
-    return _account_payload(snapshot)
+        broker = AlpacaAdapter()
+        acct = broker.get_account()
+        return dict(
+            id=str(getattr(acct, "id", "")),
+            status=str(getattr(acct, "status", "")),
+            cash=float(getattr(acct, "cash", 0) or 0),
+            portfolio_value=float(getattr(acct, "portfolio_value", 0) or 0),
+            pattern_day_trader=bool(getattr(acct, "pattern_day_trader", False)),
+        )
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+
+
+@app.get("/debug/alpaca")
+def debug_alpaca():
+    cfg = get_alpaca_settings()
+    return {"base_url": cfg.base_url, "paper": cfg.paper, "key_tail": masked_key_tail(cfg.api_key_id)}
 
 
 @app.post("/orders/test")
-def orders_test(
-    symbol: str = "AAPL",
-    side: str = "buy",
-    qty: int = 1,
-    limit_price: float = 1.00,
-    bracket: bool = True,
-):
-    router = OrderRouter(app.state.risk, app.state.state)
-    intent = ExecIntent(symbol=symbol, side=side, qty=qty, limit_price=limit_price, bracket=bracket)
-    return router.submit(intent)
+def orders_test(symbol: str = "AAPL", side: str = "buy", qty: int = 1, limit_price: float = 1.00):
+    try:
+        risk = app.state.risk if hasattr(app.state, "risk") else None
+        state = app.state.state if hasattr(app.state, "state") else None
+        if risk is None or state is None:
+            # Fallback (replace with your real builders)
+            from app.risk import RiskManager
+            from app.state import InMemoryState
+
+            state = InMemoryState()
+            risk = RiskManager(state)
+
+        router = OrderRouter(risk, state)
+        return router.submit(
+            ExecIntent(symbol=symbol, side=side, qty=qty, limit_price=limit_price, bracket=True)
+        )
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if "unauthorized" in msg.lower():
+            raise HTTPException(status_code=401, detail="Alpaca unauthorized: check API key/secret/base URL")
+        raise HTTPException(status_code=500, detail=f"broker_error: {msg}")
 
 # ---------- Paper controls ----------
 @app.post("/paper/start", response_model=StartResp)
