@@ -1,280 +1,178 @@
-"""Unified Alpaca Trading API adapter with retries and idempotent helpers."""
-
 from __future__ import annotations
 
-import logging
+import os
 import time
+import secrets
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, List
 
-try:  # pragma: no cover - exercised when alpaca-py is optional
-    from alpaca.common.exceptions import APIError
-    from alpaca.trading.client import TradingClient
-    from alpaca.trading.enums import AssetClass, OrderSide, QueryOrderStatus, TimeInForce
-    from alpaca.trading.models import Order
-    from alpaca.trading.requests import (
-        GetOrdersRequest,
-        LimitOrderRequest,
-        StopLossRequest,
-        TakeProfitRequest,
-    )
-except ModuleNotFoundError as exc:  # pragma: no cover - easier local testing without alpaca
-    raise RuntimeError("alpaca-py must be installed to use AlpacaAdapter") from exc
-
-from app.execution.router import _unique_cid
-from core.config import (
-    get_alpaca_settings,
-    get_order_defaults,
-    alpaca_config_ok,
-    masked_tail,
-    debug_alpaca_snapshot,
-    resolved_env_sources,
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import (
+    GetOrdersRequest,
+    LimitOrderRequest,
+    TakeProfitRequest,
+    StopLossRequest,
 )
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, OrderType
+from alpaca.common.exceptions import APIError
 
-log = logging.getLogger(__name__)
+from core.config import get_alpaca_settings
 
 
-def _to_float(value: Any) -> Any:
-    """Convert ``Decimal`` or numeric-ish values into ``float`` for Alpaca SDK."""
+def _unique_cid(prefix: str | None = None) -> str:
+    """Alpaca requires unique client_order_id. Keep short & readable."""
+    p = (prefix or os.getenv("ORDER_CLIENT_ID_PREFIX", "gt")).strip()
+    ts = time.strftime("%y%m%d%H%M%S", time.gmtime())
+    rnd = secrets.token_hex(3)
+    return f"{p}-{ts}-{rnd}"[:48]
 
-    if value is None:
-        return value
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return value
-    return value
+
+def _parse_apierror(exc: APIError) -> tuple[int | None, str]:
+    code = None
+    msg = ""
+    try:
+        err = getattr(exc, "error", None)
+        if isinstance(err, dict):
+            code = err.get("code")
+            msg = err.get("message") or ""
+    except Exception:  # pragma: no cover - defensive best effort
+        pass
+    if not msg:
+        msg = str(exc)
+    return code, msg
 
 
 class AlpacaAdapter:
-    """Thin wrapper around ``TradingClient`` with retry/backoff semantics."""
-
     def __init__(self) -> None:
-        self.client: Optional[TradingClient] = None
-        if not alpaca_config_ok():
-            snap = debug_alpaca_snapshot()
-            envp = resolved_env_sources()
-            log.warning(
-                "alpaca adapter unavailable: credentials missing; broker calls disabled | "
-                "configured=%s base_url=%s key_tail=%s env=%s",
-                snap.get("configured"),
-                snap.get("base_url"),
-                snap.get("key_tail"),
-                envp,
+        self.settings = get_alpaca_settings()
+        self.client: TradingClient | None = None
+        if self.settings.api_key_id and self.settings.api_secret_key:
+            self.client = TradingClient(
+                self.settings.api_key_id,
+                self.settings.api_secret_key,
+                paper=bool(self.settings.paper),
+                raw_data=True,
             )
-            raise RuntimeError("alpaca_unconfigured")
 
-        cfg = get_alpaca_settings()
-        self.client = TradingClient(
-            api_key=cfg.api_key_id,
-            secret_key=cfg.api_secret_key,
-            paper=cfg.paper,
-            raw_data=True,  # keep
-        )
-        log.info("alpaca adapter configured base=%s key_tail=%s", cfg.base_url, masked_tail(cfg.api_key_id))
-        self.timeout = cfg.request_timeout_s
-        self.max_retries = cfg.max_retries
-        self.backoff = cfg.retry_backoff_s
+    def configured(self) -> bool:
+        return self.client is not None
 
-    def _backoff(self, attempt: int) -> None:
-        sleep_s = min(4.0, self.backoff * (2**attempt))
-        log.debug("alpaca.retry sleeping %.2fs (attempt=%s)", sleep_s, attempt)
-        time.sleep(sleep_s)
+    def get_account(self) -> dict[str, Any]:
+        if not self.configured():
+            raise RuntimeError("alpaca_not_configured")
+        try:
+            return self.client.get_account()  # type: ignore[union-attr]
+        except APIError as exc:
+            _, msg = _parse_apierror(exc)
+            if "unauthorized" in msg.lower():
+                raise RuntimeError("alpaca_unauthorized")
+            raise
 
-    def get_account_summary(self) -> dict:
-        if not self.client:
-            raise RuntimeError("alpaca_unconfigured")
-        acct = self.client.get_account()
-        return {k: acct.get(k) for k in ("id", "status", "currency", "cash", "portfolio_value") if k in acct}
+    def get_account_summary(self) -> dict[str, Any]:
+        acct = self.get_account()
+        return {k: acct.get(k) for k in ("id", "status", "currency", "cash", "portfolio_value")}
+
+    def list_orders(self, status: str = "open", limit: int = 50) -> list[dict[str, Any]]:
+        if not self.configured():
+            raise RuntimeError("alpaca_not_configured")
+        req = GetOrdersRequest(status=status, limit=limit)
+        return self.client.get_orders(filter=req)  # type: ignore[union-attr]
+
+    def get_open_orders(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self.list_orders(status="open", limit=limit)
+
+    def cancel_all(self) -> Any:
+        if not self.configured():
+            raise RuntimeError("alpaca_not_configured")
+        try:
+            return self.client.cancel_orders()  # type: ignore[union-attr]
+        except TypeError:
+            return self.client.cancel_all_orders()  # type: ignore[union-attr]
+
+    def cancel_all_open_orders(self) -> dict[str, Any]:
+        resp = self.cancel_all()
+        canceled: List[str]
+        if isinstance(resp, (list, tuple, set)):
+            canceled = []
+            for item in resp:
+                if isinstance(item, dict):
+                    canceled.append(str(item.get("id")))
+                else:
+                    canceled.append(str(getattr(item, "id", item)))
+        elif isinstance(resp, dict):
+            canceled = [str(resp.get("id")) if resp.get("id") is not None else str(resp)]
+        else:
+            canceled = [str(resp)] if resp is not None else []
+        return {"canceled": canceled, "failed": []}
+
+    def cancel_order(self, order_id: str) -> dict[str, Any]:
+        if not self.configured():
+            raise RuntimeError("alpaca_not_configured")
+        self.client.cancel_order_by_id(order_id)  # type: ignore[union-attr]
+        return {"ok": True, "id": order_id}
+
+    def get_positions(self) -> list[dict[str, Any]]:
+        if not self.configured():
+            raise RuntimeError("alpaca_not_configured")
+        return self.client.get_all_positions()  # type: ignore[union-attr]
 
     def place_limit_bracket(
         self,
-        *,
         symbol: str,
         side: str,
         qty: int,
-        limit_price: float,
-        client_order_id: Optional[str] = None,
-        tp_pct: Optional[float] = None,
-        sl_pct: Optional[float] = None,
-        tif: Optional[str] = None,
-    ) -> Order:
-        defaults = get_order_defaults()
-        tif_value = (tif or defaults.tif).upper()
-        allow_brackets = defaults.allow_brackets
-
-        if self.client is None:
-            raise RuntimeError("alpaca_unconfigured")
+        limit_price: float | Decimal,
+        take_profit_pct: float | None = None,
+        stop_loss_pct: float | None = None,
+        client_order_id: str | None = None,
+        tif: str = "day",
+    ) -> dict[str, Any]:
+        if not self.configured():
+            raise RuntimeError("alpaca_not_configured")
 
         side_enum = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
-        tif_enum = TimeInForce.GTC if tif_value == "GTC" else TimeInForce.DAY
-
+        tif_enum = TimeInForce.DAY if tif.lower() == "day" else TimeInForce.GTC
         cid = client_order_id or _unique_cid()
+        lp = str(limit_price)
 
-        take_profit = None
-        stop_loss = None
-        if allow_brackets and tp_pct is not None and sl_pct is not None:
-            if side_enum == OrderSide.BUY:
-                tp_price = limit_price * (1 + tp_pct)
-                sl_price = limit_price * (1 - sl_pct)
-            else:
-                tp_price = limit_price * (1 - tp_pct)
-                sl_price = limit_price * (1 + sl_pct)
-            take_profit = TakeProfitRequest(limit_price=round(_to_float(tp_price), 4))
-            stop_loss = StopLossRequest(stop_price=round(_to_float(sl_price), 4))
+        tp = None
+        sl = None
+        if take_profit_pct:
+            limit_f = float(limit_price)
+            px = round(
+                limit_f * (1 + (take_profit_pct / 100.0) * (1 if side_enum == OrderSide.BUY else -1)), 2
+            )
+            tp = TakeProfitRequest(limit_price=str(px))
+        if stop_loss_pct:
+            limit_f = float(limit_price)
+            px = round(
+                limit_f * (1 - (stop_loss_pct / 100.0) * (1 if side_enum == OrderSide.BUY else -1)), 2
+            )
+            sl = StopLossRequest(stop_price=str(px))
 
-        request = LimitOrderRequest(
-            symbol=symbol.upper(),
-            qty=int(qty),
+        req = LimitOrderRequest(
+            symbol=symbol,
+            qty=qty,
             side=side_enum,
             time_in_force=tif_enum,
-            limit_price=round(_to_float(limit_price), 4),
+            limit_price=lp,
+            order_class=OrderClass.BRACKET if (tp or sl) else OrderClass.SIMPLE,
             client_order_id=cid,
-            take_profit=take_profit,
-            stop_loss=stop_loss,
-            asset_class=AssetClass.US_EQUITY,
+            take_profit=tp,
+            stop_loss=sl,
+            type=OrderType.LIMIT,
         )
 
-        attempt = 0
-        retried_unique = False
-        while True:
-            try:
-                order = self.client.submit_order(order_data=request)
-                log.info(
-                    "alpaca.submit_order ok", extra={"client_order_id": cid, "order_id": getattr(order, "id", None)}
-                )
-                return order
-            except APIError as exc:
-                code = getattr(exc, "status_code", None)
-                err_code = getattr(exc, "code", None)
-                if code == 401:
-                    log.error(
-                        "alpaca unauthorized; check ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY/APCA_API_BASE_URL",
-                        extra={"client_order_id": cid},
-                    )
-                    raise
-
-                msg = str(exc)
-                msg_lower = msg.lower()
-                if (
-                    not retried_unique
-                    and (err_code == 40010001 or "client_order_id must be unique" in msg_lower)
-                ):
-                    retried_unique = True
-                    prev_cid = request.client_order_id
-                    cid = _unique_cid()
-                    request.client_order_id = cid
-                    log.warning(
-                        "alpaca.submit_order duplicate_cid",
-                        extra={
-                            "client_order_id": prev_cid,
-                            "new_client_order_id": cid,
-                            "error": msg,
-                        },
-                    )
-                    continue
-                log.warning(
-                    "alpaca.submit_order apierror", extra={"client_order_id": cid, "status_code": code, "error": msg}
-                )
-                if code in {429, 408, 500, 502, 503, 504} and attempt < self.max_retries:
-                    attempt += 1
-                    self._backoff(attempt)
-                    continue
+        try:
+            order = self.client.submit_order(order_data=req)  # type: ignore[union-attr]
+        except APIError as exc:
+            code, msg = _parse_apierror(exc)
+            low = (msg or "").lower()
+            if "unauthorized" in low:
+                raise RuntimeError("alpaca_unauthorized")
+            if code == 40010001 or "client_order_id must be unique" in low:
+                req.client_order_id = _unique_cid()
+                order = self.client.submit_order(order_data=req)  # type: ignore[union-attr]
+            else:
                 raise
-            except Exception as exc:  # noqa: BLE001 - bubble unexpected errors after retries
-                log.exception(
-                    "alpaca.submit_order error", extra={"client_order_id": cid, "error": str(exc)}
-                )
-                if attempt < self.max_retries:
-                    attempt += 1
-                    self._backoff(attempt)
-                    continue
-                raise
-
-    def get_open_orders(self) -> list[Order]:
-        """Return the list of open orders from Alpaca."""
-
-        if self.client is None:
-            raise RuntimeError("alpaca_unconfigured")
-        req = GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=100)
-        try:
-            orders = list(self.client.get_orders(filter=req))
-            log.debug("reconcile: fetched %d open orders from alpaca", len(orders))
-            return orders
-        except APIError as exc:
-            # If unauthorized, bubble a clean hint and let caller decide (recon will back off)
-            if getattr(exc, "status_code", None) == 401:
-                raise RuntimeError("alpaca_unauthorized") from exc
-            raise
-
-    def cancel_all_open_orders(self) -> dict:
-        """
-        Cancel all open orders at the broker. Returns a summary dict.
-        """
-
-        if not self.client:
-            raise RuntimeError("alpaca_unconfigured")
-
-        try:
-            canceled: list[str] = []
-            failed: list[dict[str, str]] = []
-
-            try:
-                # Bulk cancel (best effort)
-                resp = self.client.cancel_orders()
-                # resp may be list[...] or dict depending on version; normalize:
-                if isinstance(resp, (list, tuple)):
-                    canceled = [str(getattr(r, "id", r)) for r in resp]
-                else:
-                    # unknown structure; just stringify
-                    canceled = [str(resp)]
-            except Exception:
-                # Fallback: fetch OPEN and cancel individually
-                req = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200, nested=True)
-                open_orders = self.client.get_orders(filter=req)
-                for o in open_orders:
-                    oid = str(o["id"] if isinstance(o, dict) else getattr(o, "id", ""))
-                    try:
-                        self.client.cancel_order_by_id(oid)
-                        canceled.append(oid)
-                    except Exception as exc:
-                        failed.append({"id": oid, "error": str(exc)})
-
-            return {"canceled": canceled, "failed": failed}
-
-        except APIError as exc:
-            log.error("alpaca.cancel_all APIError: %s", exc)
-            raise
-
-    def cancel_order(self, order_id: str) -> dict:
-        """
-        Cancel a single order by ID. Returns {'ok': True} on success.
-        """
-
-        if not self.client:
-            raise RuntimeError("alpaca_unconfigured")
-        try:
-            self.client.cancel_order_by_id(order_id)
-            return {"ok": True, "id": order_id}
-        except APIError as exc:
-            log.error("alpaca.cancel_by_id APIError: %s", exc)
-            raise
-
-    def get_positions(self) -> list[Any]:
-        """Return the list of positions from Alpaca."""
-
-        if self.client is None:
-            raise RuntimeError("alpaca_unconfigured")
-        return list(self.client.get_all_positions())
-
-    def get_account(self):  # noqa: D401 - fastapi serialises the dataclass/dict
-        """Return the Alpaca account snapshot."""
-
-        if self.client is None:
-            raise RuntimeError("alpaca_unconfigured")
-        return self.client.get_account()
+        return order

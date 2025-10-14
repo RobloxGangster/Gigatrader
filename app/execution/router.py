@@ -112,8 +112,8 @@ class OrderRouter:
                 qty=qty,
                 limit_price=float(intent.limit_price),
                 client_order_id=cid,
-                tp_pct=tp_pct,
-                sl_pct=sl_pct,
+                take_profit_pct=(tp_pct * 100.0 if tp_pct is not None else None),
+                stop_loss_pct=(sl_pct * 100.0 if sl_pct is not None else None),
                 tif=defaults.tif,
             )
             provider_id = getattr(order, "id", None)

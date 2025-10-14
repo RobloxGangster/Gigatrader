@@ -120,24 +120,12 @@ class RiskSnapshot(BaseModel):
 
 log = logging.getLogger("backend")
 
-class _UnconfiguredAlpacaAdapter:
-    def __init__(self, message: str = "alpaca_unconfigured") -> None:
-        self._message = message
-
-    def __getattr__(self, _: str) -> Any:
-        raise RuntimeError(self._message)
-
 
 _execution_state = ExecutionState()
 
-try:
-    _broker = AlpacaAdapter()
-except RuntimeError as exc:
-    if "alpaca_unconfigured" in str(exc):
-        log.warning("alpaca adapter unavailable: credentials missing; broker calls disabled")
-        _broker = _UnconfiguredAlpacaAdapter(str(exc))
-    else:
-        raise
+_broker = AlpacaAdapter()
+if not _broker.configured():
+    log.warning("alpaca adapter unavailable: credentials missing; broker calls disabled")
 
 _risk_manager = RiskManager(_execution_state, kill_switch=_kill_switch)
 
@@ -174,7 +162,7 @@ async def lifespan(app: FastAPI):
                         "reconcile paused: alpaca unauthorized. Check credentials. Backing off %.0fs",
                         backoff,
                     )
-                elif "alpaca_unconfigured" in msg:
+                elif "alpaca_not_configured" in msg:
                     if not warned_unconfigured:
                         log.warning(
                             "reconcile paused: alpaca not configured. Set ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY.",
@@ -349,44 +337,42 @@ def debug_alpaca():
 
 @app.get("/alpaca/ping")
 def alpaca_ping():
+    if not _broker.configured():
+        return {"auth_ok": False, "error": "alpaca_not_configured"}
     try:
-        acct = _broker.get_account_summary()
-        return {
-            "auth_ok": True,
-            "status": acct.get("status"),
-            "currency": acct.get("currency"),
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "auth_ok": False,
-            "error": exc.__class__.__name__,
-            "detail": str(exc),
-        }
+        acct = _broker.get_account()
+        return {"auth_ok": True, "status": acct.get("status"), "cash": acct.get("cash")}
+    except Exception as e:  # noqa: BLE001
+        return {"auth_ok": False, "error": str(e)}
 
 
 @app.get("/alpaca/account")
 def alpaca_account():
-    from app.execution.alpaca_adapter import AlpacaAdapter
-
+    if not _broker.configured():
+        return {"error": "Alpaca client not configured"}
     try:
-        broker = AlpacaAdapter()
-        acct = broker.get_account()
-        return dict(
-            id=str(getattr(acct, "id", "")),
-            status=str(getattr(acct, "status", "")),
-            cash=float(getattr(acct, "cash", 0) or 0),
-            portfolio_value=float(getattr(acct, "portfolio_value", 0) or 0),
-            pattern_day_trader=bool(getattr(acct, "pattern_day_trader", False)),
-        )
-    except RuntimeError as e:
-        if "alpaca_unconfigured" in str(e):
-            return {"error": "Alpaca client not configured"}
-        raise
+        acct = _broker.get_account()
+        return {
+            "id": acct.get("id"),
+            "status": acct.get("status"),
+            "cash": acct.get("cash"),
+            "portfolio_value": acct.get("portfolio_value"),
+            "pattern_day_trader": acct.get("pattern_day_trader"),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
 
 
 @app.post("/orders/test")
 def orders_test(symbol: str = "AAPL", side: str = "buy", qty: int = 1, limit_price: float = 1.00):
     """Submit a sample order; generates a fresh ``client_order_id`` on every call."""
+
+    if not _broker.configured():
+        return {
+            "accepted": False,
+            "reason": "broker_error:Alpaca client not configured",
+            "client_order_id": None,
+        }
 
     try:
         risk = app.state.risk if hasattr(app.state, "risk") else None
@@ -412,20 +398,20 @@ def orders_test(symbol: str = "AAPL", side: str = "buy", qty: int = 1, limit_pri
 
 @app.post("/orders/cancel_all")
 def cancel_all_orders():
+    if not _broker.configured():
+        return {"ok": False, "error": "alpaca_not_configured"}
     try:
-        if _broker is None:
-            raise RuntimeError("alpaca_unconfigured")
-        result = _broker.cancel_all_open_orders()
-        return {"ok": True, **result}
+        _broker.cancel_all()
+        return {"ok": True}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
 
 @app.post("/orders/{order_id}/cancel")
 def cancel_order(order_id: str):
+    if not _broker.configured():
+        raise HTTPException(status_code=400, detail="alpaca_not_configured")
     try:
-        if _broker is None:
-            raise RuntimeError("alpaca_unconfigured")
         return _broker.cancel_order(order_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
