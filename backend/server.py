@@ -28,7 +28,7 @@ from app.backtest.engine import run_trade_backtest
 from app.ml.models import load_from_registry, DEFAULT_MODEL_NAME
 from app.ml.trainer import latest_feature_row, train_intraday_classifier
 from app.ml.features import FEATURE_LIST
-from core.config import MOCK_MODE, get_signal_defaults
+from core.config import MOCK_MODE, TradeLoopConfig, get_signal_defaults
 from app.execution.alpaca_adapter import AlpacaAdapter, AlpacaOrderError, AlpacaUnauthorized
 
 from app.execution.router import ExecIntent, OrderRouter
@@ -36,6 +36,7 @@ from app.risk import RiskManager
 from app.state import ExecutionState
 from core.config import alpaca_config_ok
 from core.kill_switch import KillSwitch
+from app.trade.orchestrator import TradeOrchestrator
 
 from dotenv import load_dotenv
 
@@ -141,9 +142,13 @@ class BacktestRequest(BaseModel):
 class TrainRequest(BaseModel):
     symbols: list[str] | None = None
 
-
-
-
+class TradeStartOptions(BaseModel):
+    profile: str | None = None
+    universe: list[str] | None = None
+    interval_sec: float | None = None
+    top_n: int | None = None
+    min_conf: float | None = None
+    min_ev: float | None = None
 
 log = logging.getLogger("backend")
 
@@ -164,6 +169,16 @@ if not _broker.is_configured():
 
 _risk_manager = RiskManager(_execution_state, kill_switch=_kill_switch)
 
+_order_router = OrderRouter(_risk_manager, _execution_state)
+_trade_orchestrator = TradeOrchestrator(
+    data_client=_data_client,
+    signal_generator=_signal_engine,
+    ml_predictor=None,
+    risk_manager=_risk_manager,
+    router=_order_router,
+    config=TradeLoopConfig(),
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -171,6 +186,7 @@ async def lifespan(app: FastAPI):
     app.state.state = _execution_state
     app.state.risk = _risk_manager
     app.state.broker = _broker
+    app.state.trade_orchestrator = _trade_orchestrator
 
     stop_flag = False
 
@@ -265,6 +281,47 @@ def status():
         last_error=runner_last_error,
     )
 
+
+@app.post("/trade/start")
+async def trade_start(request: Request, options: TradeStartOptions | None = None):
+    overrides = _parse_trade_overrides(request, options)
+    if _trade_orchestrator.ml_predictor is None:
+        try:
+            _trade_orchestrator.ml_predictor = load_from_registry()
+        except Exception:
+            _trade_orchestrator.ml_predictor = None
+    config = await _trade_orchestrator.start(overrides)
+    snapshot = _trade_orchestrator.status()
+    return {
+        "status": "running" if snapshot.get("running") else "starting",
+        "config": config.to_dict(),
+        "broker": snapshot.get("broker", {}),
+        "metrics": snapshot.get("metrics", {}),
+    }
+
+
+@app.post("/trade/stop")
+async def trade_stop():
+    await _trade_orchestrator.stop()
+    snapshot = _trade_orchestrator.status()
+    return {"status": "stopped", "running": snapshot.get("running")}
+
+
+@app.get("/trade/status")
+def trade_status():
+    return _trade_orchestrator.status()
+
+
+@app.get("/trade/debug/last_decisions")
+def trade_last_decisions():
+    return {"decisions": _trade_orchestrator.last_decisions()}
+
+
+@app.get("/trade/debug/config")
+def trade_debug_config():
+    return _trade_orchestrator.resolved_config()
+
+
 def _kill_switch_on() -> bool:
     try:
         return _kill_switch.engaged_sync()
@@ -294,6 +351,40 @@ def _normalize_payload(obj):
     if isinstance(obj, (list, tuple)):
         return [_normalize_payload(v) for v in obj]
     return obj
+
+
+
+def _parse_trade_overrides(request: Request, payload: TradeStartOptions | None) -> Dict[str, Any]:
+    overrides: Dict[str, Any] = {}
+    if payload is not None:
+        overrides.update(payload.model_dump(exclude_none=True))
+
+    params = request.query_params
+
+    def _assign(name: str, caster) -> None:
+        value = params.get(name)
+        if value is None or value == "":
+            return
+        try:
+            overrides[name] = caster(value)
+        except (TypeError, ValueError):
+            pass
+
+    if "profile" in params:
+        overrides["profile"] = params.get("profile")
+
+    universe_raw = params.get("universe")
+    if universe_raw:
+        symbols = [sym.strip().upper() for sym in universe_raw.split(",") if sym.strip()]
+        if symbols:
+            overrides["universe"] = symbols
+
+    _assign("interval_sec", float)
+    _assign("min_conf", float)
+    _assign("min_ev", float)
+    _assign("top_n", int)
+
+    return overrides
 
 
 

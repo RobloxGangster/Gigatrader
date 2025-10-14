@@ -19,7 +19,7 @@ except ModuleNotFoundError:  # pragma: no cover - executed in minimal environmen
     yaml = None
     import json
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, asdict
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -44,6 +44,37 @@ class AlpacaSettings:
     api_secret: str | None
     base_url: str
     paper: bool
+
+
+@dataclass(slots=True)
+class TradeLoopConfig:
+    """Runtime configuration for the live trading loop."""
+
+    interval_sec: float = 10.0
+    top_n: int = 3
+    min_conf: float = 0.55
+    min_ev: float = 0.0
+    universe: list[str] = field(default_factory=lambda: ["AAPL", "MSFT", "NVDA"])
+    profile: str = "balanced"
+
+    def to_dict(self) -> dict[str, object]:
+        payload = asdict(self)
+        payload["universe"] = list(self.universe)
+        return payload
+
+    def with_overrides(self, **overrides: object) -> "TradeLoopConfig":
+        payload = self.to_dict()
+        for key, value in overrides.items():
+            if value is None:
+                continue
+            if key == "universe":
+                if isinstance(value, str):
+                    payload[key] = [value]
+                else:
+                    payload[key] = list(value)  # type: ignore[arg-type]
+            else:
+                payload[key] = value
+        return TradeLoopConfig(**payload)
 
 
 class RiskPresetConfig(BaseModel):
