@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Any, Tuple, Dict, Iterable, Literal, List
 
-from fastapi import FastAPI, Query, Request, HTTPException
+from fastapi import Body, FastAPI, Query, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
@@ -159,6 +159,15 @@ class TradeStartOptions(BaseModel):
     top_n: int | None = None
     min_conf: float | None = None
     min_ev: float | None = None
+
+
+class TestOrderRequest(BaseModel):
+    """Flexible input for /orders/test (JSON or query)."""
+
+    symbol: str
+    side: Literal["buy", "sell"]
+    qty: int
+    limit_price: Optional[float] = None
 
 log = logging.getLogger("backend")
 
@@ -685,12 +694,21 @@ def alpaca_close_all_positions():
         return {"ok": False, "error": str(exc)}
 
 
-@app.post("/orders/test")
+@app.post(
+    "/orders/test",
+    summary="Place a tiny test order via JSON body or query params",
+    description=(
+        "Accepts either a JSON body: "
+        '{"symbol":"AAPL","side":"buy","qty":1,"limit_price":1.00} '
+        "or traditional query params ?symbol=AAPL&side=buy&qty=1&limit_price=1.00"
+    ),
+)
 def orders_test(
-    symbol: str = "AAPL",
-    side: str = "buy",
-    qty: int = 1,
-    limit_price: float = 1.00,
+    symbol: Optional[str] = Query(None),
+    side: Optional[Literal["buy", "sell"]] = Query(None),
+    qty: Optional[int] = Query(None),
+    limit_price: Optional[float] = Query(None),
+    body: Optional[TestOrderRequest] = Body(None),
     confirm: bool = Query(default=False),
     execute: bool | None = Query(default=None, alias="execute"),
 ):
@@ -698,6 +716,34 @@ def orders_test(
 
     if execute is not None:
         confirm = execute
+
+    if body is not None:
+        data = body.model_dump()
+    else:
+        data = {
+            "symbol": symbol,
+            "side": side,
+            "qty": qty,
+            "limit_price": limit_price,
+        }
+
+    missing = [key for key in ("symbol", "side", "qty") if data.get(key) is None]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Missing required field(s): "
+                + ", ".join(missing)
+                + ". Provide in JSON body or query parameters."
+            ),
+        )
+
+    _symbol = str(data["symbol"])
+    _side = str(data["side"])
+    _qty = int(data["qty"])
+    _limit = (
+        float(data["limit_price"]) if data.get("limit_price") is not None else None
+    )
 
     dry_run = (not confirm) if _TEST_ORDERS_DEFAULT_DRY_RUN else False
 
@@ -720,12 +766,12 @@ def orders_test(
             risk = RiskManager(state)
 
         router = OrderRouter(risk, state)
-        intent = ExecIntent(symbol=symbol, side=side, qty=qty, limit_price=limit_price, bracket=True)
+        intent = ExecIntent(symbol=_symbol, side=_side, qty=_qty, limit_price=_limit, bracket=True)
         if dry_run:
             return router.submit(intent, dry_run=True)
         return router.submit(intent)
     except Exception as exc:  # noqa: BLE001
-        log.exception("orders_test error", extra={"symbol": symbol, "error": str(exc)})
+        log.exception("orders_test error", extra={"symbol": _symbol, "error": str(exc)})
         return {
             "accepted": False,
             "reason": f"broker_error:{exc}",
