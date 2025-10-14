@@ -26,7 +26,7 @@ from app.execution.alpaca_adapter import AlpacaAdapter
 from app.execution.router import ExecIntent, OrderRouter
 from app.risk import RiskManager
 from app.state import ExecutionState
-from core.config import alpaca_config_ok, get_alpaca_settings, masked_key_tail
+from core.config import alpaca_config_ok, debug_alpaca_snapshot
 from core.kill_switch import KillSwitch
 
 _kill_switch = KillSwitch()
@@ -343,13 +343,7 @@ def get_risk():
     )
 @app.get("/debug/alpaca")
 def debug_alpaca():
-    cfg = get_alpaca_settings()
-    return {
-        "base_url": cfg.base_url,
-        "paper": cfg.paper,
-        "configured": alpaca_config_ok(),
-        "key_tail": masked_key_tail(cfg.api_key_id),
-    }
+    return debug_alpaca_snapshot()
 
 
 @app.get("/alpaca/account")
