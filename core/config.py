@@ -2,54 +2,36 @@
 
 from __future__ import annotations
 
-# --- Robust .env bootstrap (search repo root & parents) ---
 import os
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
 try:
-    from dotenv import load_dotenv, find_dotenv  # python-dotenv
-
-    # Try CWD (when launched from repo root)
-    load_dotenv(find_dotenv(filename=".env", usecwd=True), override=False)
-
-    # Also try alongside this file's repo root (…/Gigatrader/.env)
-    ROOT = Path(__file__).resolve().parents[1]
-    env_at_root = ROOT / ".env"
-    if env_at_root.exists():
-        load_dotenv(env_at_root, override=False)
-except Exception:
-    pass
-
-# --- pydantic settings requirement (v2) ---
-try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
-except ImportError as e:
+except ImportError as e:  # pragma: no cover - dependency guard
     raise RuntimeError(
         "Missing dependency 'pydantic-settings'. Install with: pip install 'pydantic-settings>=2.2,<3'"
     ) from e
+
 try:  # pragma: no cover - import guard exercised indirectly
     import yaml  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - executed in minimal environments
     yaml = None
     import json
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class AlpacaSettings(BaseSettings):
+    # Accept both ALPACA_* and APCA_* names
     api_key_id: str | None = Field(default=None, validation_alias="ALPACA_API_KEY_ID")
     api_secret_key: str | None = Field(default=None, validation_alias="ALPACA_API_SECRET_KEY")
     apca_key_id: str | None = Field(default=None, validation_alias="APCA_API_KEY_ID")
     apca_secret_key: str | None = Field(default=None, validation_alias="APCA_API_SECRET_KEY")
-    base_url: str | None = Field(default=None, validation_alias=AliasChoices("APCA_API_BASE_URL", "ALPACA_API_BASE_URL"))
-    paper: bool = True
+    base_url: str | None = Field(default=None, validation_alias="APCA_API_BASE_URL")
+    paper_env: str | None = Field(default=None, validation_alias="ALPACA_PAPER")
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
 class OrderDefaults(BaseSettings):
@@ -131,15 +113,11 @@ def load_config(path: Path) -> AppConfig:
 
 
 def get_alpaca_settings():
-    """Instantiate Alpaca configuration settings from the environment."""
-
     cfg = AlpacaSettings()
-    key = cfg.api_key_id or cfg.apca_key_id or None
-    sec = cfg.api_secret_key or cfg.apca_secret_key or None
-    base = (cfg.base_url or "").strip().rstrip("/")
-    base = base or None
-    paper = "paper-api.alpaca.markets" in base if base else cfg.paper
-
+    key = cfg.api_key_id or cfg.apca_key_id
+    sec = cfg.api_secret_key or cfg.apca_secret_key
+    base = (cfg.base_url or "").rstrip("/")
+    paper = (cfg.paper_env or os.getenv("APCA_PAPER") or "true").lower() in ("1", "true", "yes", "on")
     return type(
         "Cfg",
         (),
