@@ -22,10 +22,11 @@ from pydantic import BaseModel
 import uvicorn
 
 from app.execution.alpaca_adapter import AlpacaAdapter
+
 from app.execution.router import ExecIntent, OrderRouter
 from app.risk import RiskManager
 from app.state import ExecutionState
-from core.config import get_alpaca_settings, masked_key_tail
+from core.config import alpaca_config_ok, get_alpaca_settings, masked_key_tail
 from core.kill_switch import KillSwitch
 
 _kill_switch = KillSwitch()
@@ -125,8 +126,25 @@ class RiskSnapshot(BaseModel):
 
 log = logging.getLogger("backend")
 
+class _UnconfiguredAlpacaAdapter:
+    def __init__(self, message: str = "alpaca_unconfigured") -> None:
+        self._message = message
+
+    def __getattr__(self, _: str) -> Any:
+        raise RuntimeError(self._message)
+
+
 _execution_state = ExecutionState()
-_broker = AlpacaAdapter()
+
+try:
+    _broker = AlpacaAdapter()
+except RuntimeError as exc:
+    if "alpaca_unconfigured" in str(exc):
+        log.warning("alpaca adapter unavailable: credentials missing; broker calls disabled")
+        _broker = _UnconfiguredAlpacaAdapter(str(exc))
+    else:
+        raise
+
 _risk_manager = RiskManager(_execution_state, kill_switch=_kill_switch)
 
 
@@ -144,6 +162,7 @@ async def lifespan(app: FastAPI):
         broker = _broker
         backoff = 2.0
         max_backoff = 60.0
+        warned_unconfigured = False
         while not stop_flag:
             try:
                 open_orders = broker.get_open_orders()  # may raise RuntimeError("alpaca_unauthorized")
@@ -153,12 +172,20 @@ async def lifespan(app: FastAPI):
                 _execution_state.update_positions(positions)
                 _execution_state.update_account(account)
                 backoff = 2.0
+                warned_unconfigured = False
             except RuntimeError as re:
-                if str(re) == "alpaca_unauthorized":
+                msg = str(re)
+                if msg == "alpaca_unauthorized":
                     log.warning(
                         "reconcile paused: alpaca unauthorized. Check credentials. Backing off %.0fs",
                         backoff,
                     )
+                elif "alpaca_unconfigured" in msg:
+                    if not warned_unconfigured:
+                        log.warning(
+                            "reconcile paused: alpaca not configured. Set ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY.",
+                        )
+                        warned_unconfigured = True
                 else:
                     log.warning("reconcile runtime error: %s", re)
             except Exception as exc:  # noqa: BLE001
@@ -260,7 +287,7 @@ def get_risk():
     )
 
     snapshot = _execution_state.account_snapshot()
-    if not snapshot.get("id"):
+    if not snapshot.get("id") and alpaca_config_ok():
         try:
             account = _broker.get_account()
             _execution_state.update_account(account)
@@ -314,8 +341,21 @@ def get_risk():
         limits=limits,
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
+@app.get("/debug/alpaca")
+def debug_alpaca():
+    cfg = get_alpaca_settings()
+    return {
+        "base_url": cfg.base_url,
+        "paper": cfg.paper,
+        "configured": alpaca_config_ok(),
+        "key_tail": masked_key_tail(cfg.api_key_id),
+    }
+
+
 @app.get("/alpaca/account")
 def alpaca_account():
+    from app.execution.alpaca_adapter import AlpacaAdapter
+
     try:
         broker = AlpacaAdapter()
         acct = broker.get_account()
@@ -326,14 +366,10 @@ def alpaca_account():
             portfolio_value=float(getattr(acct, "portfolio_value", 0) or 0),
             pattern_day_trader=bool(getattr(acct, "pattern_day_trader", False)),
         )
-    except Exception as e:  # noqa: BLE001
-        return {"error": str(e)}
-
-
-@app.get("/debug/alpaca")
-def debug_alpaca():
-    cfg = get_alpaca_settings()
-    return {"base_url": cfg.base_url, "paper": cfg.paper, "key_tail": masked_key_tail(cfg.api_key_id)}
+    except RuntimeError as e:
+        if "alpaca_unconfigured" in str(e):
+            return {"error": "Alpaca client not configured"}
+        raise
 
 
 @app.post("/orders/test")
@@ -397,21 +433,23 @@ def paper_flatten():
 # ---------- Data endpoints ----------
 @app.get("/orders")
 def orders():
-    try:
-        open_orders = _broker.get_open_orders()
-        _execution_state.update_orders(open_orders)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("orders fetch failed: %s", exc)
+    if alpaca_config_ok():
+        try:
+            open_orders = _broker.get_open_orders()
+            _execution_state.update_orders(open_orders)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("orders fetch failed: %s", exc)
     return _execution_state.orders_snapshot()
 
 
 @app.get("/positions")
 def positions():
-    try:
-        current_positions = _broker.get_positions()
-        _execution_state.update_positions(current_positions)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("positions fetch failed: %s", exc)
+    if alpaca_config_ok():
+        try:
+            current_positions = _broker.get_positions()
+            _execution_state.update_positions(current_positions)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("positions fetch failed: %s", exc)
     return _execution_state.positions_snapshot()
 
 # ---------- NEW: Real sentiment via Alpaca News (with graceful fallback) ----------

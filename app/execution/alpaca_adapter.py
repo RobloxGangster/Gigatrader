@@ -22,7 +22,7 @@ try:  # pragma: no cover - exercised when alpaca-py is optional
 except ModuleNotFoundError as exc:  # pragma: no cover - easier local testing without alpaca
     raise RuntimeError("alpaca-py must be installed to use AlpacaAdapter") from exc
 
-from core.config import get_alpaca_settings, get_order_defaults
+from core.config import alpaca_config_ok, get_alpaca_settings, get_order_defaults
 
 log = logging.getLogger("alpaca")
 
@@ -48,19 +48,16 @@ class AlpacaAdapter:
     """Thin wrapper around ``TradingClient`` with retry/backoff semantics."""
 
     def __init__(self) -> None:
-        cfg = get_alpaca_settings()
-        client_kwargs = {
-            "api_key": cfg.api_key_id or None,
-            "secret_key": cfg.api_secret_key or None,
-            "paper": cfg.paper,
-            "url": cfg.base_url or None,
-        }
+        if not alpaca_config_ok():
+            raise RuntimeError("alpaca_unconfigured")
 
-        if not client_kwargs["api_key"] or not client_kwargs["secret_key"]:
-            log.warning("alpaca adapter initialised without credentials; broker calls disabled")
-            self.client = None
-        else:
-            self.client = TradingClient(**client_kwargs)
+        cfg = get_alpaca_settings()
+        self.client = TradingClient(
+            api_key=cfg.api_key_id,
+            secret_key=cfg.api_secret_key,
+            paper=cfg.paper,
+            url=cfg.base_url,
+        )
         self.timeout = cfg.request_timeout_s
         self.max_retries = cfg.max_retries
         self.backoff = cfg.retry_backoff_s
@@ -87,7 +84,7 @@ class AlpacaAdapter:
         allow_brackets = defaults.allow_brackets
 
         if self.client is None:
-            raise RuntimeError("Alpaca client not configured")
+            raise RuntimeError("alpaca_unconfigured")
 
         side_enum = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         tif_enum = TimeInForce.GTC if tif_value == "GTC" else TimeInForce.DAY
@@ -158,7 +155,7 @@ class AlpacaAdapter:
         """Return the list of open orders from Alpaca."""
 
         if self.client is None:
-            raise RuntimeError("Alpaca client not configured")
+            raise RuntimeError("alpaca_unconfigured")
         req = GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=500)
         try:
             return list(self.client.get_orders(filter=req))
@@ -172,12 +169,12 @@ class AlpacaAdapter:
         """Return the list of positions from Alpaca."""
 
         if self.client is None:
-            raise RuntimeError("Alpaca client not configured")
+            raise RuntimeError("alpaca_unconfigured")
         return list(self.client.get_all_positions())
 
     def get_account(self):  # noqa: D401 - fastapi serialises the dataclass/dict
         """Return the Alpaca account snapshot."""
 
         if self.client is None:
-            raise RuntimeError("Alpaca client not configured")
+            raise RuntimeError("alpaca_unconfigured")
         return self.client.get_account()
