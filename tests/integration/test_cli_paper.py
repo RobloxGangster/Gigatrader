@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("typer")
+
 from typer.testing import CliRunner
 
 from app.cli import app
