@@ -386,6 +386,8 @@ def alpaca_account():
 
 @app.post("/orders/test")
 def orders_test(symbol: str = "AAPL", side: str = "buy", qty: int = 1, limit_price: float = 1.00):
+    """Submit a sample order; generates a fresh ``client_order_id`` on every call."""
+
     try:
         risk = app.state.risk if hasattr(app.state, "risk") else None
         state = app.state.state if hasattr(app.state, "state") else None

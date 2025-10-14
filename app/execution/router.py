@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import secrets
+import time
 from dataclasses import dataclass
-from typing import Dict
-
-from app.execution.alpaca_adapter import AlpacaAdapter
+from typing import Any, Dict
 from app.risk import Proposal, RiskManager
 from app.state import ExecutionState
 from core.config import get_order_defaults
@@ -26,6 +27,17 @@ class ExecIntent:
     limit_price: float
     bracket: bool = True
     asset_class: str = "equity"
+    client_order_id: str | None = None
+
+
+def _unique_cid(prefix: str | None = None) -> str:
+    """Generate a short unique client_order_id under Alpaca's length limits."""
+
+    p = (prefix or os.environ.get("ORDER_CLIENT_ID_PREFIX", "gt")).strip() or "gt"
+    ts = time.strftime("%y%m%d%H%M%S", time.gmtime())
+    rnd = secrets.token_hex(3)
+    cid = f"{p}-{ts}-{rnd}"
+    return cid[:48]
 
 
 def _intent_key(intent: ExecIntent) -> str:
@@ -47,6 +59,9 @@ class OrderRouter:
     def __init__(self, risk: RiskManager, state: ExecutionState) -> None:
         self.risk = risk
         self.state = state
+
+        from app.execution.alpaca_adapter import AlpacaAdapter
+
         self.broker = AlpacaAdapter()
 
     def submit(self, intent: ExecIntent) -> Dict[str, object]:
@@ -84,7 +99,7 @@ class OrderRouter:
             )
             return {"accepted": False, "reason": "duplicate_intent", "client_order_id": cid}
 
-        cid = f"gt-{key[:20]}"
+        cid = intent.client_order_id or _unique_cid()
         self.state.remember(key, cid, symbol=symbol, side=intent.side)
 
         defaults = get_order_defaults()
