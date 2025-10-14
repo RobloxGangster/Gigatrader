@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -83,15 +84,28 @@ class AlpacaDataClient:
         raise NotImplementedError("Option chain retrieval requires custom integration")
 
 
+def _truthy(name: str) -> bool:
+    v = os.getenv(name, "").strip().lower()
+    return v in {"1", "true", "yes", "on"}
+
+
 def build_data_client(mock_mode: bool = False) -> IMarketDataClient:
-    if mock_mode:
-        logger.info("Building mock data client")
+    if mock_mode or _truthy("MOCK_MODE"):
+        logger.info("market: MOCK_MODE -> MockDataClient")
         return MockDataClient()
+
+    api_key = os.getenv("APCA_API_KEY_ID", "").strip()
+    api_secret = os.getenv("APCA_API_SECRET_KEY", "").strip()
+
+    if not api_key or not api_secret:
+        logger.info("market: alpaca creds missing -> mock")
+        return MockDataClient()
+
     try:
-        logger.info("Building Alpaca data client")
+        logger.info("market: attempting AlpacaDataClient")
         return AlpacaDataClient()
-    except RuntimeError:
-        logger.info("Falling back to mock data client after Alpaca failure")
+    except Exception as exc:  # noqa: BLE001
+        logger.info("market: AlpacaDataClient unavailable (%s) -> mock", exc)
         return MockDataClient()
 
 

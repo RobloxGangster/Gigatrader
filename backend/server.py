@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Any, Tuple, Dict, Iterable, Literal
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
@@ -567,6 +567,20 @@ def signals_preview(profile: str = "balanced", universe: str | None = Query(defa
         return {"error": str(exc)}
 
 
+def _empty_backtest(note: str = "insufficient_data") -> Dict[str, Any]:
+    zero_stats = {
+        "cagr": 0.0,
+        "sharpe": 0.0,
+        "max_dd": 0.0,
+        "winrate": 0.0,
+        "avg_r": 0.0,
+        "avg_trade": 0.0,
+        "exposure": 0.0,
+        "return_pct": 0.0,
+    }
+    return {"trades": [], "equity_curve": [], "stats": zero_stats, "note": note}
+
+
 @app.post("/backtest/run")
 def run_backtest(req: BacktestRequest):
     try:
@@ -577,7 +591,7 @@ def run_backtest(req: BacktestRequest):
         bars = _data_client.get_bars(req.symbol, timeframe=timeframe, limit=limit)
         df = bars_to_df(bars)
         if df.empty:
-            return {"error": "no_market_data"}
+            return _empty_backtest()
         bundle = _signal_engine.produce(universe=[req.symbol])
         if req.strategy == "swing_breakout":
             candidate_filter = "swing_breakout"
@@ -608,8 +622,8 @@ def run_backtest(req: BacktestRequest):
                     "note": "fallback_backtest",
                 }
             except Exception as exc:  # pragma: no cover - fallback safety
-                zero_stats = {"cagr": 0.0, "sharpe": 0.0, "max_dd": 0.0, "winrate": 0.0, "avg_r": 0.0, "avg_trade": 0.0, "exposure": 0.0, "return_pct": 0.0}
-                return {"trades": [], "equity_curve": [], "stats": zero_stats, "note": f"fallback_error:{exc}"}
+                log.info("fallback backtest failed", extra={"error": str(exc), "symbol": req.symbol})
+                return _empty_backtest()
         result = run_trade_backtest(
             trade_df,
             entry=float(candidate.entry),
@@ -627,7 +641,7 @@ def run_backtest(req: BacktestRequest):
         return payload
     except Exception as exc:  # noqa: BLE001
         log.info("backtest run failed", extra={"error": str(exc), "symbol": req.symbol})
-        return {"error": str(exc)}
+        return _empty_backtest()
 
 
 @app.get("/ml/status")
@@ -639,8 +653,14 @@ def ml_status():
     feature_importances: list[dict[str, float]] = []
     try:
         calibrated = getattr(model, "calibrated_model", None)
-        base = getattr(calibrated, "base_estimator", None)
-        estimator = getattr(base, "named_steps", {}).get("estimator") if base else None
+        base = None
+        if calibrated is not None:
+            base = getattr(calibrated, "base_estimator", None) or getattr(calibrated, "estimator", None)
+        estimator = None
+        if base is not None:
+            estimator = getattr(base, "named_steps", {}).get("estimator")
+        elif hasattr(calibrated, "named_steps"):
+            estimator = getattr(calibrated, "named_steps", {}).get("estimator")
         if estimator is not None and hasattr(estimator, "coef_"):
             coefs = getattr(estimator, "coef_")
             if isinstance(coefs, (list, tuple)) or getattr(coefs, "ndim", 1) == 2:
@@ -666,17 +686,35 @@ def ml_features(symbol: str = Query(..., description="Ticker symbol")):
         return {"error": str(exc)}
 
 
-@app.post("/ml/predict")
-def ml_predict(symbol: str = Query(..., description="Ticker symbol")):
+@app.api_route("/ml/predict", methods=["GET", "POST"])
+async def ml_predict(request: Request, symbol: str | None = Query(default=None, description="Ticker symbol")):
+    body_symbol: str | None = None
+    if request.method == "POST":
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            body_symbol = payload.get("symbol")
+
+    symbol_param = body_symbol or symbol or request.query_params.get("symbol")
+    if not symbol_param:
+        return JSONResponse(status_code=400, content={"error": "symbol_required"})
+
     model = load_from_registry()
     if model is None:
-        return {"error": "model_missing"}
+        return {"model": None, "status": "missing"}
+
     try:
-        features, meta = latest_feature_row(symbol, _data_client)
-        proba = float(model.predict_proba(features)[0][1])
-        return {"symbol": symbol.upper(), "p_up_15m": proba, "model": DEFAULT_MODEL_NAME}
+        features, meta = latest_feature_row(symbol_param, _data_client)
+        proba = model.predict_proba(features)
+        if isinstance(proba, list):
+            p_up = float(proba[-1]) if proba else 0.0
+        else:
+            p_up = float(proba)
+        return {"symbol": symbol_param.upper(), "p_up_15m": p_up, "model": DEFAULT_MODEL_NAME}
     except Exception as exc:  # noqa: BLE001
-        log.info("ml predict failed", extra={"error": str(exc), "symbol": symbol})
+        log.info("ml predict failed", extra={"error": str(exc), "symbol": symbol_param})
         return {"error": str(exc)}
 
 
