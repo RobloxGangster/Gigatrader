@@ -231,6 +231,23 @@ def masked_tail(s: Optional[str]) -> Optional[str]:
     return s[-4:] if s else None
 
 
+def resolved_env_sources() -> Dict[str, bool]:
+    import os
+
+    def _has(k: str) -> bool:
+        v = os.environ.get(k)
+        return bool(v and str(v).strip())
+
+    return {
+        "ALPACA_API_KEY_ID": _has("ALPACA_API_KEY_ID"),
+        "APCA_API_KEY_ID": _has("APCA_API_KEY_ID"),
+        "ALPACA_API_SECRET_KEY": _has("ALPACA_API_SECRET_KEY"),
+        "APCA_API_SECRET_KEY": _has("APCA_API_SECRET_KEY"),
+        "APCA_API_BASE_URL": _has("APCA_API_BASE_URL"),
+        "ALPACA_API_BASE_URL": _has("ALPACA_API_BASE_URL"),
+    }
+
+
 def debug_alpaca_snapshot() -> Dict[str, Any]:
     base = AlpacaSettings()
     env = _resolve_alpaca_from_env()

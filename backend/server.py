@@ -26,7 +26,7 @@ from app.execution.alpaca_adapter import AlpacaAdapter
 from app.execution.router import ExecIntent, OrderRouter
 from app.risk import RiskManager
 from app.state import ExecutionState
-from core.config import alpaca_config_ok, debug_alpaca_snapshot
+from core.config import alpaca_config_ok, debug_alpaca_snapshot, resolved_env_sources
 from core.kill_switch import KillSwitch
 
 _kill_switch = KillSwitch()
@@ -343,7 +343,9 @@ def get_risk():
     )
 @app.get("/debug/alpaca")
 def debug_alpaca():
-    return debug_alpaca_snapshot()
+    snap = debug_alpaca_snapshot()
+    snap["env_vars_present"] = resolved_env_sources()
+    return snap
 
 
 @app.get("/alpaca/account")
