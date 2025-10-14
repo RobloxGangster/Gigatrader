@@ -185,6 +185,59 @@ class AlpacaAdapter:
                 raise RuntimeError("alpaca_unauthorized") from exc
             raise
 
+    def cancel_all_open_orders(self) -> dict:
+        """
+        Cancel all open orders at the broker. Returns a summary dict.
+        """
+
+        if not self.client:
+            raise RuntimeError("alpaca_unconfigured")
+
+        try:
+            canceled: list[str] = []
+            failed: list[dict[str, str]] = []
+
+            try:
+                # Bulk cancel (best effort)
+                resp = self.client.cancel_orders()
+                # resp may be list[...] or dict depending on version; normalize:
+                if isinstance(resp, (list, tuple)):
+                    canceled = [str(getattr(r, "id", r)) for r in resp]
+                else:
+                    # unknown structure; just stringify
+                    canceled = [str(resp)]
+            except Exception:
+                # Fallback: fetch OPEN and cancel individually
+                req = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200, nested=True)
+                open_orders = self.client.get_orders(filter=req)
+                for o in open_orders:
+                    oid = str(o["id"] if isinstance(o, dict) else getattr(o, "id", ""))
+                    try:
+                        self.client.cancel_order_by_id(oid)
+                        canceled.append(oid)
+                    except Exception as exc:
+                        failed.append({"id": oid, "error": str(exc)})
+
+            return {"canceled": canceled, "failed": failed}
+
+        except APIError as exc:
+            log.error("alpaca.cancel_all APIError: %s", exc)
+            raise
+
+    def cancel_order(self, order_id: str) -> dict:
+        """
+        Cancel a single order by ID. Returns {'ok': True} on success.
+        """
+
+        if not self.client:
+            raise RuntimeError("alpaca_unconfigured")
+        try:
+            self.client.cancel_order_by_id(order_id)
+            return {"ok": True, "id": order_id}
+        except APIError as exc:
+            log.error("alpaca.cancel_by_id APIError: %s", exc)
+            raise
+
     def get_positions(self) -> list[Any]:
         """Return the list of positions from Alpaca."""
 

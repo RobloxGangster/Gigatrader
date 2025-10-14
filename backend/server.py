@@ -391,6 +391,27 @@ def orders_test(symbol: str = "AAPL", side: str = "buy", qty: int = 1, limit_pri
             raise HTTPException(status_code=401, detail="Alpaca unauthorized: check API key/secret/base URL")
         raise HTTPException(status_code=500, detail=f"broker_error: {msg}")
 
+
+@app.post("/orders/cancel_all")
+def cancel_all_orders():
+    try:
+        if _broker is None:
+            raise RuntimeError("alpaca_unconfigured")
+        result = _broker.cancel_all_open_orders()
+        return {"ok": True, **result}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/orders/{order_id}/cancel")
+def cancel_order(order_id: str):
+    try:
+        if _broker is None:
+            raise RuntimeError("alpaca_unconfigured")
+        return _broker.cancel_order(order_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
 # ---------- Paper controls ----------
 @app.post("/paper/start", response_model=StartResp)
 def paper_start(preset: Optional[str] = None):
