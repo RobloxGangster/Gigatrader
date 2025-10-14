@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Any, Tuple, Dict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
@@ -32,6 +32,13 @@ from core.kill_switch import KillSwitch
 from dotenv import load_dotenv
 
 load_dotenv(override=False)
+
+_TEST_ORDERS_DEFAULT_DRY_RUN = os.getenv("TEST_ORDERS_DEFAULT_DRY_RUN", "true").lower() not in (
+    "false",
+    "0",
+    "no",
+    "off",
+)
 
 _kill_switch = KillSwitch()
 
@@ -123,9 +130,33 @@ log = logging.getLogger("backend")
 
 _execution_state = ExecutionState()
 
-_broker = AlpacaAdapter()
-if not _broker.configured():
-    log.warning("alpaca adapter unavailable: credentials missing; broker calls disabled")
+
+class _PaperBlockedBroker:
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        self.settings = get_alpaca_settings()
+        self.client = None
+
+    def configured(self) -> bool:
+        return False
+
+    def __getattr__(self, name: str) -> Any:
+        raise RuntimeError(self.reason)
+
+_BROKER_INIT_ERROR: str | None = None
+
+try:
+    _broker = AlpacaAdapter()
+except RuntimeError as exc:
+    if str(exc) == "not_paper_environment":
+        _BROKER_INIT_ERROR = "not_paper_environment"
+        log.error("alpaca adapter disabled: not a paper environment")
+        _broker = _PaperBlockedBroker(_BROKER_INIT_ERROR)
+    else:
+        raise
+else:
+    if not _broker.configured():
+        log.warning("alpaca adapter unavailable: credentials missing; broker calls disabled")
 
 _risk_manager = RiskManager(_execution_state, kill_switch=_kill_switch)
 
@@ -363,9 +394,39 @@ def alpaca_account():
         return {"error": str(e)}
 
 
+@app.post("/alpaca/close_all_positions")
+def alpaca_close_all_positions():
+    if not _broker.configured():
+        return {"ok": False, "error": "alpaca_not_configured"}
+    try:
+        _broker.close_all_positions(cancel_orders=True)
+        return {"ok": True}
+    except RuntimeError as exc:
+        if str(exc) == "not_paper_environment":
+            return {"ok": False, "error": "not_paper_environment"}
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+
 @app.post("/orders/test")
-def orders_test(symbol: str = "AAPL", side: str = "buy", qty: int = 1, limit_price: float = 1.00):
+def orders_test(
+    symbol: str = "AAPL",
+    side: str = "buy",
+    qty: int = 1,
+    limit_price: float = 1.00,
+    confirm: bool = Query(default=False),
+    execute: bool | None = Query(default=None, alias="execute"),
+):
     """Submit a sample order; generates a fresh ``client_order_id`` on every call."""
+
+    if execute is not None:
+        confirm = execute
+
+    dry_run = (not confirm) if _TEST_ORDERS_DEFAULT_DRY_RUN else False
+
+    if _BROKER_INIT_ERROR == "not_paper_environment":
+        return {"accepted": False, "reason": "not_paper_environment", "client_order_id": None}
 
     if not _broker.configured():
         return {
@@ -386,13 +447,16 @@ def orders_test(symbol: str = "AAPL", side: str = "buy", qty: int = 1, limit_pri
             risk = RiskManager(state)
 
         router = OrderRouter(risk, state)
-        return router.submit(
-            ExecIntent(symbol=symbol, side=side, qty=qty, limit_price=limit_price, bracket=True)
-        )
+        intent = ExecIntent(symbol=symbol, side=side, qty=qty, limit_price=limit_price, bracket=True)
+        if dry_run:
+            return router.submit(intent, dry_run=True)
+        return router.submit(intent)
     except Exception as e:  # noqa: BLE001
         msg = str(e)
         if "unauthorized" in msg.lower():
             raise HTTPException(status_code=401, detail="Alpaca unauthorized: check API key/secret/base URL")
+        if "not_paper_environment" in msg:
+            return {"accepted": False, "reason": "not_paper_environment", "client_order_id": None}
         raise HTTPException(status_code=500, detail=f"broker_error: {msg}")
 
 

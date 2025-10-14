@@ -64,7 +64,7 @@ class OrderRouter:
 
         self.broker = AlpacaAdapter()
 
-    def submit(self, intent: ExecIntent) -> Dict[str, object]:
+    def submit(self, intent: ExecIntent, dry_run: bool = False) -> Dict[str, object]:
         symbol = intent.symbol.upper()
         qty = int(round(float(intent.qty)))
         if qty <= 0:
@@ -90,17 +90,18 @@ class OrderRouter:
                 payload["max_qty"] = decision.max_qty
             return payload
 
-        key = _intent_key(intent)
-        if self.state.seen(key):
-            cid = self.state.client_id_for(key)
-            log.warning(
-                "router.duplicate_intent",
-                extra={"symbol": symbol, "side": intent.side, "client_order_id": cid},
-            )
-            return {"accepted": False, "reason": "duplicate_intent", "client_order_id": cid}
-
         cid = intent.client_order_id or _unique_cid()
-        self.state.remember(key, cid, symbol=symbol, side=intent.side)
+
+        key = _intent_key(intent)
+        if not dry_run:
+            if self.state.seen(key):
+                existing_cid = self.state.client_id_for(key)
+                log.warning(
+                    "router.duplicate_intent",
+                    extra={"symbol": symbol, "side": intent.side, "client_order_id": existing_cid},
+                )
+                return {"accepted": False, "reason": "duplicate_intent", "client_order_id": existing_cid}
+            self.state.remember(key, cid, symbol=symbol, side=intent.side)
 
         defaults = get_order_defaults()
         tp_pct = defaults.default_tp_pct if intent.bracket else None
@@ -115,7 +116,20 @@ class OrderRouter:
                 take_profit_pct=(tp_pct * 100.0 if tp_pct is not None else None),
                 stop_loss_pct=(sl_pct * 100.0 if sl_pct is not None else None),
                 tif=defaults.tif,
+                dry_run=dry_run,
             )
+            if dry_run:
+                log.info(
+                    "router.submit.dry_run",
+                    extra={"client_order_id": cid, "symbol": symbol},
+                )
+                request_payload = order.get("request", order)
+                return {
+                    "accepted": False,
+                    "dry_run": True,
+                    "client_order_id": cid,
+                    "order": request_payload,
+                }
             provider_id = getattr(order, "id", None)
             self.state.map_provider_id(cid, provider_id)
             log.info(

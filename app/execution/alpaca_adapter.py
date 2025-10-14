@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 import secrets
+from enum import Enum
 from decimal import Decimal
 from typing import Any, List
 
@@ -46,6 +47,7 @@ class AlpacaAdapter:
     def __init__(self) -> None:
         self.settings = get_alpaca_settings()
         self.client: TradingClient | None = None
+        self._ensure_paper()
         if self.settings.api_key_id and self.settings.api_secret_key:
             self.client = TradingClient(
                 self.settings.api_key_id,
@@ -53,6 +55,15 @@ class AlpacaAdapter:
                 paper=bool(self.settings.paper),
                 raw_data=True,
             )
+
+    def _ensure_paper(self) -> None:
+        base_url = (self.settings.base_url or "").lower()
+        if not bool(self.settings.paper):
+            self.client = None
+            raise RuntimeError("not_paper_environment")
+        if base_url and "api.alpaca.markets" in base_url and "paper" not in base_url:
+            self.client = None
+            raise RuntimeError("not_paper_environment")
 
     def configured(self) -> bool:
         return self.client is not None
@@ -116,6 +127,26 @@ class AlpacaAdapter:
             raise RuntimeError("alpaca_not_configured")
         return self.client.get_all_positions()  # type: ignore[union-attr]
 
+    def close_all_positions(self, cancel_orders: bool = True) -> Any:
+        if not self.configured():
+            raise RuntimeError("alpaca_not_configured")
+        return self.client.close_all_positions(cancel_orders=cancel_orders)  # type: ignore[union-attr]
+
+    def _serialize_request(self, req: LimitOrderRequest) -> dict[str, Any]:
+        def _convert(val: Any) -> Any:
+            if isinstance(val, Enum):
+                return val.value
+            if hasattr(val, "model_dump"):
+                return self._serialize_request(val)  # type: ignore[arg-type]
+            if isinstance(val, dict):
+                return {k: _convert(v) for k, v in val.items() if v is not None}
+            if isinstance(val, (list, tuple)):
+                return [_convert(v) for v in val if v is not None]
+            return val
+
+        data = req.model_dump()  # type: ignore[call-arg]
+        return {k: _convert(v) for k, v in data.items() if v is not None}
+
     def place_limit_bracket(
         self,
         symbol: str,
@@ -126,6 +157,7 @@ class AlpacaAdapter:
         stop_loss_pct: float | None = None,
         client_order_id: str | None = None,
         tif: str = "day",
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         if not self.configured():
             raise RuntimeError("alpaca_not_configured")
@@ -162,6 +194,13 @@ class AlpacaAdapter:
             stop_loss=sl,
             type=OrderType.LIMIT,
         )
+
+        if dry_run:
+            return {
+                "dry_run": True,
+                "request": self._serialize_request(req),
+                "client_order_id": cid,
+            }
 
         try:
             order = self.client.submit_order(order_data=req)  # type: ignore[union-attr]
