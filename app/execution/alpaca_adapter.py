@@ -73,7 +73,7 @@ class AlpacaAdapter:
             api_key=cfg.api_key_id,
             secret_key=cfg.api_secret_key,
             paper=cfg.paper,
-            url=cfg.base_url,
+            raw_data=True,
         )
         log.info("alpaca adapter configured base=%s key_tail=%s", cfg.base_url, masked_tail(cfg.api_key_id))
         self.timeout = cfg.request_timeout_s
