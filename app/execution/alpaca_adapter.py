@@ -73,7 +73,7 @@ class AlpacaAdapter:
             api_key=cfg.api_key_id,
             secret_key=cfg.api_secret_key,
             paper=cfg.paper,
-            raw_data=True,
+            raw_data=True,  # keep
         )
         log.info("alpaca adapter configured base=%s key_tail=%s", cfg.base_url, masked_tail(cfg.api_key_id))
         self.timeout = cfg.request_timeout_s
@@ -174,9 +174,11 @@ class AlpacaAdapter:
 
         if self.client is None:
             raise RuntimeError("alpaca_unconfigured")
-        req = GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=500)
+        req = GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=100)
         try:
-            return list(self.client.get_orders(filter=req))
+            orders = list(self.client.get_orders(filter=req))
+            log.debug("reconcile: fetched %d open orders from alpaca", len(orders))
+            return orders
         except APIError as exc:
             # If unauthorized, bubble a clean hint and let caller decide (recon will back off)
             if getattr(exc, "status_code", None) == 401:
