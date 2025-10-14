@@ -18,6 +18,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for minimal envs
 
     joblib = _Joblib()
 
+import copy
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -126,8 +127,8 @@ except ModuleNotFoundError:  # pragma: no cover - lightweight fallback
             return self._estimator.predict_proba(data)
 
     class CalibratedClassifierCV:
-        def __init__(self, base_estimator: Pipeline, method: str = "sigmoid", cv: str | int = "prefit") -> None:
-            self.base_estimator = base_estimator
+        def __init__(self, estimator: Pipeline, method: str = "sigmoid", cv: str | int = "prefit") -> None:
+            self.base_estimator = estimator
 
         def fit(self, X: np.ndarray, y: np.ndarray) -> "CalibratedClassifierCV":
             self.base_estimator.fit(X, y)
@@ -148,66 +149,123 @@ DEFAULT_MODEL_NAME = "intraday_lr"
 @dataclass
 class SklearnModel:
     estimator: Any = field(default_factory=lambda: LogisticRegression(max_iter=500, class_weight="balanced"))
-    calibrated_model: CalibratedClassifierCV | None = None
     metrics: dict[str, float] | None = None
     created_at: datetime | None = None
+    _clf: Any | None = field(default=None, init=False, repr=False)
+    _calibrated: bool = field(default=False, init=False, repr=False)
 
     def _prepare_X(self, X_df: pd.DataFrame) -> pd.DataFrame:
+        X_df = X_df.copy()
         missing = [c for c in FEATURE_LIST if c not in X_df.columns]
-        if missing:
-            for col in missing:
-                X_df[col] = 0.0
+        for col in missing:
+            X_df[col] = 0.0
         return X_df[FEATURE_LIST]
 
     def fit(self, X_df: pd.DataFrame, y: pd.Series) -> "SklearnModel":
         if len(X_df) != len(y):
             raise ValueError("Feature and label length mismatch")
-        X_df = self._prepare_X(X_df.copy())
-        y = y.reset_index(drop=True)
-        split_idx = max(int(len(X_df) * 0.8), 1)
-        X_train, X_val = X_df.iloc[:split_idx], X_df.iloc[split_idx:]
-        y_train, y_val = y.iloc[:split_idx], y.iloc[split_idx:]
-        if X_val.empty:
-            X_train, y_train = X_df, y
-            X_val, y_val = X_df, y
 
+        X_df = self._prepare_X(X_df)
+        y = y.reset_index(drop=True)
+
+        n_samples = len(X_df)
+        if n_samples == 0:
+            raise ValueError("No samples provided")
+
+        split_idx = int(n_samples * 0.8)
+        val_len = n_samples - split_idx
+        if val_len <= 0:
+            split_idx = int(n_samples * 0.9)
+            val_len = n_samples - split_idx
+
+        if val_len <= 0:
+            X_train, y_train = X_df, y
+            X_val: pd.DataFrame | None = None
+            y_val: pd.Series | None = None
+        else:
+            X_train, X_val = X_df.iloc[:split_idx], X_df.iloc[split_idx:]
+            y_train, y_val = y.iloc[:split_idx], y.iloc[split_idx:]
+
+        estimator_clone = copy.deepcopy(self.estimator)
         pipeline = Pipeline([
             ("scaler", StandardScaler()),
-            ("estimator", self.estimator),
+            ("estimator", estimator_clone),
         ])
-        pipeline.fit(X_train.to_numpy(dtype=float), y_train.to_numpy(dtype=float))
 
-        calibrated = CalibratedClassifierCV(base_estimator=pipeline, method="sigmoid", cv="prefit")
-        calibrated.fit(X_val.to_numpy(dtype=float), y_val.to_numpy(dtype=float))
+        X_train_np = X_train.to_numpy(dtype=float)
+        y_train_np = y_train.to_numpy(dtype=float)
+        pipeline.fit(X_train_np, y_train_np)
 
-        proba_val = calibrated.predict_proba(X_val.to_numpy(dtype=float))[:, 1]
-        auc = roc_auc_score(y_val.to_numpy(dtype=float), proba_val) if len(np.unique(y_val)) > 1 else float("nan")
-        preds = (proba_val >= 0.5).astype(int)
-        acc = accuracy_score(y_val.to_numpy(dtype=float), preds)
+        clf: Any = pipeline
+        calibrated = False
 
-        self.calibrated_model = calibrated
+        if X_val is not None and y_val is not None and not X_val.empty:
+            y_val_np = y_val.to_numpy(dtype=float)
+            if len(np.unique(y_val_np)) > 1:
+                calibrator = CalibratedClassifierCV(estimator=pipeline, method="sigmoid", cv="prefit")
+                calibrator.fit(X_val.to_numpy(dtype=float), y_val_np)
+                clf = calibrator
+                calibrated = True
+
+        self._clf = clf
+        self._calibrated = calibrated
+
+        eval_X = X_val if X_val is not None and not X_val.empty else X_train
+        eval_y = y_val if y_val is not None and not y_val.empty else y_train
+        eval_X_np = eval_X.to_numpy(dtype=float)
+        eval_y_np = eval_y.to_numpy(dtype=float)
+
+        try:
+            proba = clf.predict_proba(eval_X_np)[:, 1]
+        except Exception:
+            # pragma: no cover - compatibility for stub implementations
+            proba = np.zeros(len(eval_X_np), dtype=float)
+
+        unique_labels = np.unique(eval_y_np)
+        if unique_labels.size > 1:
+            auc = roc_auc_score(eval_y_np, proba)
+        else:
+            auc = float("nan")
+        preds = (proba >= 0.5).astype(int)
+        acc = accuracy_score(eval_y_np, preds)
+
         self.metrics = {
             "auc": float(auc),
             "accuracy": float(acc),
-            "samples": float(len(X_df)),
+            "samples": float(n_samples),
+            "calibrated": float(1.0 if calibrated else 0.0),
         }
         self.created_at = datetime.utcnow()
         return self
 
-    def predict_proba(self, X_df: pd.DataFrame) -> np.ndarray:
-        if self.calibrated_model is None:
+    @property
+    def calibrated_model(self) -> Any | None:  # backwards compatibility for older callers
+        return self._clf
+
+    @calibrated_model.setter
+    def calibrated_model(self, value: Any | None) -> None:
+        self._clf = value
+        self._calibrated = bool(value is not None)
+
+    def predict_proba(self, X_df: pd.DataFrame) -> float | list[float]:
+        if self._clf is None:
             raise RuntimeError("Model not fitted")
-        prepared = self._prepare_X(X_df.copy())
-        return self.calibrated_model.predict_proba(prepared.to_numpy(dtype=float))
+        prepared = self._prepare_X(X_df)
+        proba = self._clf.predict_proba(prepared.to_numpy(dtype=float))
+        up = proba[:, 1]
+        if len(up) == 1:
+            return float(up.tolist()[0])
+        return [float(v) for v in up.tolist()]
 
     def save(self, path: Path) -> None:
-        if self.calibrated_model is None:
+        if self._clf is None:
             raise RuntimeError("Nothing to save")
         artifact = {
             "feature_list": FEATURE_LIST,
-            "model": self.calibrated_model,
+            "model": self._clf,
             "metrics": self.metrics or {},
             "created_at": self.created_at or datetime.utcnow(),
+            "calibrated": bool(self._calibrated),
         }
         joblib.dump(artifact, path)
 
@@ -215,7 +273,8 @@ class SklearnModel:
     def load(cls, path: Path) -> "SklearnModel":
         data = joblib.load(path)
         model = cls()
-        model.calibrated_model = data["model"]
+        model._clf = data["model"]
+        model._calibrated = bool(data.get("calibrated", False))
         model.metrics = {k: float(v) for k, v in data.get("metrics", {}).items()}
         created = data.get("created_at")
         if isinstance(created, datetime):
