@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
-# --- .env bootstrap ---
-try:
-    from dotenv import load_dotenv  # python-dotenv
+# --- Robust .env bootstrap (search repo root & parents) ---
+from pathlib import Path
 
-    load_dotenv()
+try:
+    from dotenv import load_dotenv, find_dotenv  # python-dotenv
+
+    # Try CWD (when launched from repo root)
+    load_dotenv(find_dotenv(filename=".env", usecwd=True), override=False)
+
+    # Also try alongside this file's repo root (…/Gigatrader/.env)
+    ROOT = Path(__file__).resolve().parents[1]
+    env_at_root = ROOT / ".env"
+    if env_at_root.exists():
+        load_dotenv(env_at_root, override=False)
 except Exception:
     pass
 
@@ -15,11 +24,8 @@ try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
 except ImportError as e:
     raise RuntimeError(
-        "Missing dependency 'pydantic-settings'. "
-        "Install it via: pip install 'pydantic-settings>=2.2,<3'"
+        "Missing dependency 'pydantic-settings'. Install with: pip install 'pydantic-settings>=2.2,<3'"
     ) from e
-
-from pathlib import Path
 from typing import Any, Dict, Literal
 
 try:  # pragma: no cover - import guard exercised indirectly
@@ -137,7 +143,10 @@ def get_order_defaults() -> OrderDefaults:
     return _orders
 
 
-def masked_key_tail(k: str | None) -> str | None:
-    """Return the last 4 characters of a credential for safe logging."""
+def alpaca_config_ok() -> bool:
+    s = get_alpaca_settings()
+    return bool(s.api_key_id and s.api_secret_key and s.base_url)
 
+
+def masked_key_tail(k: str | None) -> str | None:
     return k[-4:] if k else None
