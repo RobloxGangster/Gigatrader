@@ -22,7 +22,14 @@ try:  # pragma: no cover - exercised when alpaca-py is optional
 except ModuleNotFoundError as exc:  # pragma: no cover - easier local testing without alpaca
     raise RuntimeError("alpaca-py must be installed to use AlpacaAdapter") from exc
 
-from core.config import get_alpaca_settings, get_order_defaults, alpaca_config_ok, masked_tail
+from core.config import (
+    get_alpaca_settings,
+    get_order_defaults,
+    alpaca_config_ok,
+    masked_tail,
+    debug_alpaca_snapshot,
+    resolved_env_sources,
+)
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +56,16 @@ class AlpacaAdapter:
 
     def __init__(self) -> None:
         if not alpaca_config_ok():
-            log.warning("alpaca adapter unavailable: credentials missing; broker calls disabled")
+            snap = debug_alpaca_snapshot()
+            envp = resolved_env_sources()
+            log.warning(
+                "alpaca adapter unavailable: credentials missing; broker calls disabled | "
+                "configured=%s base_url=%s key_tail=%s env=%s",
+                snap.get("configured"),
+                snap.get("base_url"),
+                snap.get("key_tail"),
+                envp,
+            )
             raise RuntimeError("alpaca_unconfigured")
 
         cfg = get_alpaca_settings()
