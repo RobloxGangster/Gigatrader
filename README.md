@@ -93,6 +93,10 @@ curl -X POST "http://127.0.0.1:8000/paper/flatten"
 curl -X POST "http://127.0.0.1:8000/paper/stop"
 ```
 
+### Testing orders
+
+`/orders/test` uses a dry-run by default and returns the composed payload plus `client_order_id` without touching the broker. Add `&confirm=true` (or `&execute=true`) to actually place a paper trade. Set `TEST_ORDERS_DEFAULT_DRY_RUN=false` if you need the legacy "submit immediately" behaviour.
+
 ### Diagnostics
 ```bat
 python dev\arch_diag.py --zip
