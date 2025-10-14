@@ -77,6 +77,21 @@ class TradeLoopConfig:
         return TradeLoopConfig(**payload)
 
 
+@dataclass(slots=True)
+class AuditConfig:
+    audit_dir: Path = Path("data/logs")
+    audit_file: str = "trade_audit.ndjson"
+    reconcile_state_file: str = "orders_state.json"
+
+    def audit_path(self) -> Path:
+        base = self.audit_dir if isinstance(self.audit_dir, Path) else Path(self.audit_dir)
+        return base / self.audit_file
+
+    def state_path(self) -> Path:
+        base = self.audit_dir if isinstance(self.audit_dir, Path) else Path(self.audit_dir)
+        return base / self.reconcile_state_file
+
+
 class RiskPresetConfig(BaseModel):
     name: Literal["safe", "balanced", "high_risk"]
     daily_loss_limit: float
@@ -159,6 +174,12 @@ def get_order_defaults() -> OrderDefaults:
     """Instantiate order defaults from the environment."""
 
     return OrderDefaults()
+
+
+def get_audit_config() -> AuditConfig:
+    """Return audit logging configuration."""
+
+    return AuditConfig()
 
 
 def alpaca_config_ok() -> bool:
