@@ -1,0 +1,1 @@
+{"expiry": "2024-02-16", "underlying": "AAPL", "options": [{"type": "call", "strike": 150, "delta": 0.25, "bid": 2.1, "ask": 2.3, "open_interest": 120, "expiry": "2024-02-16"}, {"type": "put", "strike": 150, "delta": -0.28, "bid": 2.5, "ask": 2.7, "open_interest": 95, "expiry": "2024-02-16"}]}

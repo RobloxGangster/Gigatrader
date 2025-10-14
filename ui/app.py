@@ -34,11 +34,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ui.pages import (  # noqa: E402  - Streamlit entrypoint import order
+    backtest,
     backtest_reports,
     control_center,
     diagnostics,
     logs_pacing,
+    ml,
     option_chain,
+    signals,
 )
 from ui.services.backend import get_backend
 from ui.services.config import api_base_url, mock_mode
@@ -52,8 +55,11 @@ DEBUG_UI = os.getenv("UI_DEBUG", "").strip().lower() in ("1", "true", "yes")
 
 PAGE_MAP: Dict[str, object] = {
     "Control Center": control_center,
-    "Option Chain": option_chain,
+    "Signals": signals,
+    "Strategy Backtests": backtest,
     "Backtest Reports": backtest_reports,
+    "ML Ops": ml,
+    "Option Chain": option_chain,
     "Logs": logs_pacing,
     "Diagnostics": diagnostics,
 }
@@ -73,8 +79,11 @@ def main() -> None:
     # Always provide the Navigation selectbox
     nav_options = [
         "Control Center",
-        "Option Chain",
+        "Signals",
+        "Strategy Backtests",
         "Backtest Reports",
+        "ML Ops",
+        "Option Chain",
         "Logs",
     ]
     if DEBUG_UI or _is_mock_mode():
