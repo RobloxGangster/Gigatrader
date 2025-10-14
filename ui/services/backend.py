@@ -75,6 +75,12 @@ class BrokerAPI(Protocol):
     def get_logs(self, tail: int, level: Optional[str] = None) -> List[LogEvent]: ...
 
     def get_pacing_stats(self) -> PacingStats: ...
+    def preview_signals(self, profile: str = "balanced", universe: Optional[List[str]] | None = None) -> Dict[str, Any]: ...
+    def run_strategy_backtest(self, symbol: str, strategy: str, days: int) -> Dict[str, Any]: ...
+    def get_ml_status(self) -> Dict[str, Any]: ...
+    def get_ml_features(self, symbol: str) -> Dict[str, Any]: ...
+    def ml_predict(self, symbol: str) -> Dict[str, Any]: ...
+    def ml_train(self, symbols: Optional[List[str]] | None = None) -> Dict[str, Any]: ...
 
 
 def _build_trace_headers() -> Dict[str, str]:
@@ -238,6 +244,29 @@ class RealAPI:
         payload = self._request("GET", "/pacing")
         return PacingStats(**payload)
 
+    def preview_signals(self, profile: str = "balanced", universe: Optional[List[str]] | None = None) -> Dict[str, Any]:
+        params = {"profile": profile}
+        if universe:
+            params["universe"] = ",".join(universe)
+        return self._request("GET", "/signals/preview", params=params)
+
+    def run_strategy_backtest(self, symbol: str, strategy: str, days: int) -> Dict[str, Any]:
+        payload = {"symbol": symbol, "strategy": strategy, "days": days}
+        return self._request("POST", "/backtest/run", json_payload=payload)
+
+    def get_ml_status(self) -> Dict[str, Any]:
+        return self._request("GET", "/ml/status")
+
+    def get_ml_features(self, symbol: str) -> Dict[str, Any]:
+        return self._request("GET", "/ml/features", params={"symbol": symbol})
+
+    def ml_predict(self, symbol: str) -> Dict[str, Any]:
+        return self._request("POST", "/ml/predict", params={"symbol": symbol})
+
+    def ml_train(self, symbols: Optional[List[str]] | None = None) -> Dict[str, Any]:
+        payload = {"symbols": symbols} if symbols else None
+        return self._request("POST", "/ml/train", json_payload=payload)
+
 
 class _MockState(BaseModel):
     run_id: Optional[str] = None
@@ -327,25 +356,57 @@ class MockAPI:
         trades = [Trade(**item) for item in payload]
         if not filters:
             return trades
-        filtered = []
+
+        filtered: List[Trade] = []
         for trade in trades:
             include = True
             for key, value in filters.items():
-                if not value:
+                if value is None:
                     continue
                 attr = getattr(trade, key, None)
-                if attr is None:
-                    continue
-                if isinstance(attr, datetime):
-                    if value not in trade.timestamp.isoformat():
+                if isinstance(value, (list, tuple, set)):
+                    if attr not in value:
                         include = False
                         break
-                elif str(attr).lower() != str(value).lower():
-                    include = False
-                    break
+                else:
+                    if attr != value:
+                        include = False
+                        break
             if include:
                 filtered.append(trade)
         return filtered
+
+    def preview_signals(self, profile: str = "balanced", universe: Optional[List[str]] | None = None) -> Dict[str, Any]:
+        symbols = universe or ["AAPL", "MSFT"]
+        now = datetime.utcnow().isoformat() + "Z"
+        candidates = []
+        for sym in symbols:
+            base_price = 150 + self.random.random() * 5
+            candidates.append({"kind": "equity", "symbol": sym, "side": "buy", "entry": base_price, "stop": base_price * 0.99, "target": base_price * 1.02, "confidence": round(1.0 + self.random.random() * 0.5, 3), "rationale": "Mock momentum setup", "meta": {"strategy": "intraday_momentum"}})
+        return {"generated_at": now, "profile": profile, "candidates": candidates}
+
+    def run_strategy_backtest(self, symbol: str, strategy: str, days: int) -> Dict[str, Any]:
+        equity_curve = []
+        pnl = 0.0
+        for idx in range(10):
+            pnl += self.random.uniform(-50, 80)
+            equity_curve.append({"time": datetime.utcnow().isoformat() + "Z", "equity": pnl})
+        stats = {"cagr": 0.12, "sharpe": 1.4, "max_dd": -0.05, "winrate": 0.55, "avg_r": 0.8, "avg_trade": pnl / 10, "exposure": 0.5, "return_pct": 0.1}
+        return {"trades": [{"symbol": symbol, "side": "buy", "qty": 10, "pnl": pnl, "reason": strategy}], "equity_curve": equity_curve, "stats": stats}
+
+    def get_ml_status(self) -> Dict[str, Any]:
+        return {"model": "mock_model", "created_at": datetime.utcnow().isoformat() + "Z", "metrics": {"auc": 0.6, "accuracy": 0.55}}
+
+    def get_ml_features(self, symbol: str) -> Dict[str, Any]:
+        features = {f"feat_{i}": round(self.random.random(), 4) for i in range(5)}
+        return {"symbol": symbol.upper(), "features": features, "meta": {"generated_at": datetime.utcnow().isoformat() + "Z"}}
+
+    def ml_predict(self, symbol: str) -> Dict[str, Any]:
+        return {"symbol": symbol.upper(), "p_up_15m": round(self.random.random(), 3), "model": "mock_model"}
+
+    def ml_train(self, symbols: Optional[List[str]] | None = None) -> Dict[str, Any]:
+        metrics = {sym: {"auc": 0.6, "accuracy": 0.55} for sym in (symbols or ["AAPL"])}
+        return {"model": "mock_model", "metrics": metrics}
 
     def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:
         name = f"option_chain_{symbol.lower()}"

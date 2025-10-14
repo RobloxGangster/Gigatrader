@@ -24,6 +24,11 @@ from dataclasses import dataclass
 from pydantic import BaseModel, Field, field_validator
 
 
+MOCK_MODE = os.getenv("MOCK_MODE", "false").lower() in ("1", "true", "yes", "on")
+
+
+
+
 class OrderDefaults(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
@@ -149,6 +154,15 @@ def resolved_env_sources() -> Dict[str, bool]:
         "APCA_API_BASE_URL": _has("APCA_API_BASE_URL"),
         "ALPACA_API_BASE_URL": _has("ALPACA_API_BASE_URL"),
     }
+
+
+def get_signal_defaults():
+    from app.signals.signal_engine import SignalConfig
+
+    return SignalConfig()
+
+
+
 
 
 def debug_alpaca_snapshot() -> Dict[str, Any]:

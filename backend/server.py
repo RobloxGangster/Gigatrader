@@ -11,16 +11,24 @@ import threading
 import subprocess
 import logging
 import time
+from decimal import Decimal
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any, Tuple, Dict
+from typing import Optional, Any, Tuple, Dict, Iterable, Literal
 
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
 
+from app.data.market import build_data_client, bars_to_df
+from app.signals.signal_engine import SignalEngine
+from app.backtest.engine import run_trade_backtest
+from app.ml.models import load_from_registry, DEFAULT_MODEL_NAME
+from app.ml.trainer import latest_feature_row, train_intraday_classifier
+from app.ml.features import FEATURE_LIST
+from core.config import MOCK_MODE, get_signal_defaults
 from app.execution.alpaca_adapter import AlpacaAdapter, AlpacaOrderError, AlpacaUnauthorized
 
 from app.execution.router import ExecIntent, OrderRouter
@@ -124,9 +132,28 @@ class RiskSnapshot(BaseModel):
     limits: RiskLimits
     timestamp: str
 
+class BacktestRequest(BaseModel):
+    symbol: str
+    strategy: Literal["intraday_momo", "intraday_revert", "swing_breakout"]
+    days: int = 30
+
+
+class TrainRequest(BaseModel):
+    symbols: list[str] | None = None
+
+
+
+
 
 log = logging.getLogger("backend")
 
+try:
+    _data_client = build_data_client(mock_mode=MOCK_MODE)
+except Exception as exc:
+    logging.getLogger("backend").info("data client fallback: %s", exc)
+    _data_client = build_data_client(mock_mode=True)
+
+_signal_engine = SignalEngine(_data_client, config=get_signal_defaults())
 
 _execution_state = ExecutionState()
 
@@ -256,6 +283,20 @@ def _read_run_id() -> str:
         except Exception:
             pass
     return "idle"
+
+def _normalize_payload(obj):
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _normalize_payload(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_normalize_payload(v) for v in obj]
+    return obj
+
+
+
 
 
 def _env_float(name: str, default: float) -> float:
@@ -510,6 +551,145 @@ def paper_flatten():
     except Exception:
         pass
     return {"ok": True}
+
+
+@app.get("/signals/preview")
+def signals_preview(profile: str = "balanced", universe: str | None = Query(default=None)):
+    symbols = None
+    if universe:
+        symbols = [sym.strip().upper() for sym in universe.split(",") if sym.strip()]
+    try:
+        bundle = _signal_engine.produce(profile=profile, universe=symbols)
+        payload = bundle.model_dump(mode="json")
+        return _normalize_payload(payload)
+    except Exception as exc:  # noqa: BLE001
+        log.info("signal preview failed", extra={"error": str(exc), "profile": profile})
+        return {"error": str(exc)}
+
+
+@app.post("/backtest/run")
+def run_backtest(req: BacktestRequest):
+    try:
+        limit = max(int(req.days) * 390, _signal_engine.config.lookback)
+        timeframe = _signal_engine.config.tf_intraday
+        if req.strategy == "swing_breakout":
+            timeframe = _signal_engine.config.tf_swing
+        bars = _data_client.get_bars(req.symbol, timeframe=timeframe, limit=limit)
+        df = bars_to_df(bars)
+        if df.empty:
+            return {"error": "no_market_data"}
+        bundle = _signal_engine.produce(universe=[req.symbol])
+        if req.strategy == "swing_breakout":
+            candidate_filter = "swing_breakout"
+        elif req.strategy == "intraday_momo":
+            candidate_filter = "intraday_momentum"
+        else:
+            candidate_filter = "intraday_mean_reversion"
+        candidate = next((c for c in bundle.candidates if c.kind == "equity" and c.meta.get("strategy") == candidate_filter), None)
+        window = 120 if timeframe == _signal_engine.config.tf_intraday else min(len(df), req.days)
+        trade_df = df.tail(max(window, 5))
+        if candidate is None:
+            entry_price = float(trade_df["close"].iloc[-1]) if not trade_df.empty else float(df["close"].iloc[-1])
+            stop_price = entry_price * (0.99 if req.strategy != "intraday_revert" else 1.01)
+            target_price = entry_price * (1.01 if req.strategy != "intraday_revert" else 0.99)
+            try:
+                fallback = run_trade_backtest(
+                    trade_df,
+                    entry=entry_price,
+                    stop=stop_price,
+                    target=target_price,
+                    side="buy",
+                    time_exit=window,
+                )
+                return {
+                    "trades": _normalize_payload(fallback.trades),
+                    "equity_curve": _normalize_payload(fallback.equity_curve),
+                    "stats": _normalize_payload(fallback.stats),
+                    "note": "fallback_backtest",
+                }
+            except Exception as exc:  # pragma: no cover - fallback safety
+                zero_stats = {"cagr": 0.0, "sharpe": 0.0, "max_dd": 0.0, "winrate": 0.0, "avg_r": 0.0, "avg_trade": 0.0, "exposure": 0.0, "return_pct": 0.0}
+                return {"trades": [], "equity_curve": [], "stats": zero_stats, "note": f"fallback_error:{exc}"}
+        result = run_trade_backtest(
+            trade_df,
+            entry=float(candidate.entry),
+            stop=float(candidate.stop) if candidate.stop is not None else None,
+            target=float(candidate.target) if candidate.target is not None else None,
+            side=candidate.side,
+            time_exit=window,
+        )
+        payload = {
+            "trades": _normalize_payload(result.trades),
+            "equity_curve": _normalize_payload(result.equity_curve),
+            "stats": _normalize_payload(result.stats),
+            "candidate": _normalize_payload(candidate.model_dump(mode="json")),
+        }
+        return payload
+    except Exception as exc:  # noqa: BLE001
+        log.info("backtest run failed", extra={"error": str(exc), "symbol": req.symbol})
+        return {"error": str(exc)}
+
+
+@app.get("/ml/status")
+def ml_status():
+    model = load_from_registry()
+    if model is None:
+        return {"model": None, "status": "missing"}
+    created_at = model.created_at.isoformat() if model.created_at else None
+    feature_importances: list[dict[str, float]] = []
+    try:
+        calibrated = getattr(model, "calibrated_model", None)
+        base = getattr(calibrated, "base_estimator", None)
+        estimator = getattr(base, "named_steps", {}).get("estimator") if base else None
+        if estimator is not None and hasattr(estimator, "coef_"):
+            coefs = getattr(estimator, "coef_")
+            if isinstance(coefs, (list, tuple)) or getattr(coefs, "ndim", 1) == 2:
+                values = [abs(float(v)) for v in coefs[0]]
+                feature_importances = [
+                    {"feature": FEATURE_LIST[idx], "importance": values[idx]}
+                    for idx in range(min(len(values), len(FEATURE_LIST)))
+                ]
+                feature_importances.sort(key=lambda item: item["importance"], reverse=True)
+    except Exception:  # pragma: no cover - diagnostic only
+        feature_importances = []
+    return {"model": DEFAULT_MODEL_NAME, "created_at": created_at, "metrics": _normalize_payload(model.metrics or {}), "feature_importances": feature_importances}
+
+
+@app.get("/ml/features")
+def ml_features(symbol: str = Query(..., description="Ticker symbol")):
+    try:
+        features, meta = latest_feature_row(symbol, _data_client)
+        row = features.iloc[-1].to_dict()
+        return {"symbol": symbol.upper(), "features": _normalize_payload(row), "meta": _normalize_payload(meta)}
+    except Exception as exc:  # noqa: BLE001
+        log.info("ml features failed", extra={"error": str(exc), "symbol": symbol})
+        return {"error": str(exc)}
+
+
+@app.post("/ml/predict")
+def ml_predict(symbol: str = Query(..., description="Ticker symbol")):
+    model = load_from_registry()
+    if model is None:
+        return {"error": "model_missing"}
+    try:
+        features, meta = latest_feature_row(symbol, _data_client)
+        proba = float(model.predict_proba(features)[0][1])
+        return {"symbol": symbol.upper(), "p_up_15m": proba, "model": DEFAULT_MODEL_NAME}
+    except Exception as exc:  # noqa: BLE001
+        log.info("ml predict failed", extra={"error": str(exc), "symbol": symbol})
+        return {"error": str(exc)}
+
+
+@app.post("/ml/train")
+def ml_train(payload: TrainRequest | None = None):
+    symbols = payload.symbols if payload and payload.symbols else _signal_engine.config.universe[:2]
+    try:
+        metrics = train_intraday_classifier(symbols, _data_client)
+        return {"model": DEFAULT_MODEL_NAME, "metrics": _normalize_payload(metrics)}
+    except Exception as exc:  # noqa: BLE001
+        log.info("ml train failed", extra={"error": str(exc), "symbols": symbols})
+        return {"error": str(exc)}
+
 
 # ---------- Data endpoints ----------
 @app.get("/orders")
