@@ -22,9 +22,9 @@ try:  # pragma: no cover - exercised when alpaca-py is optional
 except ModuleNotFoundError as exc:  # pragma: no cover - easier local testing without alpaca
     raise RuntimeError("alpaca-py must be installed to use AlpacaAdapter") from exc
 
-from core.config import get_alpaca_settings, get_order_defaults, alpaca_config_ok
+from core.config import get_alpaca_settings, get_order_defaults, alpaca_config_ok, masked_tail
 
-log = logging.getLogger("alpaca")
+log = logging.getLogger(__name__)
 
 
 def _to_float(value: Any) -> Any:
@@ -49,6 +49,7 @@ class AlpacaAdapter:
 
     def __init__(self) -> None:
         if not alpaca_config_ok():
+            log.warning("alpaca adapter unavailable: credentials missing; broker calls disabled")
             raise RuntimeError("alpaca_unconfigured")
 
         cfg = get_alpaca_settings()
@@ -58,6 +59,7 @@ class AlpacaAdapter:
             paper=cfg.paper,
             url=cfg.base_url,
         )
+        log.info("alpaca adapter configured base=%s key_tail=%s", cfg.base_url, masked_tail(cfg.api_key_id))
         self.timeout = cfg.request_timeout_s
         self.max_retries = cfg.max_retries
         self.backoff = cfg.retry_backoff_s
