@@ -19,19 +19,9 @@ except ModuleNotFoundError:  # pragma: no cover - executed in minimal environmen
     yaml = None
     import json
 
+from dataclasses import dataclass
+
 from pydantic import BaseModel, Field, field_validator
-
-
-class AlpacaSettings(BaseSettings):
-    # Accept both ALPACA_* and APCA_* names
-    api_key_id: str | None = Field(default=None, validation_alias="ALPACA_API_KEY_ID")
-    api_secret_key: str | None = Field(default=None, validation_alias="ALPACA_API_SECRET_KEY")
-    apca_key_id: str | None = Field(default=None, validation_alias="APCA_API_KEY_ID")
-    apca_secret_key: str | None = Field(default=None, validation_alias="APCA_API_SECRET_KEY")
-    base_url: str | None = Field(default=None, validation_alias="APCA_API_BASE_URL")
-    paper_env: str | None = Field(default=None, validation_alias="ALPACA_PAPER")
-
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
 class OrderDefaults(BaseSettings):
@@ -41,6 +31,14 @@ class OrderDefaults(BaseSettings):
     allow_brackets: bool = Field(default=True, env="ALLOW_BRACKETS")
     default_tp_pct: float = Field(default=0.01, env="DEFAULT_TP_PCT")
     default_sl_pct: float = Field(default=0.005, env="DEFAULT_SL_PCT")
+
+
+@dataclass(slots=True)
+class AlpacaSettings:
+    api_key: str | None
+    api_secret: str | None
+    base_url: str
+    paper: bool
 
 
 class RiskPresetConfig(BaseModel):
@@ -112,25 +110,13 @@ def load_config(path: Path) -> AppConfig:
     return AppConfig(**payload)
 
 
-def get_alpaca_settings():
-    cfg = AlpacaSettings()
-    key = cfg.api_key_id or cfg.apca_key_id
-    sec = cfg.api_secret_key or cfg.apca_secret_key
-    base = (cfg.base_url or "").rstrip("/")
-    paper = (cfg.paper_env or os.getenv("APCA_PAPER") or "true").lower() in ("1", "true", "yes", "on")
-    return type(
-        "Cfg",
-        (),
-        dict(
-            api_key_id=key,
-            api_secret_key=sec,
-            base_url=base,
-            paper=paper,
-            max_retries=3,
-            retry_backoff_s=2.0,
-            request_timeout_s=15.0,
-        ),
-    )()
+def get_alpaca_settings() -> AlpacaSettings:
+    key = os.getenv("ALPACA_API_KEY_ID") or os.getenv("APCA_API_KEY_ID")
+    secret = os.getenv("ALPACA_API_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY")
+    base_url = os.getenv("APCA_API_BASE_URL") or "https://paper-api.alpaca.markets"
+    base_url = base_url.rstrip("/") or "https://paper-api.alpaca.markets"
+    paper = "paper" in base_url.lower()
+    return AlpacaSettings(api_key=key, api_secret=secret, base_url=base_url, paper=paper)
 
 
 def get_order_defaults() -> OrderDefaults:
@@ -141,7 +127,7 @@ def get_order_defaults() -> OrderDefaults:
 
 def alpaca_config_ok() -> bool:
     s = get_alpaca_settings()
-    return bool(s.api_key_id and s.api_secret_key)
+    return bool(s.api_key and s.api_secret)
 
 
 def masked_tail(s: Optional[str]) -> Optional[str]:
@@ -172,6 +158,6 @@ def debug_alpaca_snapshot() -> Dict[str, Any]:
         "configured": alpaca_config_ok(),
         "base_url": cfg.base_url or ("paper" if cfg.paper else "live"),
         "paper": cfg.paper,
-        "key_tail": masked_tail(cfg.api_key_id),
+        "key_tail": masked_tail(cfg.api_key),
         "env": env_flags,
     }

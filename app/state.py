@@ -101,6 +101,24 @@ class ExecutionState(StateProvider):
             if symbol:
                 self._last_trade_ts[symbol.upper()] = record.created_at
 
+    def update_client_id(self, old_cid: str, new_cid: str) -> None:
+        if old_cid == new_cid:
+            return
+        with self._lock:
+            record = self._intent_by_cid.pop(old_cid, None)
+            if record is None:
+                return
+            record.client_order_id = new_cid
+            self._intent_by_cid[new_cid] = record
+            self._intent_by_key[record.key] = record
+
+    def forget(self, key: str) -> None:
+        with self._lock:
+            record = self._intent_by_key.pop(key, None)
+            if record is None:
+                return
+            self._intent_by_cid.pop(record.client_order_id, None)
+
     def map_provider_id(self, cid: str, provider_id: Optional[str]) -> None:
         with self._lock:
             record = self._intent_by_cid.get(cid)
