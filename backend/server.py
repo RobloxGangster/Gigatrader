@@ -6,8 +6,19 @@ if str(ROOT) not in sys.path:
 os.environ.setdefault("PYTHONPATH", str(ROOT))
 # ------------------------------------------------------------
 
+from dotenv import load_dotenv
+
+# Load .env once on process start; don't override existing env
+load_dotenv(override=False)
+
+
+def _tail(x: str | None, n: int = 4) -> str | None:
+    return x[-n:] if x else None
+
+
 import asyncio
 import copy
+import json
 import threading
 import subprocess
 import logging
@@ -40,10 +51,6 @@ from core.kill_switch import KillSwitch
 from app.trade.orchestrator import TradeOrchestrator
 from app.execution.audit import AuditLog
 from app.execution.reconcile import Reconciler
-
-from dotenv import load_dotenv
-
-load_dotenv(override=False)
 
 _TEST_ORDERS_DEFAULT_DRY_RUN = os.getenv("TEST_ORDERS_DEFAULT_DRY_RUN", "true").lower() not in (
     "false",
@@ -286,6 +293,8 @@ _audit_dir = _resolve_path(_audit_config.audit_dir)
 _audit_dir.mkdir(parents=True, exist_ok=True)
 _audit_log = AuditLog(_audit_dir / _audit_config.audit_file)
 _reconcile_state_path = _audit_dir / _audit_config.reconcile_state_file
+
+AUDIT_PATH = _audit_log.path
 
 _use_mock_broker = MOCK_MODE or not _broker.is_configured()
 if _use_mock_broker:
@@ -594,10 +603,31 @@ def get_risk():
     )
 @app.get("/debug/alpaca")
 def debug_alpaca():
-    info = _broker.debug_info()
-    payload = dict(info)
-    payload["configured"] = _broker.is_configured()
-    return payload
+    env_key = os.getenv("ALPACA_API_KEY_ID") or os.getenv("APCA_API_KEY_ID")
+    env_secret = os.getenv("ALPACA_API_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY")
+    env_base = os.getenv("APCA_API_BASE_URL") or os.getenv("ALPACA_API_BASE_URL")
+
+    try:
+        info = _broker.debug_info() if _broker else {}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("alpaca debug info failed: %s", exc)
+        info = {}
+
+    if not isinstance(info, dict):
+        info = {}
+
+    info.setdefault("configured", bool(_broker and _broker.is_configured()))
+    if env_base and "base_url" not in info:
+        info["base_url"] = env_base
+    if env_base and "paper" not in info:
+        info["paper"] = "paper" in env_base.lower()
+
+    info["env_key_tail"] = _tail(env_key)
+    info["env_secret_set"] = bool(env_secret)
+    if env_base:
+        info["env_base_url"] = env_base
+
+    return info
 
 
 @app.get("/alpaca/ping")
@@ -956,7 +986,27 @@ def orders_sync(status: Literal["open", "closed", "all"] = Query("all")):
 
 @app.get("/trade/debug/audit_tail")
 def audit_tail(n: int = Query(50, ge=0, le=500)):
-    return _audit_log.tail(n)
+    if n <= 0:
+        return {"path": str(AUDIT_PATH), "lines": []}
+
+    try:
+        raw_text = AUDIT_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {"path": str(AUDIT_PATH), "lines": []}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("audit tail read failed: %s", exc)
+        return {"path": str(AUDIT_PATH), "lines": []}
+
+    lines = [line for line in raw_text.splitlines() if line.strip()]
+    tail_lines = lines[-n:]
+    parsed: List[Dict[str, Any]] = []
+    for entry in tail_lines:
+        try:
+            parsed.append(json.loads(entry))
+        except Exception:  # noqa: BLE001
+            parsed.append({"raw": entry, "parse_error": True})
+
+    return {"path": str(AUDIT_PATH), "lines": parsed}
 
 
 @app.get("/trade/debug/reconcile_state")

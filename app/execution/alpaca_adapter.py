@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
+import os
 import secrets
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -10,8 +11,6 @@ from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
 from alpaca.trading.requests import LimitOrderRequest, StopLossRequest, TakeProfitRequest
-
-from core.config import AlpacaSettings, get_alpaca_settings
 
 __all__ = [
     "AlpacaAdapter",
@@ -82,44 +81,67 @@ class AlpacaAdapter:
     """Thin wrapper over ``TradingClient`` with defensive error handling."""
 
     def __init__(self) -> None:
-        self.settings: AlpacaSettings = get_alpaca_settings()
         self.client: Optional[TradingClient] = None
-        self._configured = bool(self.settings.api_key and self.settings.api_secret)
+        self._configured = False
         self._last_error: Optional[str] = None
-        self.key_tail: Optional[str] = (
-            self.settings.api_key[-4:] if self.settings.api_key else None
-        )
         self._seen_client_ids: Set[str] = set()
+        key = os.getenv("ALPACA_API_KEY_ID") or os.getenv("APCA_API_KEY_ID")
+        secret = os.getenv("ALPACA_API_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY")
+        base_env = (
+            os.getenv("APCA_API_BASE_URL")
+            or os.getenv("ALPACA_API_BASE_URL")
+            or "https://paper-api.alpaca.markets"
+        )
+        paper_flag = "paper" in base_env.lower()
 
-        if self._configured:
-            try:
-                self.client = TradingClient(
-                    self.settings.api_key,
-                    self.settings.api_secret,
-                    paper=self.settings.paper,
-                    base_url=self.settings.base_url,
-                )
-            except Exception as exc:  # pragma: no cover - SDK constructor guard
-                log.error(
-                    "alpaca init failed",
-                    extra={"comp": "alpaca_adapter", "op": "init", "err": str(exc)},
-                )
+        self.key_tail = key[-4:] if key else None
+        self._debug: Dict[str, Any] = {
+            "base_url": base_env,
+            "paper": paper_flag,
+            "key_tail": self.key_tail,
+        }
+
+        if not key or not secret:
+            self._last_error = "missing_credentials"
+            return
+
+        os.environ["APCA_API_BASE_URL"] = base_env
+
+        try:
+            self.client = TradingClient(api_key=key, secret_key=secret, paper=paper_flag)
+            # Cheap auth probe to validate credentials early
+            self.client.get_account()
+            self._configured = True
+            self._last_error = None
+        except APIError as exc:  # pragma: no cover - requires live credentials
+            if _is_unauthorized(exc):
+                self._last_error = "unauthorized"
+            else:
                 self._last_error = str(exc)
-                self.client = None
-                self._configured = False
+            log.warning(
+                "alpaca init failed",
+                extra={"comp": "alpaca_adapter", "op": "init", "err": str(exc)},
+            )
+            self.client = None
+            self._configured = False
+        except Exception as exc:  # pragma: no cover - SDK constructor guard
+            self._last_error = str(exc)
+            log.error(
+                "alpaca init failed",
+                extra={"comp": "alpaca_adapter", "op": "init", "err": str(exc)},
+            )
+            self.client = None
+            self._configured = False
 
     # ------------------------------------------------------------------
     # public helpers
     def is_configured(self) -> bool:
-        return self._configured and self.client is not None
+        return bool(self._configured and self.client is not None)
 
     def debug_info(self) -> Dict[str, Any]:
-        payload = {
-            "base_url": self.settings.base_url,
-            "paper": self.settings.paper,
-            "key_tail": self.key_tail,
-            "last_error": self._last_error,
-        }
+        payload = dict(self._debug)
+        payload["configured"] = self.is_configured()
+        payload["last_error"] = self._last_error
         return payload
 
     # ------------------------------------------------------------------
