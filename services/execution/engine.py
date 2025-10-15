@@ -13,6 +13,7 @@ from services.execution.types import ExecIntent, ExecResult
 from services.execution.updates import UpdateBus
 from services.risk.engine import Proposal, RiskManager
 from services.risk.state import Position, StateProvider
+from services.telemetry import metrics
 
 
 def _bracket_prices(side: str, px: float, tp_pct: float, sl_pct: float) -> tuple[float, float]:
@@ -98,6 +99,7 @@ class ExecutionEngine:
         async with self._intent_lock:
             existing = self._seen_intents.get(key)
             if existing is not None:
+                metrics.inc_order_reject("duplicate_intent")
                 return ExecResult(False, "duplicate_intent", existing)
             # Pre-populate to guard concurrent submissions. Actual order id stored after success.
             self._seen_intents[key] = ""
@@ -110,6 +112,7 @@ class ExecutionEngine:
         )
         decision = self.risk.pre_trade_check(proposal)
         if not decision.allow:
+            metrics.inc_order_reject(f"risk_denied_{decision.reason or 'unknown'}")
             async with self._intent_lock:
                 self._seen_intents.pop(key, None)
             return ExecResult(False, f"risk_denied:{decision.reason}")
@@ -119,6 +122,7 @@ class ExecutionEngine:
         try:
             response = await self.adapter.submit_order(payload)
         except Exception as exc:  # pragma: no cover - network errors simulated in integration tests
+            metrics.inc_order_reject(f"submit_failed_{exc.__class__.__name__}")
             async with self._intent_lock:
                 self._seen_intents.pop(key, None)
             return ExecResult(False, f"submit_failed:{exc}")

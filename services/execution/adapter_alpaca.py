@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 
 from app.config import get_settings
 from app.rate_limit import RateLimitError, backoff_request
+from services.telemetry import record_order_latency_async
 
 # NOTE: import alpaca types lazily so unit tests can stub the adapter without installing deps.
 
@@ -122,7 +123,8 @@ class AlpacaAdapter:
             request = req_cls(**kwargs)
             return await self._run_blocking(lambda: client.submit_order(request))
 
-        resp = await self._call_with_retries(_call)
+        async with record_order_latency_async():
+            resp = await self._call_with_retries(_call)
         return {
             "id": str(getattr(resp, "id", "")),
             "status": str(getattr(resp, "status", "")),

@@ -1,3 +1,3 @@
 """Backend API route modules."""
 
-__all__ = ["ml"]
+__all__ = ["ml", "metrics_extended"]

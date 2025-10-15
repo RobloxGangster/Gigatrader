@@ -22,6 +22,7 @@ from app.execution.audit import AuditLog
 from app.oms.store import OmsStore, TERMINAL_STATES
 from services.policy.gates import should_trade
 from services.policy.sizing import size_position
+from services.telemetry import metrics
 
 from .alpaca_adapter import AlpacaAdapter, AlpacaOrderError, AlpacaUnauthorized
 
@@ -246,6 +247,7 @@ class OrderRouter:
                     "rejected",
                     extras={"reason": "invalid_qty", "symbol": symbol},
                 )
+            metrics.inc_order_reject("invalid_qty")
             return {"accepted": False, "reason": "invalid_qty", "client_order_id": cid}
 
         requested_qty = qty
@@ -281,6 +283,7 @@ class OrderRouter:
                     "policy": policy_context,
                 },
             )
+            metrics.inc_order_reject("policy_gate_blocked")
             return {
                 "accepted": False,
                 "reason": "policy_gate_blocked",
@@ -304,6 +307,7 @@ class OrderRouter:
                     "policy": policy_context,
                 },
             )
+            metrics.inc_order_reject(reason or "policy_sizing_zero")
             return {
                 "accepted": False,
                 "reason": reason,
@@ -369,6 +373,7 @@ class OrderRouter:
             }
             if getattr(decision, "max_qty", None) is not None:
                 payload["max_qty"] = decision.max_qty
+            metrics.inc_order_reject(reason or "risk_reject")
             return payload
 
         if dry_run:
@@ -404,6 +409,7 @@ class OrderRouter:
                 details={"symbol": symbol},
             )
             self._metrics_inc("oms_rejects_total")
+            metrics.inc_order_reject("duplicate_client_order_id")
             return {"accepted": False, "reason": "duplicate_client_order_id", "client_order_id": cid}
 
         if self.state.seen(intent_hash):
@@ -418,6 +424,7 @@ class OrderRouter:
                 details={"symbol": symbol, "side": intent.side},
             )
             self._metrics_inc("oms_rejects_total")
+            metrics.inc_order_reject("duplicate_intent")
             return {"accepted": False, "reason": "duplicate_intent", "client_order_id": existing_cid}
 
         intent_snapshot = {
@@ -481,6 +488,7 @@ class OrderRouter:
                     "rejected",
                     extras={"reason": "alpaca_unauthorized", "symbol": symbol},
                 )
+                metrics.inc_order_reject("broker_error_alpaca_unauthorized")
                 return {
                     "accepted": False,
                     "reason": "broker_error:alpaca_unauthorized",
@@ -495,6 +503,7 @@ class OrderRouter:
                         "rejected",
                         extras={"reason": "duplicate_client_order_id", "symbol": symbol},
                     )
+                    metrics.inc_order_reject("duplicate_client_order_id")
                     return {
                         "accepted": False,
                         "reason": "duplicate_client_order_id",
@@ -512,6 +521,7 @@ class OrderRouter:
                     "error",
                     extras={"reason": message, "symbol": symbol},
                 )
+                metrics.inc_order_reject(f"broker_error_{message or 'unknown'}")
                 return {
                     "accepted": False,
                     "reason": f"broker_error:{message}",
@@ -529,6 +539,7 @@ class OrderRouter:
                     "error",
                     extras={"reason": message, "symbol": symbol},
                 )
+                metrics.inc_order_reject(f"broker_error_{message or 'unknown'}")
                 return {"accepted": False, "reason": f"broker_error:{message}", "client_order_id": cid}
 
         if order is None:
@@ -538,6 +549,7 @@ class OrderRouter:
                 "error",
                 extras={"reason": "unknown_error", "symbol": symbol},
             )
+            metrics.inc_order_reject("broker_error_unknown")
             return {"accepted": False, "reason": "broker_error:unknown", "client_order_id": cid}
 
         broker_order_id = order.get("id")
