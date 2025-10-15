@@ -8,6 +8,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import roc_auc_score, average_precision_score, brier_score_loss
 from .registry import register_model
+from .drift import compute_feature_snapshot
 
 
 @dataclass
@@ -52,7 +53,7 @@ def _load_features(symbols: List[str], start: str, end: str) -> pd.DataFrame:
     return load_feature_panel(symbols, start, end)
 
 
-def train_walk_forward(cfg: WFConfig) -> Dict[str, Any]:
+def train_walk_forward(cfg: WFConfig, *, alias: str = "production") -> Dict[str, Any]:
     df = _load_features(cfg.symbol_universe, cfg.start, cfg.end).sort_index()
     times = df.index.get_level_values(0)
     start_dt = pd.to_datetime(cfg.start)
@@ -89,17 +90,27 @@ def train_walk_forward(cfg: WFConfig) -> Dict[str, Any]:
         setattr(model, "feature_names_in_", _np.array(feature_cols))
         proba = model.predict_proba(X_te)[:, 1]
         m = _metrics(y_te, proba)
-        folds.append({"split_point": split_point.isoformat(), "metrics": m, "model": model})
+        snapshot = compute_feature_snapshot(df.loc[tr_mask, feature_cols])
+        folds.append({
+            "split_point": split_point.isoformat(),
+            "metrics": m,
+            "model": model,
+            "snapshot": snapshot,
+        })
 
     if not folds:
         raise RuntimeError("No valid folds created. Check date range and data availability.")
 
     best = max(folds, key=lambda f: f["metrics"]["pr_auc"])
-    meta = register_model(cfg.model_name, best["model"], metrics=best["metrics"], tags={
-        "cfg": cfg.__dict__, "selected_split": best["split_point"]
-    }, alias="production")
+    tags = {
+        "cfg": cfg.__dict__,
+        "selected_split": best["split_point"],
+        "drift_snapshot": best["snapshot"],
+    }
+    meta = register_model(cfg.model_name, best["model"], metrics=best["metrics"], tags=tags, alias=alias)
 
     return {
         "registered": meta.__dict__,
-        "folds": [{"split_point": f["split_point"], **f["metrics"]} for f in folds]
+        "folds": [{"split_point": f["split_point"], **f["metrics"]} for f in folds],
+        "snapshot": best["snapshot"],
     }

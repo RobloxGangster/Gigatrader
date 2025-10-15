@@ -1,3 +1,3 @@
 """Machine learning services package."""
 
-__all__ = ["registry", "walkforward"]
+__all__ = ["registry", "walkforward", "drift"]
