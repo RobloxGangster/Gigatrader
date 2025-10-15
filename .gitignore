@@ -33,6 +33,7 @@ coverage.xml
 # logs & switch
 logs/
 .kill_switch
+runtime/
 
 # OS/editor junk
 .DS_Store

@@ -14,6 +14,8 @@ class AuditLog:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self.path.touch()
         self._lock = threading.Lock()
 
     def append(self, event: Dict[str, Any]) -> None:

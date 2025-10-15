@@ -4,13 +4,19 @@ import datetime as _dt
 import logging
 import os
 import secrets
+import asyncio
+import inspect
+import random
+from contextlib import suppress
 from decimal import Decimal
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Set
 
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
 from alpaca.trading.requests import LimitOrderRequest, StopLossRequest, TakeProfitRequest
+
+from app.oms.store import OmsStore
 
 __all__ = [
     "AlpacaAdapter",
@@ -82,6 +88,9 @@ class AlpacaAdapter:
 
     def __init__(self) -> None:
         self.client: Optional[TradingClient] = None
+        self._api_key: Optional[str] = None
+        self._api_secret: Optional[str] = None
+        self._base_url: Optional[str] = None
         self._configured = False
         self._last_error: Optional[str] = None
         self._seen_client_ids: Set[str] = set()
@@ -94,6 +103,9 @@ class AlpacaAdapter:
         )
         paper_flag = "paper" in base_env.lower()
 
+        self._api_key = key
+        self._api_secret = secret
+        self._base_url = base_env
         self.key_tail = key[-4:] if key else None
         self._debug: Dict[str, Any] = {
             "base_url": base_env,
@@ -176,11 +188,9 @@ class AlpacaAdapter:
         side_enum = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         tif = TimeInForce.DAY
 
+        provided_client_id = client_order_id is not None
         if client_order_id:
-            if client_order_id in self._seen_client_ids:
-                client_order_id = self._gen_client_id()
-            else:
-                self._seen_client_ids.add(client_order_id)
+            self._seen_client_ids.add(client_order_id)
         else:
             client_order_id = self._gen_client_id()
 
@@ -230,30 +240,22 @@ class AlpacaAdapter:
 
             code, message = _extract_error_code(exc)
             if code == 40010001 or "client_order_id must be unique" in message.lower():
-                log.warning(
-                    "alpaca duplicate client id",
-                    extra={"comp": "alpaca_adapter", "op": "submit", "err": message},
-                )
-                # regenerate once
-                new_cid = self._gen_client_id()
-                request.client_order_id = new_cid
-                client_order_id = new_cid
-                try:
-                    order = client.submit_order(order_data=request)
-                except APIError as retry_exc:
-                    if _is_unauthorized(retry_exc):
-                        self._last_error = "unauthorized"
-                        raise AlpacaUnauthorized("unauthorized") from retry_exc
-                    self._last_error = str(message)
-                    log.error(
-                        "alpaca submit failed",
-                        extra={
-                            "comp": "alpaca_adapter",
-                            "op": "submit",
-                            "err": str(retry_exc),
-                        },
-                    )
-                    raise AlpacaOrderError(str(retry_exc)) from retry_exc
+                if not provided_client_id:
+                    new_cid = self._gen_client_id()
+                    self._seen_client_ids.add(new_cid)
+                    request.client_order_id = new_cid
+                    client_order_id = new_cid
+                    try:
+                        order = client.submit_order(order_data=request)
+                    except APIError as retry_exc:
+                        if _is_unauthorized(retry_exc):
+                            self._last_error = "unauthorized"
+                            raise AlpacaUnauthorized("unauthorized") from retry_exc
+                        self._last_error = "duplicate_client_order_id"
+                        raise AlpacaOrderError("duplicate_client_order_id") from retry_exc
+                else:
+                    self._last_error = "duplicate_client_order_id"
+                    raise AlpacaOrderError("duplicate_client_order_id") from exc
             else:
                 self._last_error = message
                 log.error(
@@ -502,3 +504,170 @@ class AlpacaAdapter:
         for key in ("qty", "avg_entry_price", "market_value", "unrealized_pl"):
             payload[key] = _maybe_float(payload.get(key))
         return payload
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def map_order_state(status: str | None) -> str:
+        if not status:
+            return "new"
+        normalized = str(status).lower()
+        mapping = {
+            "new": "new",
+            "pending_new": "new",
+            "accepted": "accepted",
+            "acknowledged": "accepted",
+            "open": "accepted",
+            "partially_filled": "partially_filled",
+            "partial": "partially_filled",
+            "filled": "filled",
+            "canceled": "canceled",
+            "cancelled": "canceled",
+            "expired": "canceled",
+            "replaced": "accepted",
+            "rejected": "rejected",
+            "suspended": "error",
+            "stopped": "canceled",
+        }
+        if normalized in mapping:
+            return mapping[normalized]
+        if "reject" in normalized:
+            return "rejected"
+        if "cancel" in normalized or "close" in normalized:
+            return "canceled"
+        if "fill" in normalized:
+            return "filled"
+        if "error" in normalized:
+            return "error"
+        return "new"
+
+    def _normalize_trade_update(self, update: Any) -> Dict[str, Any]:
+        payload: Dict[str, Any]
+        raw = update
+        if hasattr(update, "data"):
+            raw = getattr(update, "data")
+        if isinstance(raw, dict):
+            payload = dict(raw)
+        else:
+            payload = {}
+            for attr in ("event", "timestamp", "order", "execution"):
+                if hasattr(raw, attr):
+                    payload[attr] = getattr(raw, attr)
+
+        order_info = payload.get("order")
+        if order_info is None and hasattr(raw, "order"):
+            order_info = getattr(raw, "order")
+        normalized_order = self._normalize_order(order_info) if order_info is not None else {}
+
+        event = payload.get("event") or payload.get("type")
+        state = self.map_order_state(normalized_order.get("status"))
+        execution_info = payload.get("execution")
+        if execution_info and not isinstance(execution_info, dict):  # pragma: no cover - depends on SDK
+            execution_info = {
+                key: getattr(execution_info, key, None)
+                for key in ("qty", "price", "timestamp")
+            }
+        return {
+            "event": event,
+            "state": state,
+            "client_order_id": normalized_order.get("client_order_id"),
+            "broker_order_id": normalized_order.get("id"),
+            "filled_qty": normalized_order.get("filled_qty") or normalized_order.get("qty"),
+            "avg_fill_price": normalized_order.get("avg_fill_price"),
+            "order": normalized_order,
+            "execution": execution_info,
+            "raw": payload,
+        }
+
+    async def start_stream(
+        self,
+        on_update: Callable[[Dict[str, Any]], Awaitable[None] | None],
+        stop_event: asyncio.Event,
+    ) -> None:
+        if not self.is_configured():
+            raise AlpacaUnauthorized("not configured")
+        try:
+            from alpaca.trading.stream import TradingStream
+        except Exception as exc:  # pragma: no cover - import guard
+            log.warning("alpaca stream unavailable: %s", exc)
+            return
+
+        backoff = 1.0
+        while not stop_event.is_set():
+            try:
+                stream = TradingStream(
+                    api_key=self._api_key,
+                    secret_key=self._api_secret,
+                    base_url=self._base_url,
+                )
+
+                async def _handler(data: Any) -> None:
+                    payload = self._normalize_trade_update(data)
+                    result = on_update(payload)
+                    if inspect.isawaitable(result):
+                        await result
+
+                stream.subscribe_trade_updates(_handler)
+
+                async def _watch_stop() -> None:
+                    await stop_event.wait()
+                    with suppress(Exception):
+                        await stream.close()
+
+                stopper = asyncio.create_task(_watch_stop())
+                await stream._run_forever()
+                stopper.cancel()
+                with suppress(Exception):
+                    await stream.close()
+                backoff = 1.0
+            except AlpacaUnauthorized:
+                raise
+            except Exception as exc:  # pragma: no cover - network path
+                log.warning(
+                    "alpaca stream error", extra={"comp": "alpaca_adapter", "err": str(exc)}
+                )
+                await asyncio.sleep(backoff + random.uniform(0, backoff / 2))
+                backoff = min(backoff * 2, 30.0)
+
+    # ------------------------------------------------------------------
+    def fetch_and_merge_orders(
+        self,
+        store: OmsStore,
+        *,
+        target_client_order_id: str | None = None,
+    ) -> Dict[str, Any]:
+        orders = self.fetch_orders()
+        positions: List[Dict[str, Any]] = []
+        try:
+            positions = self.fetch_positions()
+        except AlpacaUnauthorized:
+            raise
+        except Exception:  # pragma: no cover - tolerates missing permissions
+            pass
+        store.replace_positions(positions)
+        matched: Optional[Dict[str, Any]] = None
+        for order in orders:
+            cid = str(order.get("client_order_id") or "")
+            state = self.map_order_state(order.get("status"))
+            store.upsert_order(
+                client_order_id=cid,
+                state=state,
+                broker_order_id=str(order.get("id") or "") or None,
+                symbol=order.get("symbol"),
+                side=order.get("side"),
+                qty=_maybe_float(order.get("qty")),
+                filled_qty=_maybe_float(order.get("filled_qty")),
+                limit_price=_maybe_float(order.get("limit_price")),
+                stop_price=_maybe_float(order.get("stop_price")),
+                take_profit=_maybe_float(order.get("take_profit")),
+                tif=order.get("time_in_force") or order.get("tif"),
+                raw=order,
+            )
+            if target_client_order_id and cid == target_client_order_id:
+                matched = order
+        snapshot = store.metrics_snapshot()
+        return {
+            "orders": orders,
+            "positions": positions,
+            "target_order": matched,
+            "metrics": snapshot,
+        }

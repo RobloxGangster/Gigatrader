@@ -22,15 +22,17 @@ import json
 import threading
 import subprocess
 import logging
+import random
 import time
 from decimal import Decimal
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any, Tuple, Dict, Iterable, Literal, List
+from typing import Optional, Any, Tuple, Dict, Iterable, Literal, List, Callable
 
 from fastapi import Body, FastAPI, Query, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 import uvicorn
 
@@ -51,6 +53,8 @@ from core.kill_switch import KillSwitch
 from app.trade.orchestrator import TradeOrchestrator
 from app.execution.audit import AuditLog
 from app.execution.reconcile import Reconciler
+from app.oms.store import OmsStore
+from app.data.quality import next_regular_close_cancel_time
 
 _TEST_ORDERS_DEFAULT_DRY_RUN = os.getenv("TEST_ORDERS_DEFAULT_DRY_RUN", "true").lower() not in (
     "false",
@@ -63,6 +67,54 @@ _kill_switch = KillSwitch()
 
 _SENT_CACHE: Dict[Tuple[str, int, int], Tuple[float, Dict[str, Any]]] = {}
 _SENT_TTL_SEC = 300  # 5 minutes
+
+_FALSEY = {"false", "0", "no", "off"}
+
+
+class OmsMetrics:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._counters: Dict[str, float] = defaultdict(float)
+        self._states: Dict[str, float] = defaultdict(float)
+        self._flags: Dict[str, float] = {}
+
+    def increment(self, key: str, value: float = 1.0) -> None:
+        with self._lock:
+            self._counters[key] += value
+
+    def note_state(self, state: str) -> None:
+        with self._lock:
+            self._states[state] += 1.0
+
+    def set_flag(self, key: str, value: float) -> None:
+        with self._lock:
+            self._flags[key] = float(value)
+
+    def snapshot(self) -> Dict[str, Dict[str, float]]:
+        with self._lock:
+            return {
+                "counters": dict(self._counters),
+                "states": dict(self._states),
+                "flags": dict(self._flags),
+            }
+
+
+def _to_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    if hasattr(value, "__float__"):
+        try:
+            return float(value)
+        except Exception:  # pragma: no cover - defensive
+            return None
+    return None
 
 # ---------- Robust runner import ----------
 import importlib.util
@@ -188,17 +240,6 @@ if not _broker.is_configured():
 
 _risk_manager = RiskManager(_execution_state, kill_switch=_kill_switch)
 
-_order_router = OrderRouter(_risk_manager, _execution_state)
-_trade_orchestrator = TradeOrchestrator(
-    data_client=_data_client,
-    signal_generator=_signal_engine,
-    ml_predictor=None,
-    risk_manager=_risk_manager,
-    router=_order_router,
-    config=TradeLoopConfig(),
-)
-
-
 def _resolve_path(path: Path) -> Path:
     candidate = Path(path)
     if not candidate.is_absolute():
@@ -305,11 +346,85 @@ _reconcile_state_path = _audit_dir / _audit_config.reconcile_state_file
 
 AUDIT_PATH = _audit_log.path
 
+OMS_DB_PATH = Path(os.getenv("OMS_DB_PATH", "runtime/oms.db"))
+OMS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+USE_WEBSOCKET = os.getenv("USE_WEBSOCKET", "true").lower() not in _FALSEY
+CANCEL_AT_CLOSE = os.getenv("CANCEL_AT_CLOSE", "false").lower() not in _FALSEY
+
+_oms_store = OmsStore(OMS_DB_PATH)
+_oms_metrics = OmsMetrics()
+
 _use_mock_broker = MOCK_MODE or not _broker.is_configured()
 if _use_mock_broker:
     _reconcile_broker = InMemoryMockBroker()
 else:
     _reconcile_broker = LiveBrokerFacade(_broker)
+
+_order_router = OrderRouter(
+    _risk_manager,
+    _execution_state,
+    store=_oms_store,
+    audit=_audit_log,
+    metrics=_oms_metrics,
+    mock_mode=_use_mock_broker,
+)
+_trade_orchestrator = TradeOrchestrator(
+    data_client=_data_client,
+    signal_generator=_signal_engine,
+    ml_predictor=None,
+    risk_manager=_risk_manager,
+    router=_order_router,
+    config=TradeLoopConfig(),
+)
+
+
+def _update_oms_state(
+    client_order_id: str,
+    state: str,
+    *,
+    broker_order_id: str | None = None,
+    filled_qty: float | None = None,
+    raw: Dict[str, Any] | None = None,
+    extras: Dict[str, Any] | None = None,
+    source: str = "reconcile",
+) -> None:
+    previous = _oms_store.get_order_by_coid(client_order_id)
+    prev_state = previous.get("state") if previous else None
+    details: Dict[str, Any] = {
+        "client_order_id": client_order_id,
+        "state": state,
+        "source": source,
+    }
+    if extras:
+        details.update(extras)
+    if broker_order_id:
+        details["broker_order_id"] = broker_order_id
+    if filled_qty is not None:
+        details["filled_qty"] = filled_qty
+
+    _oms_store.update_order_state(
+        client_order_id,
+        state=state,
+        broker_order_id=broker_order_id,
+        filled_qty=filled_qty,
+        raw=raw,
+        extra=extras,
+    )
+
+    log_change = prev_state != state or source != "reconcile"
+    if log_change:
+        _oms_store.append_journal(category=source, message=state, details=details)
+        _audit_log.append({**details, "ts": datetime.now(timezone.utc).isoformat()})
+
+    if prev_state != state:
+        _oms_metrics.note_state(state)
+        if state == "filled":
+            _oms_metrics.increment("oms_fills_total")
+        elif state == "rejected":
+            _oms_metrics.increment("oms_rejects_total")
+        elif state == "canceled":
+            _oms_metrics.increment("oms_cancels_total")
+
 
 _reconciler = Reconciler(
     broker=_reconcile_broker,
@@ -329,58 +444,245 @@ async def lifespan(app: FastAPI):
     app.state.audit_log = _audit_log
     app.state.reconciler = _reconciler
     app.state.reconcile_broker = _reconcile_broker
+    app.state.oms_store = _oms_store
+    app.state.oms_metrics = _oms_metrics
+    app.state.alpaca_stream_connected = False
+
+    _oms_metrics.set_flag("alpaca_stream_connected", 0.0)
+
+    if _broker.is_configured() and not _use_mock_broker:
+        try:
+            _broker.fetch_and_merge_orders(_oms_store)
+        except AlpacaUnauthorized:
+            log.warning("startup reconcile skipped: alpaca unauthorized")
+        except AlpacaOrderError as exc:
+            log.warning("startup reconcile failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("startup reconcile error: %s", exc)
 
     stop_flag = False
+    stream_stop = asyncio.Event()
 
     async def recon_loop() -> None:
         nonlocal stop_flag
         broker = _broker
         backoff_schedule = [2.0, 3.0, 5.0, 8.0, 10.0]
         backoff_index = 0
+        auth_logged = False
         while not stop_flag:
             delay = backoff_schedule[min(backoff_index, len(backoff_schedule) - 1)]
             try:
                 orders = broker.fetch_orders()
                 positions = broker.fetch_positions()
                 account = broker.fetch_account()
-            except AlpacaUnauthorized as exc:
-                log.warning(
-                    "reconcile paused: alpaca unauthorized. retrying in %.0fs",
-                    delay,
-                )
+            except AlpacaUnauthorized:
+                if not auth_logged:
+                    log.warning(
+                        "reconcile paused: alpaca unauthorized. retrying in %.0fs",
+                        delay,
+                    )
+                    auth_logged = True
                 backoff_index = min(backoff_index + 1, len(backoff_schedule) - 1)
-                await asyncio.sleep(delay)
+                await asyncio.sleep(delay + random.uniform(0, 1.0))
                 continue
             except AlpacaOrderError as exc:
-                log.warning(
-                    "reconcile broker error: %s",
-                    exc,
-                )
+                log.warning("reconcile broker error: %s", exc)
                 backoff_index = min(backoff_index + 1, len(backoff_schedule) - 1)
-                await asyncio.sleep(delay)
+                await asyncio.sleep(delay + random.uniform(0, 1.0))
                 continue
             except Exception as exc:  # noqa: BLE001
                 log.error("reconcile error (%s): %s", exc.__class__.__name__, exc)
                 backoff_index = min(backoff_index + 1, len(backoff_schedule) - 1)
-                await asyncio.sleep(delay)
+                await asyncio.sleep(delay + random.uniform(0, 1.0))
                 continue
 
+            auth_logged = False
+            for order in orders:
+                cid = str(order.get("client_order_id") or "").strip()
+                if not cid:
+                    continue
+                state = AlpacaAdapter.map_order_state(order.get("status"))
+                extras = {
+                    "symbol": order.get("symbol"),
+                    "side": order.get("side"),
+                    "qty": _to_float(order.get("qty")),
+                }
+                broker_order_id = str(order.get("id") or "") or None
+                filled_qty = _to_float(order.get("filled_qty"))
+                _update_oms_state(
+                    cid,
+                    state,
+                    broker_order_id=broker_order_id,
+                    filled_qty=filled_qty,
+                    raw=order,
+                    extras=extras,
+                    source="reconcile",
+                )
+            _oms_store.replace_positions(positions)
             _execution_state.update_orders(orders)
             _execution_state.update_positions(positions)
             _execution_state.update_account(account)
+            _oms_metrics.increment("oms_reconcile_runs_total")
             backoff_index = 0
             await asyncio.sleep(backoff_schedule[0])
 
-    task = asyncio.create_task(recon_loop())
+    async def handle_stream_update(payload: Dict[str, Any]) -> None:
+        cid = str(payload.get("client_order_id") or "").strip()
+        if not cid:
+            return
+        order_info = payload.get("order")
+        if not isinstance(order_info, dict):
+            order_info = None
+        state = payload.get("state") or (
+            AlpacaAdapter.map_order_state(order_info.get("status")) if order_info else "new"
+        )
+        broker_order_id = payload.get("broker_order_id")
+        if broker_order_id is None and order_info:
+            broker_order_id = order_info.get("id")
+        filled_qty = _to_float(payload.get("filled_qty"))
+        if filled_qty is None and order_info:
+            filled_qty = _to_float(order_info.get("filled_qty"))
+        extras = {
+            "event": payload.get("event"),
+            "symbol": order_info.get("symbol") if order_info else None,
+            "side": order_info.get("side") if order_info else None,
+        }
+        extras = {k: v for k, v in extras.items() if v is not None}
+        _update_oms_state(
+            cid,
+            state,
+            broker_order_id=str(broker_order_id) if broker_order_id else None,
+            filled_qty=filled_qty,
+            raw=order_info or payload,
+            extras=extras,
+            source="stream",
+        )
+        execution = payload.get("execution")
+        if isinstance(execution, dict):
+            qty = _to_float(execution.get("qty"))
+            price = _to_float(execution.get("price"))
+            ts = execution.get("timestamp")
+            if ts and hasattr(ts, "isoformat"):
+                ts = ts.isoformat()
+            elif ts is not None:
+                ts = str(ts)
+            if qty or price:
+                _oms_store.append_execution(
+                    cid,
+                    event_type=str(payload.get("event") or state),
+                    fill_qty=qty,
+                    fill_price=price,
+                    event_ts=ts,
+                    raw=execution,
+                )
+
+    async def stream_loop() -> None:
+        nonlocal stop_flag
+        if not USE_WEBSOCKET or _use_mock_broker or not _broker.is_configured():
+            _oms_metrics.set_flag("alpaca_stream_connected", 0.0)
+            return
+        backoff = 2.0
+        auth_logged = False
+        while not stop_flag:
+            try:
+                stream_stop.clear()
+                app.state.alpaca_stream_connected = True
+                _oms_metrics.set_flag("alpaca_stream_connected", 1.0)
+                await _broker.start_stream(handle_stream_update, stream_stop)
+                app.state.alpaca_stream_connected = False
+                _oms_metrics.set_flag("alpaca_stream_connected", 0.0)
+                backoff = 2.0
+            except AlpacaUnauthorized:
+                app.state.alpaca_stream_connected = False
+                _oms_metrics.set_flag("alpaca_stream_connected", 0.0)
+                if not auth_logged:
+                    log.warning("alpaca stream unauthorized; backing off")
+                    auth_logged = True
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 1.5, 60.0)
+            except Exception as exc:  # noqa: BLE001
+                app.state.alpaca_stream_connected = False
+                _oms_metrics.set_flag("alpaca_stream_connected", 0.0)
+                log.warning("alpaca stream error: %s", exc)
+                await asyncio.sleep(backoff + random.uniform(0, backoff))
+                backoff = min(backoff * 1.5, 60.0)
+
+    async def _cancel_day_orders() -> None:
+        orders = _oms_store.get_open_orders()
+        for order in orders:
+            tif = str(order.get("tif") or "").lower()
+            if tif != "day":
+                continue
+            cid = str(order.get("client_order_id") or "").strip()
+            if not cid:
+                continue
+            broker_order_id = order.get("broker_order_id")
+            if _use_mock_broker or not _broker.is_configured():
+                _update_oms_state(
+                    cid,
+                    "canceled",
+                    broker_order_id=str(broker_order_id) if broker_order_id else None,
+                    extras={"reason": "cancel_at_close"},
+                    source="cancel_at_close",
+                )
+                continue
+            if not broker_order_id:
+                continue
+            try:
+                await asyncio.to_thread(_broker.cancel_order, str(broker_order_id))
+            except AlpacaUnauthorized:
+                log.warning("cancel_at_close unauthorized; aborting")
+                break
+            except AlpacaOrderError as exc:
+                log.warning("cancel_at_close broker error: %s", exc)
+            else:
+                _update_oms_state(
+                    cid,
+                    "canceled",
+                    broker_order_id=str(broker_order_id),
+                    extras={"reason": "cancel_at_close"},
+                    source="cancel_at_close",
+                )
+
+    async def cancel_loop() -> None:
+        nonlocal stop_flag
+        while not stop_flag:
+            now = datetime.now(timezone.utc)
+            target = next_regular_close_cancel_time(now)
+            wait_seconds = max((target - now).total_seconds(), 60.0)
+            while wait_seconds > 0 and not stop_flag:
+                await asyncio.sleep(min(wait_seconds, 300.0))
+                now = datetime.now(timezone.utc)
+                wait_seconds = (target - now).total_seconds()
+            if stop_flag:
+                break
+            try:
+                await _cancel_day_orders()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("cancel_at_close error: %s", exc)
+            await asyncio.sleep(30)
+
+    recon_task = asyncio.create_task(recon_loop())
+    stream_task = (
+        asyncio.create_task(stream_loop())
+        if USE_WEBSOCKET and not _use_mock_broker and _broker.is_configured()
+        else None
+    )
+    cancel_task = asyncio.create_task(cancel_loop()) if CANCEL_AT_CLOSE else None
+
     try:
         yield
     finally:
         stop_flag = True
-        task.cancel()
-        try:
-            await task
-        except Exception:
-            pass
+        stream_stop.set()
+        for task in (recon_task, stream_task, cancel_task):
+            if task is None:
+                continue
+            task.cancel()
+            try:
+                await task
+            except Exception:
+                pass
 
 
 app = FastAPI(lifespan=lifespan)
@@ -755,21 +1057,10 @@ def orders_test(
         }
 
     try:
-        risk = app.state.risk if hasattr(app.state, "risk") else None
-        state = app.state.state if hasattr(app.state, "state") else None
-        if risk is None or state is None:
-            # Fallback (replace with your real builders)
-            from app.risk import RiskManager
-            from app.state import InMemoryState
-
-            state = InMemoryState()
-            risk = RiskManager(state)
-
-        router = OrderRouter(risk, state)
         intent = ExecIntent(symbol=_symbol, side=_side, qty=_qty, limit_price=_limit, bracket=True)
         if dry_run:
-            return router.submit(intent, dry_run=True)
-        return router.submit(intent)
+            return _order_router.submit(intent, dry_run=True)
+        return _order_router.submit(intent)
     except Exception as exc:  # noqa: BLE001
         log.exception("orders_test error", extra={"symbol": _symbol, "error": str(exc)})
         return {
@@ -805,6 +1096,55 @@ def cancel_order(order_id: str):
         return {"error": f"alpaca_error:{exc}"}
     except Exception as exc:
         return {"error": str(exc)}
+
+
+@app.get("/orders/open")
+def list_open_orders():
+    return _oms_store.get_open_orders()
+
+
+@app.post("/orders/{client_order_id}/force_sync")
+def force_sync_order(client_order_id: str):
+    if not _broker.is_configured():
+        stored = _oms_store.get_order_by_coid(client_order_id)
+        if stored:
+            return {"order": stored}
+        raise HTTPException(status_code=503, detail="broker_unavailable")
+    try:
+        result = _broker.fetch_and_merge_orders(
+            _oms_store, target_client_order_id=client_order_id
+        )
+    except AlpacaUnauthorized:
+        raise HTTPException(status_code=503, detail="alpaca_unauthorized")
+    except AlpacaOrderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    order = result.get("target_order")
+    if order is None:
+        stored = _oms_store.get_order_by_coid(client_order_id)
+        if stored:
+            return {"order": stored}
+        raise HTTPException(status_code=404, detail="client_order_id_not_found")
+    return {"order": order}
+
+
+@app.get("/metrics")
+def metrics() -> PlainTextResponse:
+    store_snapshot = _oms_store.metrics_snapshot()
+    metrics_snapshot = _oms_metrics.snapshot()
+    lines: List[str] = []
+    orders_by_state = store_snapshot.get("orders_by_state", {})
+    for state, count in sorted(orders_by_state.items()):
+        lines.append(f"oms_orders_total{{state=\"{state}\"}} {int(count)}")
+    counters = metrics_snapshot.get("counters", {})
+    fills_total = int(store_snapshot.get("fills_total", 0))
+    lines.append(f"oms_submissions_total {int(counters.get('oms_submissions_total', 0))}")
+    lines.append(f"oms_fills_total {fills_total}")
+    lines.append(f"oms_rejects_total {int(counters.get('oms_rejects_total', 0))}")
+    lines.append(f"oms_cancels_total {int(counters.get('oms_cancels_total', 0))}")
+    lines.append(f"oms_reconcile_runs_total {int(counters.get('oms_reconcile_runs_total', 0))}")
+    stream_flag = metrics_snapshot.get("flags", {}).get("alpaca_stream_connected", 0.0)
+    lines.append(f"alpaca_stream_connected {int(stream_flag)}")
+    return PlainTextResponse("\n".join(lines) + "\n")
 
 # ---------- Paper controls ----------
 @app.post("/paper/start", response_model=StartResp)
@@ -1033,26 +1373,13 @@ def orders_sync(status: Literal["open", "closed", "all"] = Query("all")):
 @app.get("/trade/debug/audit_tail")
 def audit_tail(n: int = Query(50, ge=0, le=500)):
     if n <= 0:
-        return {"path": str(AUDIT_PATH), "lines": []}
+        return []
 
     try:
-        raw_text = AUDIT_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return {"path": str(AUDIT_PATH), "lines": []}
+        return _audit_log.tail(n)
     except Exception as exc:  # noqa: BLE001
         log.debug("audit tail read failed: %s", exc)
-        return {"path": str(AUDIT_PATH), "lines": []}
-
-    lines = [line for line in raw_text.splitlines() if line.strip()]
-    tail_lines = lines[-n:]
-    parsed: List[Dict[str, Any]] = []
-    for entry in tail_lines:
-        try:
-            parsed.append(json.loads(entry))
-        except Exception:  # noqa: BLE001
-            parsed.append({"raw": entry, "parse_error": True})
-
-    return {"path": str(AUDIT_PATH), "lines": parsed}
+        return []
 
 
 @app.get("/trade/debug/reconcile_state")
