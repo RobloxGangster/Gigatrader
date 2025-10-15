@@ -19,6 +19,12 @@ def _safe_call(fn, *args, **kwargs) -> Tuple[str, float, Any, str]:
         if resp is None:
             return "skipped", dt, None, "capability unavailable"
         return "ok", dt, resp, ""
+    except requests.HTTPError as e:  # type: ignore[attr-defined]
+        dt = (time.perf_counter() - t0) * 1000.0
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        if status == 404:
+            return "skipped", dt, None, "endpoint unavailable (404)"
+        return "fail", dt, None, f"{type(e).__name__}: {e}"
     except Exception as e:
         dt = (time.perf_counter() - t0) * 1000.0
         return "fail", dt, None, f"{type(e).__name__}: {e}"
@@ -71,7 +77,7 @@ def run_ui_diagnostics(api) -> Dict[str, Any]:
             "ok": (status == "ok"),
             "skipped": (status == "skipped"),
             "latency_ms": round(ms, 1),
-            "error": err if status == "fail" else None,
+            "error": (err or None) if status != "ok" else None,
             "size_hint": (len(payload) if isinstance(payload, (list, tuple)) else None),
         })
         if status == "ok":
