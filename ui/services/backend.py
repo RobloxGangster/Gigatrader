@@ -32,6 +32,78 @@ from ui.state import (
 _FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "fixtures"
 _DEFAULT_TIMEOUT = 8
 
+_ALPACA_TO_UI_STATUS = {
+    "new": "pending",
+    "accepted": "working",
+    "pending_new": "pending",
+    "partially_filled": "working",
+    "filled": "filled",
+    "canceled": "cancelled",
+    "cancelled": "cancelled",
+    "expired": "cancelled",
+    "rejected": "rejected",
+    "pending_cancel": "working",
+    "done_for_day": "working",
+    "stopped": "cancelled",
+}
+
+
+def _coerce_float(x: Any, default: float = 0.0) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return default
+
+
+def _normalize_order_shape(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Accepts either our internal Order JSON or a broker-native Alpaca order.
+    Returns a dict compatible with ui.services.models.Order:
+      order_id, symbol, side, qty, filled_qty, leaves_qty, tif, status, created_at, (limit_price, stop_price, order_type, client_order_id)
+    """
+
+    order_id = raw.get("order_id") or raw.get("id")
+    symbol = raw.get("symbol") or raw.get("asset_symbol") or raw.get("asset", {}).get("symbol")
+    side = raw.get("side")
+    tif = raw.get("tif") or raw.get("time_in_force")
+    status_in = (raw.get("status") or "").lower()
+    status = _ALPACA_TO_UI_STATUS.get(status_in, raw.get("status"))
+
+    qty = _coerce_float(raw.get("qty") or raw.get("quantity"))
+    filled_qty = _coerce_float(raw.get("filled_qty") or raw.get("filled_quantity"))
+    leaves_qty = raw.get("leaves_qty")
+    if leaves_qty is None:
+        leaves_qty = max(0.0, qty - filled_qty)
+
+    created_at = (
+        raw.get("created_at")
+        or raw.get("submitted_at")
+        or raw.get("timestamp")
+        or datetime.utcnow().isoformat()
+    )
+
+    limit_price = raw.get("limit_price")
+    stop_price = raw.get("stop_price")
+    order_type = raw.get("type") or raw.get("order_type")
+
+    out = {
+        "order_id": order_id,
+        "symbol": symbol,
+        "side": side,
+        "qty": qty,
+        "filled_qty": filled_qty,
+        "leaves_qty": leaves_qty,
+        "tif": tif,
+        "status": status,
+        "created_at": created_at,
+        "limit_price": _coerce_float(limit_price) if limit_price is not None else None,
+        "stop_price": _coerce_float(stop_price) if stop_price is not None else None,
+        "order_type": order_type,
+        "client_order_id": raw.get("client_order_id") or raw.get("clientOrderId"),
+    }
+    out.update({k: v for k, v in raw.items() if k not in out})
+    return out
+
 
 class BackendError(RuntimeError):
     """Raised when the backend cannot fulfil a request."""
@@ -198,7 +270,8 @@ class RealAPI:
 
     def get_orders(self) -> List[Order]:
         payload = self._request("GET", "/orders")
-        return [Order(**item) for item in payload]
+        normalized = [_normalize_order_shape(item) for item in payload]
+        return [Order(**item) for item in normalized]
 
     def get_positions(self) -> List[Position]:
         payload = self._request("GET", "/positions")
@@ -366,7 +439,8 @@ class MockAPI:
 
     def get_orders(self) -> List[Order]:
         payload = _load_json_fixture("orders")
-        return [Order(**item) for item in payload]
+        normalized = [_normalize_order_shape(item) for item in payload]
+        return [Order(**item) for item in normalized]
 
     def get_positions(self) -> List[Position]:
         payload = _load_json_fixture("positions")

@@ -51,7 +51,7 @@ def _render_chart(bars: List[Dict[str, Any]]) -> None:
     fig.add_trace(go.Scatter(x=df["time"], y=df["ema26"], mode="lines", name="EMA 26", line=dict(color="#1e88e5")))
     fig.add_trace(go.Scatter(x=df["time"], y=df["vwap"], mode="lines", name="VWAP", line=dict(color="#fdd835")))
     fig.update_layout(margin=dict(l=0, r=0, t=24, b=0), height=360)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _flatten_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
@@ -131,7 +131,7 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     df = pd.DataFrame(rows)
     if "p_up_15m" in df.columns:
         df["p_up_15m"] = df["p_up_15m"].apply(lambda v: fmt_pct(v) if isinstance(v, (int, float)) else v)
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width="stretch")
 
     equity_candidates = [cand for cand in candidates if cand.get("kind") == "equity"]
     if not equity_candidates:

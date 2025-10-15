@@ -37,7 +37,7 @@ def _render_trades(trades: List[Dict[str, Any]]) -> None:
         st.info("No trades recorded for the run.")
         return
     df = pd.DataFrame(trades)
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width="stretch")
 
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:

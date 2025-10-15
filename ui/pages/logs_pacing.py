@@ -61,7 +61,7 @@ def _create_repro_bundle(
 
 def _logs_table(logs: list[dict]) -> None:
     df = pd.DataFrame(logs)
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width="stretch")
     st.download_button(
         "Download logs (NDJSON)",
         _to_ndjson(logs).encode("utf-8"),
@@ -91,7 +91,7 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     pacing = api.get_pacing_stats()
     pacing_chart = pacing_history_chart(pacing.history, pacing.max_rpm)
     if pacing_chart is not None:
-        st.plotly_chart(pacing_chart, use_container_width=True)
+        st.plotly_chart(pacing_chart, width="stretch")
     else:
         st.warning("Plotly not installed, showing basic pacing line chart.")
         history_df = pd.DataFrame({"rpm": [float(v) for v in pacing.history]})
