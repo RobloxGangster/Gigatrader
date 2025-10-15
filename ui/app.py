@@ -35,6 +35,7 @@ if str(ROOT) not in sys.path:
 from ui.components import nav
 from ui.services.backend import get_backend
 from ui.services.config import api_base_url, mock_mode
+from ui.utils.runtime import get_runtime_flags
 from ui.state import AppSessionState, init_session_state
 
 
@@ -75,6 +76,27 @@ def main() -> None:
 
     state: AppSessionState = init_session_state()
     api = get_backend()
+
+    # Detect mode and show a badge
+    flags = get_runtime_flags(api)
+    if flags.mock_mode:
+        st.markdown(
+            "<div style='padding:6px 10px;background:#ffdfe0;border:1px solid #ffb3b8;"
+            "border-radius:8px;display:inline-block;font-weight:600;color:#8a1822'>"
+            "🧪 MOCK MODE — broker calls are stubbed; no orders reach Alpaca paper."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            "<div style='padding:6px 10px;background:#e6fff3;border:1px solid #9de2bf;"
+            "border-radius:8px;display:inline-block;font-weight:600;color:#0f5132'>"
+            "✅ PAPER MODE — connected to Alpaca paper."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    st.write("")  # small spacer
+    st.session_state["__mock_mode__"] = flags.mock_mode  # expose to pages
 
     if not _is_mock_mode() and mock_mode():
         st.sidebar.info("Mock mode enabled – using fixture backend.")
