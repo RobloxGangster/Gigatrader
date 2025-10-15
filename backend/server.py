@@ -50,6 +50,7 @@ from app.risk import RiskManager
 from app.state import ExecutionState
 from core.config import alpaca_config_ok
 from core.kill_switch import KillSwitch
+from services.safety import breakers
 from app.trade.orchestrator import TradeOrchestrator
 from app.execution.audit import AuditLog
 from app.execution.reconcile import Reconciler
@@ -662,6 +663,32 @@ async def lifespan(app: FastAPI):
                 log.warning("cancel_at_close error: %s", exc)
             await asyncio.sleep(30)
 
+    async def breaker_loop() -> None:
+        nonlocal stop_flag
+        if not breakers.is_enabled():
+            return
+        interval = max(0.1, breakers.check_interval_seconds())
+        last_logged: set[str] = set()
+        while not stop_flag:
+            now = datetime.now(timezone.utc)
+            trips = breakers.enforce_breakers(now, _kill_switch)
+            trip_set = set(trips)
+            if trip_set:
+                if trip_set != last_logged or not _kill_switch_on():
+                    log.error(
+                        "safety breakers tripped: %s",
+                        ", ".join(sorted(trip_set)),
+                    )
+                last_logged = trip_set
+            else:
+                if last_logged:
+                    log.info("safety breakers cleared")
+                last_logged = set()
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                break
+
     recon_task = asyncio.create_task(recon_loop())
     stream_task = (
         asyncio.create_task(stream_loop())
@@ -669,13 +696,14 @@ async def lifespan(app: FastAPI):
         else None
     )
     cancel_task = asyncio.create_task(cancel_loop()) if CANCEL_AT_CLOSE else None
+    breaker_task = asyncio.create_task(breaker_loop()) if breakers.is_enabled() else None
 
     try:
         yield
     finally:
         stop_flag = True
         stream_stop.set()
-        for task in (recon_task, stream_task, cancel_task):
+        for task in (recon_task, stream_task, cancel_task, breaker_task):
             if task is None:
                 continue
             task.cancel()
@@ -719,7 +747,10 @@ def start_background_runner(profile: str = "paper"):
 # ---------- Health & status ----------
 @app.get("/health")
 def health():
-    return {"ok": True}
+    breaker_info = breakers.breaker_state()
+    kill = _kill_switch_on()
+    ok = bool(not kill and not breaker_info.get("current"))
+    return {"ok": ok, "kill_switch": kill, "breakers": breaker_info}
 
 @app.get("/status", response_model=StatusResp)
 def status():
