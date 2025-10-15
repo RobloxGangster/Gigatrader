@@ -17,6 +17,7 @@ from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
 from alpaca.trading.requests import LimitOrderRequest, StopLossRequest, TakeProfitRequest
 
 from app.oms.store import OmsStore
+from services.telemetry import metrics, record_order_latency
 
 __all__ = [
     "AlpacaAdapter",
@@ -228,7 +229,8 @@ class AlpacaAdapter:
         )
 
         try:
-            order = client.submit_order(order_data=request)
+            with record_order_latency():
+                order = client.submit_order(order_data=request)
         except APIError as exc:
             if _is_unauthorized(exc):
                 self._last_error = "unauthorized"
@@ -246,7 +248,8 @@ class AlpacaAdapter:
                     request.client_order_id = new_cid
                     client_order_id = new_cid
                     try:
-                        order = client.submit_order(order_data=request)
+                        with record_order_latency():
+                            order = client.submit_order(order_data=request)
                     except APIError as retry_exc:
                         if _is_unauthorized(retry_exc):
                             self._last_error = "unauthorized"
@@ -592,8 +595,13 @@ class AlpacaAdapter:
             return
 
         backoff = 1.0
+        first_attempt = True
         while not stop_event.is_set():
             try:
+                if first_attempt:
+                    first_attempt = False
+                else:
+                    metrics.inc_ws_reconnect()
                 stream = TradingStream(
                     api_key=self._api_key,
                     secret_key=self._api_secret,

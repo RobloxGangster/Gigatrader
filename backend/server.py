@@ -688,8 +688,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 from backend.routes import ml as ml_routes  # noqa: E402
+from backend.routes import metrics_extended as metrics_routes  # noqa: E402
 
 app.include_router(ml_routes.router)
+app.include_router(metrics_routes.router)
 
 def start_background_runner(profile: str = "paper"):
     global runner_task, runner_loop, runner_last_error

@@ -33,6 +33,7 @@ except Exception:  # pragma: no cover - testing fallback
 
 from app.data.entitlement import select_feed
 from core.kill_switch import KillSwitch
+from services.telemetry import metrics
 
 
 def _staleness_threshold() -> float:
@@ -115,6 +116,7 @@ async def stream_bars(symbols: Iterable[str], minutes: int | None = None, on_hea
                 )
             ing = datetime.now(tz=timezone.utc)
             latency = (ing - evt_dt).total_seconds()
+            metrics.set_data_staleness(latency)
             last_update[sym] = time.time()
             if sym in state["stale"]:
                 state["stale"].discard(sym)
@@ -141,12 +143,19 @@ async def stream_bars(symbols: Iterable[str], minutes: int | None = None, on_hea
                 break
             now = time.time()
             changed = False
+            max_delta = 0.0
             for sym in list(state["ok"] | state["stale"]):
-                if now - last_update.get(sym, 0) > stale_thr:
+                delta = now - last_update.get(sym, 0)
+                max_delta = max(max_delta, delta)
+                if delta > stale_thr:
                     if sym not in state["stale"]:
                         state["stale"].add(sym)
                         state["ok"].discard(sym)
                         changed = True
+            if last_update:
+                metrics.set_data_staleness(max_delta)
+            else:
+                metrics.set_data_staleness(None)
             if changed:
                 stale_list = sorted(state["stale"])
                 ok_list = sorted(state["ok"])
