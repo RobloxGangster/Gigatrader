@@ -290,12 +290,38 @@ class TradeOrchestrator:
         max_qty = getattr(decision, "max_qty", None)
         if max_qty is not None:
             qty = min(qty, int(max(0.0, max_qty)))
-            record["qty"] = qty
-            if qty <= 0:
-                record["status"] = "filtered"
-                record["filters"].append("risk_max_qty")
-                self._record_decision(record)
-                return
+        record["qty"] = qty
+        if qty <= 0:
+            record["status"] = "filtered"
+            record["filters"].append("risk_max_qty")
+            self._record_decision(record)
+            return
+
+        policy_meta: dict[str, Any] = dict(candidate.meta or {})
+        policy_meta.update(
+            {
+                "confidence": float(candidate.confidence),
+                "expected_value": float(expected_value),
+                "proba_up": direction_prob,
+                "probability": direction_prob,
+                "price": float(candidate.entry),
+                "limit_price": float(candidate.entry),
+                "stop_price": float(candidate.stop) if candidate.stop is not None else None,
+                "target_price": float(candidate.target) if candidate.target is not None else None,
+                "requested_qty": qty,
+                "account_equity": self._account_equity_snapshot(),
+            }
+        )
+        if policy_meta.get("alpha") is None:
+            try:
+                policy_meta["alpha"] = float(candidate.confidence) - 1.0
+            except (TypeError, ValueError):
+                policy_meta["alpha"] = 0.0
+        if policy_meta.get("atr") is None and candidate.stop is not None:
+            try:
+                policy_meta["atr"] = abs(float(candidate.entry) - float(candidate.stop))
+            except (TypeError, ValueError):
+                pass
 
         intent = ExecIntent(
             symbol=symbol,
@@ -304,6 +330,7 @@ class TradeOrchestrator:
             limit_price=float(candidate.entry),
             bracket=candidate.kind == "equity" and candidate.stop is not None and candidate.target is not None,
             asset_class="option" if candidate.kind == "option" else "equity",
+            meta=policy_meta,
         )
 
         result = self._submit_with_retry(intent)
@@ -476,6 +503,20 @@ class TradeOrchestrator:
         confidence_scale = max(0.25, min(float(candidate.confidence), 2.0))
         qty = int(max(raw_qty * confidence_scale, 0.0))
         return max(qty, 0)
+
+    def _account_equity_snapshot(self) -> float | None:
+        state = getattr(self.risk_manager, "state", None)
+        getter = getattr(state, "get_account_equity", None) if state is not None else None
+        if not callable(getter):
+            return None
+        try:
+            value = getter()
+        except Exception:  # pragma: no cover - defensive
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     def _risk_budget(self) -> float:
         try:

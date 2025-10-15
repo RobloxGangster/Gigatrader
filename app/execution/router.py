@@ -9,7 +9,7 @@ import os
 import random
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, Optional
@@ -20,6 +20,8 @@ from core.config import get_order_defaults
 
 from app.execution.audit import AuditLog
 from app.oms.store import OmsStore, TERMINAL_STATES
+from services.policy.gates import should_trade
+from services.policy.sizing import size_position
 
 from .alpaca_adapter import AlpacaAdapter, AlpacaOrderError, AlpacaUnauthorized
 
@@ -37,6 +39,7 @@ class ExecIntent:
     bracket: bool = True
     asset_class: str = "equity"
     client_order_id: str | None = None
+    meta: Dict[str, Any] | None = None
 
 
 def _unique_cid(prefix: str | None = None) -> str:
@@ -236,7 +239,7 @@ class OrderRouter:
                     take_profit=tp_price,
                     stop_price=sl_price,
                     tif=defaults.tif,
-                    raw={"intent": intent.__dict__},
+                    raw={"intent": asdict(intent), "policy": policy_context},
                 )
                 self._record_transition(
                     cid,
@@ -244,6 +247,86 @@ class OrderRouter:
                     extras={"reason": "invalid_qty", "symbol": symbol},
                 )
             return {"accepted": False, "reason": "invalid_qty", "client_order_id": cid}
+
+        requested_qty = qty
+        policy_context: Dict[str, Any] = {}
+        if intent.meta:
+            policy_context.update(intent.meta)
+        policy_context.setdefault("symbol", symbol)
+        policy_context.setdefault("side", intent.side.lower())
+        policy_context.setdefault("qty", requested_qty)
+        policy_context.setdefault("price", limit_price)
+        policy_context.setdefault("limit_price", limit_price)
+        if policy_context.get("stop_price") is None and sl_price is not None:
+            policy_context["stop_price"] = sl_price
+        if policy_context.get("atr") is None and policy_context.get("stop_price") is not None:
+            try:
+                stop_val = float(policy_context["stop_price"])
+            except (TypeError, ValueError):
+                stop_val = None
+            if stop_val is not None:
+                policy_context.setdefault("atr", abs(limit_price - stop_val))
+
+        allow_trade, gate_info = should_trade(policy_context)
+        policy_context.update(gate_info)
+        policy_context.setdefault("requested_qty", requested_qty)
+        if not allow_trade:
+            self._record_event(
+                "policy_blocked",
+                client_order_id=cid,
+                details={
+                    "symbol": symbol,
+                    "side": intent.side,
+                    "reason_codes": gate_info.get("reason_codes"),
+                    "policy": policy_context,
+                },
+            )
+            return {
+                "accepted": False,
+                "reason": "policy_gate_blocked",
+                "client_order_id": cid,
+                "policy": policy_context,
+                "status_code": 202,
+            }
+
+        sizing_info = size_position(policy_context)
+        policy_context["sizing"] = sizing_info
+        sized_qty = int(sizing_info.get("qty") or 0)
+        if sized_qty <= 0:
+            reason = sizing_info.get("reason", "policy_sizing_zero")
+            self._record_event(
+                "policy_blocked",
+                client_order_id=cid,
+                details={
+                    "symbol": symbol,
+                    "side": intent.side,
+                    "reason_codes": [reason],
+                    "policy": policy_context,
+                },
+            )
+            return {
+                "accepted": False,
+                "reason": reason,
+                "client_order_id": cid,
+                "policy": policy_context,
+                "status_code": 202,
+            }
+
+        if sized_qty != requested_qty:
+            qty = sized_qty
+            intent.qty = float(sized_qty)
+        policy_context["approved_qty"] = qty
+
+        self._record_event(
+            "policy_allow",
+            client_order_id=cid,
+            details={
+                "symbol": symbol,
+                "side": intent.side,
+                "qty": qty,
+                "policy": policy_context,
+            },
+        )
 
         proposal = Proposal(
             symbol=symbol,
@@ -272,13 +355,18 @@ class OrderRouter:
                     take_profit=tp_price,
                     stop_price=sl_price,
                     tif=defaults.tif,
-                    raw={"intent": intent.__dict__},
+                    raw={"intent": asdict(intent)},
                 )
                 extras: Dict[str, Any] = {"reason": reason, "symbol": symbol}
                 if getattr(decision, "max_qty", None) is not None:
                     extras["max_qty"] = decision.max_qty
                 self._record_transition(cid, "rejected", extras=extras)
-            payload: Dict[str, Any] = {"accepted": False, "reason": reason, "client_order_id": cid}
+            payload: Dict[str, Any] = {
+                "accepted": False,
+                "reason": reason,
+                "client_order_id": cid,
+                "policy": policy_context,
+            }
             if getattr(decision, "max_qty", None) is not None:
                 payload["max_qty"] = decision.max_qty
             return payload
@@ -296,7 +384,13 @@ class OrderRouter:
                 "router.submit.dry_run",
                 extra={"client_order_id": cid, "symbol": symbol},
             )
-            return {"accepted": False, "dry_run": True, "client_order_id": cid, "order": preview}
+            return {
+                "accepted": False,
+                "dry_run": True,
+                "client_order_id": cid,
+                "order": preview,
+                "policy": policy_context,
+            }
 
         existing = self.store.get_order_by_coid(cid)
         if existing:
@@ -335,6 +429,7 @@ class OrderRouter:
             "stop_loss": sl_price,
             "tif": defaults.tif,
         }
+        intent_snapshot["policy"] = policy_context
 
         self.store.upsert_order(
             client_order_id=cid,
@@ -347,7 +442,7 @@ class OrderRouter:
             take_profit=tp_price,
             stop_price=sl_price,
             tif=defaults.tif,
-            raw={"intent": intent_snapshot},
+            raw={"intent": intent_snapshot, "policy": policy_context},
         )
         self._record_transition(
             cid,
@@ -494,4 +589,5 @@ class OrderRouter:
             "client_order_id": cid,
             "provider_order_id": broker_order_id,
             "state": state,
+            "policy": policy_context,
         }
