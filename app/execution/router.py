@@ -9,10 +9,10 @@ import os
 import random
 import secrets
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 from app.risk import Proposal, RiskManager
 from app.state import ExecutionState
@@ -602,4 +602,113 @@ class OrderRouter:
             "provider_order_id": broker_order_id,
             "state": state,
             "policy": policy_context,
+        }
+
+    # ------------------------------------------------------------------
+    def submit_spread(
+        self,
+        legs: Sequence[ExecIntent],
+        *,
+        spread: Mapping[str, Any] | None = None,
+        client_order_id: str | None = None,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Submit a multi-leg spread as coordinated single-leg orders."""
+
+        if not legs:
+            raise ValueError("legs_required")
+
+        base_id = client_order_id or _unique_cid()
+        spread_meta = dict(spread or {})
+        leg_results: list[Dict[str, Any]] = []
+        accepted = True
+        submitted_leg_ids: list[tuple[str, str | None]] = []
+
+        self._record_event(
+            "spread_submit",
+            client_order_id=base_id,
+            details={
+                "legs": len(legs),
+                "spread": spread_meta,
+            },
+        )
+
+        for idx, leg in enumerate(legs, start=1):
+            leg_cid = f"{base_id}-L{idx}"
+            cloned = replace(leg)
+            cloned.client_order_id = leg_cid
+            leg_meta = dict(getattr(cloned, "meta", {}) or {})
+            leg_meta.setdefault("spread_id", base_id)
+            leg_meta.setdefault("spread_leg", idx)
+            leg_meta.setdefault("spread_legs", len(legs))
+            if spread_meta:
+                leg_meta.setdefault("spread", spread_meta)
+            cloned.meta = leg_meta  # type: ignore[assignment]
+
+            result = self.submit(cloned, dry_run=dry_run)
+            leg_results.append(result)
+
+            if dry_run:
+                continue
+
+            submitted_leg_ids.append(
+                (
+                    result.get("client_order_id", leg_cid),
+                    result.get("provider_order_id"),
+                )
+            )
+
+            if not result.get("accepted", False):
+                accepted = False
+                failure_reason = result.get("reason", "leg_rejected")
+                # Best-effort cancel already accepted legs to keep the spread coherent.
+                for prev_cid, provider_id in submitted_leg_ids[:-1]:
+                    if provider_id:
+                        try:
+                            self.broker.cancel_order(provider_id)
+                        except Exception:  # pragma: no cover - defensive
+                            continue
+                    else:
+                        try:
+                            self.store.update_order_state(prev_cid, state="canceled")
+                        except Exception:  # pragma: no cover - defensive
+                            continue
+                self._record_event(
+                    "spread_rejected",
+                    client_order_id=base_id,
+                    details={"reason": failure_reason, "failed_leg": idx},
+                )
+                break
+
+        if dry_run:
+            return {
+                "accepted": False,
+                "dry_run": True,
+                "client_order_id": base_id,
+                "legs": leg_results,
+                "spread": spread_meta,
+            }
+
+        if accepted:
+            self._record_event(
+                "spread_submitted",
+                client_order_id=base_id,
+                details={
+                    "child_orders": [res.get("client_order_id") for res in leg_results],
+                    "spread": spread_meta,
+                },
+            )
+            return {
+                "accepted": True,
+                "client_order_id": base_id,
+                "legs": leg_results,
+                "spread": spread_meta,
+            }
+
+        return {
+            "accepted": False,
+            "client_order_id": base_id,
+            "legs": leg_results,
+            "spread": spread_meta,
+            "reason": leg_results[-1].get("reason"),
         }

@@ -83,6 +83,9 @@ class StubBroker:
     def map_order_state(self, status):
         return status or "accepted"
 
+    def cancel_order(self, order_id: str) -> None:  # pragma: no cover - not used in happy path
+        self.calls.append({"cancel": order_id})
+
 
 @pytest.fixture
 def router(tmp_path: Path) -> OrderRouter:
@@ -178,3 +181,40 @@ def test_order_router_policy_allows_and_sizes(router: OrderRouter):
     assert sizing.get("qty") <= 100
     events = router.audit.tail()
     assert any(evt.get("event") == "policy_allow" for evt in events)
+
+
+def test_order_router_submit_spread_links_leg_ids(router: OrderRouter):
+    leg_a = ExecIntent(
+        symbol="AAPL",
+        side="buy",
+        qty=1,
+        limit_price=5.50,
+        asset_class="option",
+        meta={"alpha": 0.5, "proba_up": 0.7},
+    )
+    leg_b = ExecIntent(
+        symbol="AAPL",
+        side="sell",
+        qty=1,
+        limit_price=3.10,
+        asset_class="option",
+        meta={"alpha": 0.5, "proba_up": 0.7},
+    )
+
+    spread_meta = {
+        "name": "debit_call",
+        "pricing": {"net_debit": 2.4},
+        "risk": {"max_loss": 240.0},
+    }
+
+    result = router.submit_spread([leg_a, leg_b], spread=spread_meta)
+
+    assert result["accepted"] is True
+    assert len(result["legs"]) == 2
+    base_id = result["client_order_id"]
+    child_ids = [leg["client_order_id"] for leg in result["legs"]]
+    assert all(cid.startswith(base_id) for cid in child_ids)
+    assert child_ids[0].endswith("-L1") and child_ids[1].endswith("-L2")
+
+    events = router.audit.tail()
+    assert any(evt.get("event") == "spread_submitted" for evt in events)
