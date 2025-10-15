@@ -88,16 +88,36 @@ function Test-PortFree([int]$port) {
 
 function Cleanup-OldLaunchResidue() {
   Log "[CLEANUP] Previous failed launches…"
+  # Kill prior backend by PID if recorded (avoid collision with automatic $PID)
   $pidFile = Join-Path $RUNTIME 'backend.pid'
   if (Test-Path $pidFile) {
-    $pid = Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue
-    if ($pid) { try { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue; Log "[CLEANUP] Stopped backend PID $pid" } catch {} }
+    try {
+      $oldPid = Get-Content -LiteralPath $pidFile -ErrorAction Stop | Select-Object -First 1
+    } catch {
+      $oldPid = $null
+    }
+    if ($oldPid) {
+      try {
+        Stop-Process -Id [int]$oldPid -Force -ErrorAction SilentlyContinue
+        Log "[CLEANUP] Stopped previous backend PID $oldPid"
+      } catch {
+        Log "[CLEANUP] Could not stop previous backend PID $oldPid (may not be running)."
+      }
+    }
     Remove-Item -Force -LiteralPath $pidFile -ErrorAction SilentlyContinue
   }
   if (-not (Test-PortFree $ApiPort)) {
     try {
       $owning = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -eq $ApiPort } | Select-Object -First 1
-      if ($owning) { Stop-Process -Id $owning.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; Log "[CLEANUP] Freed port $ApiPort (PID=$($owning.OwningProcess))" }
+      if ($owning) {
+        Stop-Process -Id $owning.OwningProcess -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+        if (-not (Test-PortFree $ApiPort)) {
+          Log "[CLEANUP] Warning: port $ApiPort still appears busy after kill."
+        } else {
+          Log "[CLEANUP] Killed process on port $ApiPort (PID=$($owning.OwningProcess))"
+        }
+      }
     } catch {}
   }
   try { Get-Process -Name "streamlit" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Log "[CLEANUP] Stopped stray Streamlit" } catch {}
