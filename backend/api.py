@@ -8,6 +8,10 @@ load_dotenv(override=False)
 
 app = FastAPI(title="Gigatrader API")
 
+from backend.routes import ml as ml_routes  # noqa: E402
+
+app.include_router(ml_routes.router)
+
 
 _kill_switch = KillSwitch()
 
