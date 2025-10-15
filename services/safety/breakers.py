@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -10,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from core.kill_switch import KillSwitch
+from services.ops.alerts import send_slack
 from services.telemetry.metrics import metrics as telemetry_metrics
 
 log = logging.getLogger("safety.breakers")
@@ -149,11 +151,27 @@ def enforce_breakers(now: datetime, kill_switch: KillSwitch) -> List[str]:
 
     trips = evaluate_breakers(now)
     if trips:
+        _alert_breaker_trip(trips, now)
         try:
             kill_switch.engage_sync()
         except Exception:  # noqa: BLE001
             log.exception("failed to engage kill switch after breaker trip")
     return trips
+
+
+def _alert_breaker_trip(trips: List[str], now: datetime) -> None:
+    with _state_lock:
+        observations = dict(_observations)
+
+    timestamp = _now_iso(now) or datetime.now(timezone.utc).isoformat()
+    metrics_text = json.dumps(observations, sort_keys=True)
+    message = (
+        ":rotating_light: Breaker trip detected\n"
+        f"Breakers: {', '.join(trips)}\n"
+        f"Timestamp: {timestamp}\n"
+        f"Metrics: {metrics_text}"
+    )
+    send_slack(message)
 
 
 def breaker_state() -> _StateDict:

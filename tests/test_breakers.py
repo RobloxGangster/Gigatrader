@@ -44,6 +44,13 @@ def test_reject_spike_trips_breaker_and_kill_switch(monkeypatch, tmp_path):
     breakers = _reload_breakers(monkeypatch, kill_file)
     fake_metrics = FakeMetrics()
     monkeypatch.setattr(breakers, "metrics", fake_metrics)
+    alerts = []
+
+    def fake_send_slack(message: str) -> bool:
+        alerts.append(message)
+        return True
+
+    monkeypatch.setattr(breakers, "send_slack", fake_send_slack)
     breakers._reset_for_tests()
     kill_switch = KillSwitch(path=kill_file)
 
@@ -57,6 +64,8 @@ def test_reject_spike_trips_breaker_and_kill_switch(monkeypatch, tmp_path):
     trips = breakers.enforce_breakers(now + timedelta(seconds=30), kill_switch)
     assert trips == ["reject_spike"]
     assert kill_switch.engaged_sync()
+    assert alerts, "expected Slack alert to be sent"
+    assert "reject_spike" in alerts[-1]
 
     state = breakers.breaker_state()
     assert "reject_spike" in state["current"]
