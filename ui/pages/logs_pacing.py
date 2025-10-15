@@ -14,6 +14,7 @@ import streamlit as st
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState
 from ui.utils.charts import pacing_history_chart
+from ui.utils.diagnostics import UI_DIAG_PATH, run_ui_diagnostics
 
 
 def _to_ndjson(records: Iterable[dict]) -> str:
@@ -75,6 +76,34 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     level = st.selectbox("Level", ["", "INFO", "WARN", "ERROR"], index=0)
     component = st.text_input("Component contains", value="")
     correlation = st.text_input("Correlation id", value="")
+
+    st.subheader("UI Diagnostics")
+    with st.form("ui_diag_form", clear_on_submit=False):
+        run_now = st.form_submit_button("Run UI Diagnostics")
+    if run_now:
+        result = run_ui_diagnostics(api)
+        st.success(
+            f"Ran {result['summary']['total']} checks — "
+            f"{result['summary']['passed']} passed, {result['summary']['failed']} failed."
+        )
+        with st.expander("Details", expanded=True):
+            st.json(result)
+
+    # Show last few saved diagnostic runs
+    st.markdown("**Recent Diagnostic Runs**")
+    if UI_DIAG_PATH.exists():
+        last = UI_DIAG_PATH.read_text(encoding="utf-8").strip().splitlines()[-10:]
+        rows = [json.loads(x) for x in last if x.strip()]
+        for r in rows[::-1]:
+            s = r.get("summary", {})
+            st.write(
+                f"• {s.get('timestamp','?')} — {s.get('passed',0)}/{s.get('total',0)} passed "
+                f"(profile={s.get('profile','?')})"
+            )
+            with st.expander("View", expanded=False):
+                st.json(r)
+    else:
+        st.info("No diagnostic runs recorded yet.")
 
     log_events = [event.model_dump() for event in api.get_logs(200, level or None)]
     if component:

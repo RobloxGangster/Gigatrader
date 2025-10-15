@@ -30,4 +30,23 @@ def logs_tail(tail: int = Query(200, ge=1, le=5000), level: Optional[str] = None
             out.append(evt)
         except Exception:
             continue
+
+    _UI_DIAG = Path("logs") / "ui_diagnostics.ndjson"
+    if _UI_DIAG.exists():
+        try:
+            diag_lines = _UI_DIAG.read_text(encoding="utf-8").splitlines()
+            for ln in diag_lines[-tail:]:
+                try:
+                    evt = json.loads(ln)
+                    out.append(evt)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # optional: sort by timestamp when present
+    def _ts(e):
+        return e.get("timestamp") or e.get("summary", {}).get("timestamp") or ""
+
+    out.sort(key=_ts)
     return out
