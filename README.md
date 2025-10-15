@@ -21,6 +21,8 @@ This creates/uses .venv, cleans broken packages, installs deps, runs a quick tes
 
 scripts\win_stop.cmd
 
+If the launcher fails, check **setup.log** at the repo root for a consolidated error report. Raw logs are also under `runtime/`.
+
 ## Local testing (mirrors CI)
 ```
 pytest -q
