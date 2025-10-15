@@ -22,6 +22,7 @@ from ui.state import (
 from ui.utils.compat import rerun as st_rerun
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
+from ui.utils.runtime import get_runtime_flags
 
 
 def _load_config(path: Path) -> str:
@@ -84,19 +85,39 @@ def _run_config_preview() -> None:
     )
 
 
-def _action_buttons(api: BrokerAPI, state: AppSessionState, preset: str) -> None:
+def _action_buttons(
+    api: BrokerAPI, state: AppSessionState, preset: str, mock_mode: bool
+) -> None:
     st.subheader("Paper Trading Controls")
     col1, col2, col3 = st.columns(3)
     confirm_halt = st.checkbox("Confirm flatten & halt", key="confirm_halt")
-    if col1.button("Start Paper", use_container_width=True):
+    start_paper = col1.button(
+        "Start Paper",
+        use_container_width=True,
+        disabled=mock_mode,
+        help="Disabled in Mock mode; flip MOCK_MODE=false to send to Alpaca paper.",
+    )
+    if start_paper and not mock_mode:
         response = api.start_paper(preset)
         state.run_id = response.get("run_id")
         st.toast(f"Paper run started ({state.run_id})", icon="✅")
-    if col2.button("Stop", use_container_width=True):
+    stop_runs = col2.button(
+        "Stop",
+        use_container_width=True,
+        disabled=mock_mode,
+        help="Disabled in Mock mode.",
+    )
+    if stop_runs and not mock_mode:
         api.stop_all()
         state.run_id = None
         st.toast("All paper runs stopped", icon="🛑")
-    if col3.button("Flatten & Halt", use_container_width=True, disabled=not confirm_halt):
+    flatten_halt = col3.button(
+        "Flatten & Halt",
+        use_container_width=True,
+        disabled=(mock_mode or not confirm_halt),
+        help="Disabled in Mock mode; requires confirmation when enabled.",
+    )
+    if flatten_halt and not mock_mode and confirm_halt:
         api.flatten_and_halt()
         state.run_id = None
         st.toast("Flatten + halt triggered", icon="⛔")
@@ -104,7 +125,9 @@ def _action_buttons(api: BrokerAPI, state: AppSessionState, preset: str) -> None
         st.caption("Enable the confirmation checkbox to activate the halt button.")
 
 
-def _live_controls(api: BrokerAPI, state: AppSessionState, preset: str) -> None:
+def _live_controls(
+    api: BrokerAPI, state: AppSessionState, preset: str, mock_mode: bool
+) -> None:
     st.subheader("Live Trading Controls")
     enable_live = st.checkbox("Enable live trading", key="enable_live")
     confirm_text = st.text_input(
@@ -114,7 +137,13 @@ def _live_controls(api: BrokerAPI, state: AppSessionState, preset: str) -> None:
     )
     armed = enable_live and confirm_text.strip().upper() == "CONFIRM"
     disabled = not armed
-    if st.button("Start Live", use_container_width=True, disabled=disabled):
+    start_live = st.button(
+        "Start Live",
+        use_container_width=True,
+        disabled=(disabled or mock_mode),
+        help="Disabled in Mock mode; flip MOCK_MODE=false to send to Alpaca paper.",
+    )
+    if start_live and not mock_mode:
         try:
             response = api.start_live(preset)
         except Exception as exc:  # noqa: BLE001 - surface backend failures
@@ -192,6 +221,16 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     stream_note = "offline"
     if isinstance(stream_flag, (int, float)):
         stream_note = "connected" if int(stream_flag) else "offline"
+
+    snapshot: RiskSnapshot = api.get_risk_snapshot()
+    flags = get_runtime_flags(api)
+    mock_mode = flags.mock_mode
+    if mock_mode:
+        st.info(
+            "Mock mode is ON: trading actions are disabled here. "
+            "Set MOCK_MODE=false and relaunch to place real paper orders."
+        )
+    st.caption("Mode: 🧪 MOCK" if mock_mode else "Mode: ✅ PAPER")
     st.caption(f"OMS: SQLite active · Stream: {stream_note}")
 
     with st.sidebar:
@@ -203,11 +242,10 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
             help="Choose risk profile presets served by the backend",
         )
 
-    _action_buttons(api, state, preset)
-    _live_controls(api, state, preset)
+    _action_buttons(api, state, preset, mock_mode)
+    _live_controls(api, state, preset, mock_mode)
     _render_status(status)
 
-    snapshot: RiskSnapshot = api.get_risk_snapshot()
     _risk_overview(snapshot)
 
     orders = api.get_orders()
