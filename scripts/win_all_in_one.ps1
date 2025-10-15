@@ -86,6 +86,25 @@ function Test-PortFree([int]$port) {
   } catch { return $true }
 }
 
+function Test-UIHealth([int]$timeoutSec = 30) {
+  $deadline = (Get-Date).AddSeconds($timeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    try {
+      $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$UiPort/" -UseBasicParsing -TimeoutSec 3
+      if ($resp.StatusCode -in 200, 302, 303) { return $true }
+    } catch { Start-Sleep -Milliseconds 500 }
+  }
+  return $false
+}
+
+function Open-UIBrowser() {
+  try {
+    Start-Process "http://127.0.0.1:$UiPort/"
+  } catch {
+    # non-fatal; user can open manually
+  }
+}
+
 function Cleanup-OldLaunchResidue() {
   Log "[CLEANUP] Previous failed launches…"
   # Kill prior backend by PID if recorded (avoid collision with automatic $PID)
@@ -199,7 +218,12 @@ function Launch-Backend() {
   $backendOut = Join-Path $RUNTIME 'backend.out.log'
   $backendErr = Join-Path $RUNTIME 'backend.err.log'
   $args = "-m","uvicorn","backend.api:app","--host","127.0.0.1","--port","$ApiPort"
-  $p = Start-Process -FilePath $PYEXE -ArgumentList $args -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr -PassThru
+  $p = Start-Process -FilePath $PYEXE `
+    -ArgumentList $args `
+    -RedirectStandardOutput $backendOut `
+    -RedirectStandardError $backendErr `
+    -WindowStyle Hidden `
+    -PassThru
   Set-Content -Path (Join-Path $RUNTIME 'backend.pid') -Value $p.Id
   Start-Sleep -Seconds 4
 
@@ -226,11 +250,21 @@ function Launch-UI() {
   $uiOut = Join-Path $RUNTIME 'streamlit.out.log'
   $uiErr = Join-Path $RUNTIME 'streamlit.err.log'
   $streamlitExe = Join-Path $VENV 'Scripts\streamlit.exe'
-  if (-not (Test-Path $streamlitExe)) {
-    # fallback: python -m streamlit
-    Start-Process -FilePath $PYEXE -ArgumentList @("-m","streamlit","run","ui\Home.py","--server.port",$UiPort,"--server.headless","true") -RedirectStandardOutput $uiOut -RedirectStandardError $uiErr | Out-Null
+  $args = @("run","ui\Home.py","--server.port",$UiPort,"--server.headless","true")
+
+  if (Test-Path $streamlitExe) {
+    Start-Process -FilePath $streamlitExe -ArgumentList $args -RedirectStandardOutput $uiOut -RedirectStandardError $uiErr -WindowStyle Hidden | Out-Null
   } else {
-    Start-Process -FilePath $streamlitExe -ArgumentList @("run","ui\Home.py","--server.port",$UiPort,"--server.headless","true") -RedirectStandardOutput $uiOut -RedirectStandardError $uiErr | Out-Null
+    Start-Process -FilePath $PYEXE -ArgumentList @("-m","streamlit") + $args -RedirectStandardOutput $uiOut -RedirectStandardError $uiErr -WindowStyle Hidden | Out-Null
+  }
+
+  # Poll UI port and open browser on success
+  if (Test-UIHealth -timeoutSec 30) {
+    Log "[OK] UI is live on :$UiPort"
+    Open-UIBrowser
+  } else {
+    Log "[ERR] UI did not become healthy on :$UiPort within timeout"
+    Fail 'ui_health' 1
   }
 }
 
