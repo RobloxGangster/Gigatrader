@@ -8,7 +8,9 @@ import math
 import os
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Deque, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from core.config import get_alpaca_settings
 
@@ -187,6 +189,7 @@ class FeedHealth:
                 )
         return mismatches
 
+
     def check_bar_continuity(
         self,
         symbols: List[str],
@@ -293,6 +296,23 @@ def get_data_staleness_seconds(default: int = _DEFAULT_STALENESS_SECONDS) -> int
         LOGGER.warning("Invalid DATA_STALENESS_SEC=%s, using default %s", raw, default)
         return default
     return max(1, value)
+
+
+def next_regular_close_cancel_time(now: Optional[datetime] = None) -> datetime:
+    """Return the next 15:58 US/Eastern timestamp in UTC."""
+
+    tz = ZoneInfo("America/New_York")
+    now_utc = now or datetime.now(timezone.utc)
+    now_et = now_utc.astimezone(tz)
+    target_et = now_et.replace(hour=15, minute=58, second=0, microsecond=0)
+    if now_et >= target_et:
+        target_et = (now_et + timedelta(days=1)).replace(
+            hour=15,
+            minute=58,
+            second=0,
+            microsecond=0,
+        )
+    return target_et.astimezone(timezone.utc)
 
 
 # ----------------------------------------------------------------------

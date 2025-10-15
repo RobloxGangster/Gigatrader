@@ -81,6 +81,7 @@ class BrokerAPI(Protocol):
     def get_ml_features(self, symbol: str) -> Dict[str, Any]: ...
     def ml_predict(self, symbol: str) -> Dict[str, Any]: ...
     def ml_train(self, symbols: Optional[List[str]] | None = None) -> Dict[str, Any]: ...
+    def get_metrics(self) -> Dict[str, Any]: ...
 
 
 def _build_trace_headers() -> Dict[str, str]:
@@ -267,6 +268,26 @@ class RealAPI:
         payload = {"symbols": symbols} if symbols else None
         return self._request("POST", "/ml/train", json_payload=payload)
 
+    def get_metrics(self) -> Dict[str, Any]:
+        raw = self._request("GET", "/metrics")
+        metrics: Dict[str, Any] = {}
+        if isinstance(raw, str):
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) != 2:
+                    continue
+                key, value = parts
+                try:
+                    metrics[key] = float(value)
+                except ValueError:
+                    metrics[key] = value
+        elif isinstance(raw, dict):
+            metrics.update(raw)
+        return metrics
+
 
 class _MockState(BaseModel):
     run_id: Optional[str] = None
@@ -407,6 +428,9 @@ class MockAPI:
     def ml_train(self, symbols: Optional[List[str]] | None = None) -> Dict[str, Any]:
         metrics = {sym: {"auc": 0.6, "accuracy": 0.55} for sym in (symbols or ["AAPL"])}
         return {"model": "mock_model", "metrics": metrics}
+
+    def get_metrics(self) -> Dict[str, Any]:
+        return {"alpaca_stream_connected": 0}
 
     def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:
         name = f"option_chain_{symbol.lower()}"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from difflib import unified_diff
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import streamlit as st
 
@@ -181,6 +181,18 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
             st_rerun()
         return
     update_session_state(last_trace_id=status.get("trace_id"))
+
+    metrics: Dict[str, Any] = {}
+    try:
+        metrics = api.get_metrics()
+    except Exception:  # noqa: BLE001 - metrics are optional
+        metrics = {}
+
+    stream_flag = metrics.get("alpaca_stream_connected")
+    stream_note = "offline"
+    if isinstance(stream_flag, (int, float)):
+        stream_note = "connected" if int(stream_flag) else "offline"
+    st.caption(f"OMS: SQLite active · Stream: {stream_note}")
 
     with st.sidebar:
         st.subheader("Run Preset")
