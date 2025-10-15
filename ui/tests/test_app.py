@@ -59,7 +59,7 @@ def test_repro_bundle_creation(monkeypatch, tmp_path) -> None:
 
     at = _run_app()
     nav = next(widget for widget in at.selectbox if widget.label == "Navigation")
-    nav.select("Logs").run()
+    nav.select("Diagnostics / Logs").run()
     button = next(widget for widget in at.button if widget.label == "Create Repro Bundle")
     button.click().run()
     repros = list((tmp_path / "repros").glob("repro_*.zip"))

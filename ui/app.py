@@ -5,7 +5,6 @@ import os
 import pathlib
 import re
 from pathlib import Path
-from typing import Dict
 
 import streamlit as st
 
@@ -33,16 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ui.pages import (  # noqa: E402  - Streamlit entrypoint import order
-    backtest,
-    backtest_reports,
-    control_center,
-    diagnostics,
-    logs_pacing,
-    ml,
-    option_chain,
-    signals,
-)
+from ui.components import nav
 from ui.services.backend import get_backend
 from ui.services.config import api_base_url, mock_mode
 from ui.state import AppSessionState, init_session_state
@@ -52,18 +42,6 @@ def _is_mock_mode() -> bool:
     return os.getenv("MOCK_MODE", "").strip().lower() in ("1", "true", "yes")
 
 DEBUG_UI = os.getenv("UI_DEBUG", "").strip().lower() in ("1", "true", "yes")
-
-PAGE_MAP: Dict[str, object] = {
-    "Control Center": control_center,
-    "Signals": signals,
-    "Strategy Backtests": backtest,
-    "Backtest Reports": backtest_reports,
-    "ML Ops": ml,
-    "Option Chain": option_chain,
-    "Logs": logs_pacing,
-    "Diagnostics": diagnostics,
-}
-
 
 def main() -> None:
     load_dotenv(override=False)
@@ -76,20 +54,13 @@ def main() -> None:
     if _is_mock_mode():
         st.sidebar.info("Mock mode is enabled")
 
-    # Always provide the Navigation selectbox
-    nav_options = [
-        "Control Center",
-        "Signals",
-        "Strategy Backtests",
-        "Backtest Reports",
-        "ML Ops",
-        "Option Chain",
-        "Logs",
-    ]
-    if DEBUG_UI or _is_mock_mode():
-        nav_options.append("Diagnostics")
-    page_map = {name: PAGE_MAP[name] for name in nav_options}
-    selection = st.sidebar.selectbox("Navigation", nav_options, index=0)
+    page_map = nav.build_page_map()
+    if not page_map:
+        st.error("No pages available. Check your UI modules.")
+        return
+
+    current_key = nav.render_sidebar(page_map, key="nav_current")  # dropdown in sidebar
+    nav.render_quickbar(page_map, key="nav_current")
 
     # Ensure a Start Paper button exists on first render (mock-safe)
     if _is_mock_mode():
@@ -110,11 +81,9 @@ def main() -> None:
     st.sidebar.caption(f"API: {api_base_url()}")
     st.sidebar.caption(f"Profile: {state.profile}")
 
-    page = page_map.get(selection, control_center)
-    if hasattr(page, "render"):
-        page.render(api, state)  # type: ignore[attr-defined]
-    else:  # pragma: no cover - defensive programming
-        st.error(f"Page '{selection}' is not available.")
+    default_entry = next(iter(page_map.values()))
+    title, renderer = page_map.get(current_key, default_entry)
+    renderer(api, state)  # type: ignore[misc]
 
 
 if os.getenv("UI_DEBUG", "").lower() in ("1", "true", "yes"):
@@ -124,7 +93,7 @@ if os.getenv("UI_DEBUG", "").lower() in ("1", "true", "yes"):
         r"st\.sidebar\.radio\s*\(\s*[\"']Navigation",
         r"st\.sidebar\.selectbox\s*\(\s*[\"']Navigation",
         r"st\.sidebar\.page_link\s*\(",
-        r"st\.sidebar\.(?:markdown|write)\s*\([^)]*(Control Center|Option Chain|Backtest Reports|Logs|Diagnostics)",
+        r"st\.sidebar\.(?:markdown|write)\s*\([^)]*(Control Center|Signals|Strategy Backtests|Backtest Reports|ML Ops|Option Chain|Diagnostics / Logs|Stream Status|Metrics \(Extended\)|ML Calibration)",
     ]
     rx = re.compile("|".join(patterns), re.IGNORECASE)
     for path in root.rglob("*.py"):
