@@ -47,7 +47,9 @@ def _load_features(symbols: List[str], start: str, end: str) -> pd.DataFrame:
     Connect here to your feature store (the same data feeding /ml/features).
     CONTRACT: MultiIndex (datetime, symbol), columns=[feature..., 'target'] with 0/1 target.
     """
-    raise NotImplementedError("Connect to your feature store here.")
+    from services.data.features_loader import load_feature_panel
+
+    return load_feature_panel(symbols, start, end)
 
 
 def train_walk_forward(cfg: WFConfig) -> Dict[str, Any]:
@@ -55,6 +57,17 @@ def train_walk_forward(cfg: WFConfig) -> Dict[str, Any]:
     times = df.index.get_level_values(0)
     start_dt = pd.to_datetime(cfg.start)
     end_dt = pd.to_datetime(cfg.end)
+
+    tz = getattr(times, "tz", None)
+    if tz is not None:
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.tz_localize(tz)
+        else:
+            start_dt = start_dt.tz_convert(tz)
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.tz_localize(tz)
+        else:
+            end_dt = end_dt.tz_convert(tz)
 
     folds = []
     feature_cols = [c for c in df.columns if c != "target"]
