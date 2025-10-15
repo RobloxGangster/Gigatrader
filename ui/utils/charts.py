@@ -122,7 +122,7 @@ def equity_curve_chart(
 def render_equity_curve(
     equity_series: Sequence[float] | Sequence[EquityPoint] | pd.Series | pd.DataFrame,
     title: str = "Equity Curve",
-    use_container_width: bool = True,
+    width: str | bool = "stretch",
 ) -> None:
     """
     Renders the equity curve into Streamlit.
@@ -130,8 +130,13 @@ def render_equity_curve(
     - Otherwise: shows a warning and falls back to st.line_chart
     """
     fig = equity_curve_chart(equity_series, title=title)
+    if isinstance(width, bool):
+        width_value = "stretch" if width else "content"
+    else:
+        width_value = width
+
     if fig is not None:
-        st.plotly_chart(fig, use_container_width=use_container_width)
+        st.plotly_chart(fig, width=width_value)
         return
 
     st.warning("Plotly not installed, falling back to basic line chart.")

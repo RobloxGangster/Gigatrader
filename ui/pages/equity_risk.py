@@ -19,7 +19,7 @@ def _equity_summary(points: list[EquityPoint]) -> None:
 
     exposure_fig = exposure_chart(points)
     if exposure_fig is not None:
-        st.plotly_chart(exposure_fig, use_container_width=True)
+        st.plotly_chart(exposure_fig, width="stretch")
     else:
         st.warning("Plotly not installed, showing basic exposure line chart.")
         exposure_df = pd.DataFrame(
@@ -48,7 +48,7 @@ def _risk_dials(points: list[EquityPoint], snapshot) -> None:
     def _render_gauge(col, value: float, *, limit: float, title: str, suffix: str = "") -> bool:
         fig = risk_gauge_chart(value, limit=limit, title=title, suffix=suffix)
         if fig is not None:
-            col.plotly_chart(fig, use_container_width=True)
+            col.plotly_chart(fig, width="stretch")
             return False
         formatted_value = f"{value:.2f}{suffix}" if suffix else f"{value:.2f}"
         col.metric(title, formatted_value)

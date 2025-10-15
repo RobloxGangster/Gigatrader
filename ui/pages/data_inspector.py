@@ -28,7 +28,7 @@ def _render_ohlcv(df: pd.DataFrame) -> None:
     st.subheader("OHLCV Viewer")
     window = st.slider("Intraday window", 0, len(df) - 1, (0, min(len(df) - 1, 30)))
     subset = df.iloc[window[0] : window[1] + 1]
-    st.dataframe(subset, use_container_width=True)
+    st.dataframe(subset, width="stretch")
 
 
 def _render_anomalies(df: pd.DataFrame) -> None:
