@@ -56,6 +56,7 @@ class TradeLoopConfig:
     min_ev: float = 0.0
     universe: list[str] = field(default_factory=lambda: ["AAPL", "MSFT", "NVDA"])
     profile: str = "balanced"
+    duplicate_retry_attempts: int = 1
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)

@@ -21,14 +21,18 @@ from core.config import MOCK_MODE, TradeLoopConfig
 
 log = logging.getLogger(__name__)
 
-DUP_KEYS = ("duplicate_client_order_id", "duplicate client", "duplicate_client")
 
-
-def _is_duplicate_coid(reason: str | None) -> bool:
+def _is_duplicate_client_id_error(reason: str | None) -> bool:
     if not reason:
         return False
-    r = reason.lower()
-    return any(marker in r for marker in DUP_KEYS) or "duplicate coid" in r or "duplicate" in r
+    r = str(reason).lower()
+    return (
+        "duplicate_client_order_id" in r
+        or "duplicate client order id" in r
+        or "duplicate_client_id" in r
+        or "duplicate client id" in r
+        or "duplicate" in r
+    )
 
 
 def _now_ts() -> float:
@@ -530,6 +534,56 @@ class TradeOrchestrator:
                 self._mock_routing = True
         self._record_decision(record)
 
+    async def _submit_with_duplicate_retry(
+        self,
+        intent: ExecIntent,
+        dry_run: bool,
+    ) -> dict[str, Any]:
+        def _coerce(result: Any) -> dict[str, Any]:
+            if isinstance(result, Mapping):
+                return dict(result)
+            try:
+                return dict(result)  # type: ignore[arg-type]
+            except Exception:
+                return {
+                    "accepted": bool(getattr(result, "accepted", False)),
+                    "reason": getattr(result, "reason", None),
+                    "dry_run": bool(getattr(result, "dry_run", dry_run)),
+                }
+
+        submission = self.router.submit(intent=intent, dry_run=dry_run)
+        if inspect.isawaitable(submission):
+            primary_result = await submission  # type: ignore[assignment]
+        else:
+            primary_result = submission
+        result_dict = _coerce(primary_result)
+        if result_dict.get("accepted"):
+            return result_dict
+
+        reason_text = str(result_dict.get("reason", "") or "")
+        if _is_duplicate_client_id_error(reason_text):
+            attempts = getattr(self._config, "duplicate_retry_attempts", 1) or 0
+            last_result = result_dict
+            for _ in range(attempts):
+                try:
+                    time.sleep(0.001)
+                except Exception:
+                    pass
+                retry_submission = self.router.submit(intent=intent, dry_run=dry_run)
+                if inspect.isawaitable(retry_submission):
+                    retry_result = await retry_submission  # type: ignore[assignment]
+                else:
+                    retry_result = retry_submission
+                last_result = _coerce(retry_result)
+                if last_result.get("accepted"):
+                    return last_result
+                retry_reason = str(last_result.get("reason", "") or "")
+                if not _is_duplicate_client_id_error(retry_reason):
+                    return last_result
+            return last_result
+
+        return result_dict
+
     async def _submit_with_retry(
         self,
         intent: ExecIntent,
@@ -540,11 +594,7 @@ class TradeOrchestrator:
         dry_run_flag = self._mock_routing if dry_run is None else bool(dry_run)
 
         try:
-            submission = self.router.submit(intent, dry_run=dry_run_flag)
-            if inspect.isawaitable(submission):
-                result = await submission  # type: ignore[assignment]
-            else:
-                result = submission
+            result = await self._submit_with_duplicate_retry(intent=intent, dry_run=dry_run_flag)
         except Exception as exc:  # noqa: BLE001
             log.exception("router submission error", extra={"symbol": intent.symbol, "error": str(exc)})
             self._last_error = str(exc)
@@ -565,7 +615,7 @@ class TradeOrchestrator:
 
         reason = str(result.get("reason", "") or "")
         reason_lower = reason.lower()
-        if any(marker in reason_lower for marker in DUP_KEYS) and max_retries > 0:
+        if _is_duplicate_client_id_error(reason_lower) and max_retries > 0:
             await asyncio.sleep(0.01)
             retry_id_prefix = intent.client_order_id or "gt"
             retry_intent = replace(
@@ -639,7 +689,7 @@ class TradeOrchestrator:
             accepted = bool(result.get("accepted"))
             reason = result.get("reason")
 
-        if not accepted and _is_duplicate_coid(reason):
+        if not accepted and _is_duplicate_client_id_error(reason):
             log.warning("Duplicate client_order_id detected; retrying submit once.")
             try:
                 result = await _invoke_submit()
