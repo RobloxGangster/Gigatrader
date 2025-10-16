@@ -101,8 +101,9 @@ class ExecutionEngine:
             if existing is not None:
                 metrics.inc_order_reject("duplicate_intent")
                 return ExecResult(False, "duplicate_intent", existing)
-            # Pre-populate to guard concurrent submissions. Actual order id stored after success.
-            self._seen_intents[key] = ""
+            client_order_id = intent.client_tag or str(uuid.uuid4())
+            # Pre-populate with the generated client order id so in-flight duplicates see it.
+            self._seen_intents[key] = client_order_id
         proposal = Proposal(
             symbol=intent.symbol,
             side=intent.side,
@@ -115,9 +116,8 @@ class ExecutionEngine:
             metrics.inc_order_reject(f"risk_denied_{decision.reason or 'unknown'}")
             async with self._intent_lock:
                 self._seen_intents.pop(key, None)
-            return ExecResult(False, f"risk_denied:{decision.reason}")
+            return ExecResult(False, f"risk_denied:{decision.reason}", client_order_id)
 
-        client_order_id = intent.client_tag or str(uuid.uuid4())
         payload = self._intent_to_payload(intent, client_order_id)
         try:
             response = await self.adapter.submit_order(payload)
@@ -125,15 +125,27 @@ class ExecutionEngine:
             metrics.inc_order_reject(f"submit_failed_{exc.__class__.__name__}")
             async with self._intent_lock:
                 self._seen_intents.pop(key, None)
-            return ExecResult(False, f"submit_failed:{exc}")
+            return ExecResult(False, f"submit_failed:{exc}", client_order_id)
 
-        alpaca_order_id = response.get("id") or client_order_id
+        order_id: Optional[str]
+        status: str
+        if isinstance(response, dict):
+            order_id = response.get("id") or response.get("order_id")
+            status = response.get("status") or "unknown"
+        else:
+            order_id = getattr(response, "id", None) or getattr(response, "order_id", None)
+            status = getattr(response, "status", None) or "unknown"
+        alpaca_order_id = order_id or client_order_id
         async with self._intent_lock:
             self._seen_intents[key] = client_order_id
             self._orders[client_order_id] = {
                 "alpaca_order_id": alpaca_order_id,
+                "client_order_id": client_order_id,
                 "intent": intent,
-                "status": response.get("status", "unknown"),
+                "status": status,
+                "symbol": intent.symbol,
+                "side": intent.side,
+                "qty": intent.qty,
             }
         if hasattr(self.state, "mark_trade"):
             timestamp = intent.meta.get("ts") if intent.meta else None
