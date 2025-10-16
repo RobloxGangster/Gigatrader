@@ -2,6 +2,27 @@ from __future__ import annotations
 import os, time, subprocess, sys, pathlib, contextlib
 import pytest, requests
 
+
+@pytest.fixture(autouse=True)
+def _default_disarm_kill_switch(monkeypatch, tmp_path):
+    """
+    Most tests assume trading can proceed unless specific risk rules block it.
+    Disarm any default kill-switch so unit/integration tests don't all fail with
+    `kill_switch_active`. Tests that need it ON can set envs/files explicitly.
+    """
+
+    # Point the kill-switch file to a non-existent tmp path
+    fake_file = tmp_path / "no_kill_switch.flag"
+    monkeypatch.setenv("KILL_SWITCH_FILE", str(fake_file))
+    monkeypatch.setenv("KILL_SWITCH", "0")  # explicit OFF
+
+    # Also remove any repo-level kill file if present (best-effort)
+    for rel in ("runtime/kill_switch", "runtime\\kill_switch"):
+        p = pathlib.Path(rel)
+        if p.exists():
+            with contextlib.suppress(Exception):
+                p.unlink()
+
 def pytest_addoption(parser) -> None:
     """Provide fallbacks for Playwright CLI flags when the plugin is absent."""
     for opt in ("--screenshot", "--video", "--tracing"):
@@ -96,3 +117,8 @@ def require_mock(env_mock_mode):
 @pytest.fixture
 def require_paper(env_mock_mode):
     _skip_if(env_mock_mode, "paper_only test; set MOCK_MODE=false")
+
+
+def pytest_configure(config):
+    # Register the mark in case plugin loading order changes
+    config.addinivalue_line("markers", "asyncio: mark test to run with asyncio event loop")
