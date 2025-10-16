@@ -9,4 +9,5 @@ __all__ = [
     "options",
     "logs",
     "alpaca_live",
+    "health",
 ]
