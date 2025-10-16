@@ -1,1 +1,2 @@
-"""Pytest configuration for E2E tests (Playwright plugin loaded via CLI when available)."""
+# Make Playwright fixtures (e.g., 'page') available even when plugin autoload is disabled.
+pytest_plugins = ("pytest_playwright",)

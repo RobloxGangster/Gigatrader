@@ -45,8 +45,7 @@ if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorActio
 
 # ----------------- PHASE 1: non-E2E -----------------
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-# Register asyncio plugin(s) BEFORE args so collection sees them
-$plugins1 = @('-p','pytest_asyncio','-p','pytest_asyncio.plugin')
+$plugins1 = @('-p','pytest_asyncio','-p','pytest_asyncio.plugin')  # register before args
 $nonE2E = @() + $plugins1 + @('tests','-rA','-m','not e2e','--ignore=tests\e2e')
 & $PYEXE -m pytest @nonE2E 2>&1 | Tee-Object $LOG -Append | Write-Host
 $rc1 = $LASTEXITCODE
@@ -61,19 +60,14 @@ if ($hasPW) {
   & $PYEXE -m playwright install chromium 2>&1 | Tee-Object $LOG -Append | Write-Host
 
   $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-  # Use only the public plugin name; do NOT import 'pytest_playwright.pytest_plugin'
+  # Load plugin explicitly *before* test path; do not pass --screenshot/--video/--tracing.
   $plugins2 = @('-p','pytest_playwright','-p','pytest_asyncio','-p','pytest_asyncio.plugin')
-
-  # DO NOT pass --screenshot/--video/--tracing (fragile across versions)
   $e2eArgs = @() + $plugins2 + @('tests/e2e','-m','e2e','-rA')
   & $PYEXE -m pytest @e2eArgs 2>&1 | Tee-Object $LOG -Append | Write-Host
   $rc2 = $LASTEXITCODE
 } else {
-  Log "[STEP] pytest-playwright not installed; running E2E without PW plugin" | Tee-Object $LOG -Append | Write-Host
-  $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-  $e2eLite = @('-p','pytest_asyncio','-p','pytest_asyncio.plugin','tests/e2e','-m','e2e','-rA')
-  & $PYEXE -m pytest @e2eLite 2>&1 | Tee-Object $LOG -Append | Write-Host
-  $rc2 = $LASTEXITCODE
+  Log "[STEP] pytest-playwright not installed; skipping E2E (no page fixture)" | Tee-Object $LOG -Append | Write-Host
+  $rc2 = 0
 }
 
 if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorAction SilentlyContinue }
