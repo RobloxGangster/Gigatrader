@@ -2,6 +2,16 @@ from __future__ import annotations
 import os, time, subprocess, sys, signal, pathlib, contextlib
 import pytest, requests
 
+def pytest_addoption(parser) -> None:
+    """Provide fallbacks for Playwright CLI flags when the plugin is absent."""
+    for opt in ("--screenshot", "--video", "--tracing"):
+        try:
+            parser.addoption(opt, action="store", default=None, help="(noop fallback)")
+        except ValueError:
+            # Option already provided by an installed plugin; ignore.
+            pass
+
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtime"
 LOGS = ROOT / "logs"

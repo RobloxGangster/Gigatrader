@@ -48,3 +48,4 @@ class ExecResult:
     accepted: bool
     reason: str
     client_order_id: Optional[str] = None
+    order_id: Optional[str] = None

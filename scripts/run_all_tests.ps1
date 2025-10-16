@@ -11,6 +11,8 @@ New-Item -ItemType Directory -Force -Path $LOGDIR | Out-Null
 # --- single timestamped log ---
 $stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
 $LOGFILE = Join-Path $LOGDIR "test_all_in_one-$stamp.log"
+$PW_RESULTS = Join-Path $ROOT 'test-results'
+if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorAction SilentlyContinue }
 
 function Log([string]$m) {
   $ts = Get-Date -Format 'u'
@@ -79,6 +81,7 @@ Log "[STEP] PYTEST (E2E): -m e2e -rA" | Tee-Object $LOGFILE -Append | Write-Host
 & $PYEXE -m pytest -m e2e tests/e2e -rA 2>&1 `
   | Tee-Object $LOGFILE -Append | Write-Host
 $rc2 = $LASTEXITCODE
+if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorAction SilentlyContinue }
 
 # --- final combined exit status ---
 $final = if ($rc1 -ne 0 -or $rc2 -ne 0) { 1 } else { 0 }

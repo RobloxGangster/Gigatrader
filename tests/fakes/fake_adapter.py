@@ -18,11 +18,15 @@ class FakeAdapter:
         self.submits.append(payload)
         self._counter += 1
         client_order_id = self._coerce_client_order_id(payload)
-        order_id = f"order-{self._counter}"
+        symbol = payload.get("symbol") if isinstance(payload, dict) else getattr(payload, "symbol", None)
+        qty = payload.get("qty") if isinstance(payload, dict) else getattr(payload, "qty", None)
+        order_suffix = client_order_id or "no-coid"
         return {
-            "id": order_id,
+            "id": f"mock-{order_suffix}",
             "client_order_id": client_order_id,
-            "status": "accepted",
+            "status": "new",
+            "symbol": symbol,
+            "qty": qty,
         }
 
     async def cancel_order(self, order_id: Any) -> None:

@@ -100,7 +100,11 @@ class ExecutionEngine:
             existing = self._seen_intents.get(key)
             if existing is not None:
                 metrics.inc_order_reject("duplicate_intent")
-                return ExecResult(False, "duplicate_intent", existing)
+                return ExecResult(
+                    accepted=False,
+                    reason="duplicate_intent",
+                    client_order_id=existing,
+                )
             client_order_id = intent.client_tag or str(uuid.uuid4())
             # Pre-populate with the generated client order id so in-flight duplicates see it.
             self._seen_intents[key] = client_order_id
@@ -116,30 +120,46 @@ class ExecutionEngine:
             metrics.inc_order_reject(f"risk_denied_{decision.reason or 'unknown'}")
             async with self._intent_lock:
                 self._seen_intents.pop(key, None)
-            return ExecResult(False, f"risk_denied:{decision.reason}", client_order_id)
+            return ExecResult(
+                accepted=False,
+                reason=f"risk_denied:{decision.reason}",
+                client_order_id=client_order_id,
+            )
 
         payload = self._intent_to_payload(intent, client_order_id)
+        if isinstance(payload, dict):
+            payload["client_order_id"] = client_order_id
+        else:
+            try:
+                setattr(payload, "client_order_id", client_order_id)
+            except Exception:
+                pass
         try:
             response = await self.adapter.submit_order(payload)
         except Exception as exc:  # pragma: no cover - network errors simulated in integration tests
             metrics.inc_order_reject(f"submit_failed_{exc.__class__.__name__}")
             async with self._intent_lock:
                 self._seen_intents.pop(key, None)
-            return ExecResult(False, f"submit_failed:{exc}", client_order_id)
+            return ExecResult(
+                accepted=False,
+                reason=f"submit_failed:{exc}",
+                client_order_id=client_order_id,
+            )
 
-        order_id: Optional[str]
-        status: str
+        order_id: Optional[str] = None
+        status: str = "pending"
         if isinstance(response, dict):
             order_id = response.get("id") or response.get("order_id")
-            status = response.get("status") or "unknown"
+            status = response.get("status") or status
         else:
             order_id = getattr(response, "id", None) or getattr(response, "order_id", None)
-            status = getattr(response, "status", None) or "unknown"
+            status = getattr(response, "status", None) or status
         alpaca_order_id = order_id or client_order_id
         async with self._intent_lock:
             self._seen_intents[key] = client_order_id
             self._orders[client_order_id] = {
                 "alpaca_order_id": alpaca_order_id,
+                "order_id": order_id,
                 "client_order_id": client_order_id,
                 "intent": intent,
                 "status": status,
@@ -153,7 +173,12 @@ class ExecutionEngine:
                 self.state.mark_trade(intent.symbol, when=timestamp)
             except TypeError:
                 self.state.mark_trade(intent.symbol)  # type: ignore[arg-type]
-        return ExecResult(True, "accepted", client_order_id)
+        return ExecResult(
+            accepted=True,
+            reason="accepted",
+            client_order_id=client_order_id,
+            order_id=order_id,
+        )
 
     async def cancel(self, client_order_id: str) -> bool:
         order = self._orders.get(client_order_id)
