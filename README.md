@@ -149,3 +149,14 @@ Mock-only tests are marked @pytest.mark.mock_only.
 
 
 ---
+
+### One-click test runners (Windows)
+- Unit + Integration:
+  - Double-click: `scripts\test_all.cmd`
+  - Logs: `logs\tests\test_all-YYYYMMDD-HHMMSS.log`
+- UI E2E (Playwright):
+  - Double-click: `scripts\test_e2e.cmd`
+  - Logs: `logs\tests\test_e2e-YYYYMMDD-HHMMSS.log`
+
+Both windows **pause** at the end so you can read errors.  
+If venv/dev deps/browsers are missing, the scripts auto-install them.
