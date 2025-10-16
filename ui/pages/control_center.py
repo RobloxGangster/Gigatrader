@@ -223,15 +223,17 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     if isinstance(stream_flag, (int, float)):
         stream_note = "connected" if int(stream_flag) else "offline"
 
-    snapshot: RiskSnapshot = api.get_risk_snapshot()
     flags = get_runtime_flags(api)
-    acct: Dict[str, Any] = {}
-    try:
-        acct = api.get_account()
-    except Exception as exc:  # noqa: BLE001 - surface to UI
-        st.warning(f"Failed to load account: {exc}")
-        acct = {}
     mock_mode = flags.mock_mode
+
+    snapshot: RiskSnapshot = api.get_risk_snapshot()
+    acct: Dict[str, Any] = {}
+    if not mock_mode:
+        try:
+            acct = api.get_account()
+        except Exception as exc:  # noqa: BLE001 - surface to UI
+            st.warning(f"Failed to load account: {exc}")
+            acct = {}
     if mock_mode:
         st.info(
             "Mock mode is ON: trading actions are disabled here. "
@@ -274,24 +276,19 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     _risk_overview(snapshot)
 
     sync_col, refresh_col, ts_col = st.columns([1, 1, 2])
-    sync_disabled = mock_mode or not hasattr(api, "_request")
     if sync_col.button(
         "Sync Now",
-        help="Fetch latest Alpaca orders/positions",
-        disabled=sync_disabled,
+        help="Fetch latest from Alpaca",
+        disabled=mock_mode,
     ):
-        request_fn = getattr(api, "_request", None)
-        if callable(request_fn):
-            try:
-                request_fn("POST", "/orders/sync")
-            except Exception as exc:  # noqa: BLE001 - network failures
-                st.error(f"Sync failed: {exc}")
-            else:
-                st.success("Synced from Alpaca.")
-                st.session_state["__last_sync_ts__"] = int(time.time())
-                st_rerun()
+        try:
+            api._request("POST", "/orders/sync")
+        except Exception as exc:  # noqa: BLE001 - network failures
+            st.error(f"Sync failed: {exc}")
         else:
-            st.warning("Sync unavailable in mock mode.")
+            st.success("Synced from Alpaca.")
+            st.session_state["__last_sync_ts__"] = int(time.time())
+            st.rerun()
 
     if refresh_col.button("Refresh"):
         st_rerun()

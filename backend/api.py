@@ -1,10 +1,14 @@
-import os, threading, asyncio
+import asyncio
+import os
+import threading
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from dotenv import load_dotenv
 
 from core.kill_switch import KillSwitch
-load_dotenv(override=False)
+
+load_dotenv()
 
 app = FastAPI(title="Gigatrader API")
 
@@ -15,6 +19,7 @@ from backend.routes import backtest_v2 as backtest_v2_routes  # noqa: E402
 from backend.routes import ml as ml_routes  # noqa: E402
 from backend.routes import ml_calibration as ml_calibration_routes  # noqa: E402
 from backend.routes import alpaca_live as alpaca_live_routes  # noqa: E402
+from backend.routes import health as health_routes  # noqa: E402
 
 app.include_router(ml_routes.router)
 app.include_router(ml_calibration_routes.router)
@@ -23,6 +28,7 @@ app.include_router(backtests_compat.router)
 app.include_router(options_routes.router)
 app.include_router(logs_routes.router)
 app.include_router(alpaca_live_routes.router)
+app.include_router(health_routes.router)
 
 
 @app.on_event("startup")
@@ -41,9 +47,6 @@ async def _startup_reconcile():
 _kill_switch = KillSwitch()
 
 
-@app.get("/health")
-def health():
-    return {"ok": True, "service": "gigatrader-api"}
 _runner_thread = None
 _running = False
 _profile = "paper"

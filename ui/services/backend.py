@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol
 import requests
 from pydantic import BaseModel, Field
 
-from .config import api_base_url, mock_mode
+from .config import api_base_url
 from ui.state import (
     EquityPoint,
     Greeks,
@@ -28,6 +28,7 @@ from ui.state import (
     RunInfo,
     Trade,
 )
+from ui.utils.runtime import get_runtime_flags
 
 _FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "fixtures"
 _DEFAULT_TIMEOUT = 8
@@ -605,7 +606,15 @@ class MockAPI:
 
 
 def get_backend() -> BrokerAPI:
-    """Return the proper backend implementation based on environment variables."""
-    if mock_mode():
+    """Return the proper backend implementation based on runtime flags."""
+
+    primary = RealAPI()
+    flags = get_runtime_flags(primary)
+
+    if flags.mock_mode:
         return MockAPI()
-    return RealAPI()
+
+    if flags.base_url != primary.base_url:
+        return RealAPI(base_url=flags.base_url)
+
+    return primary
