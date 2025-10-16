@@ -34,19 +34,13 @@ def _run(coro):
 
 
 def _force_disarm_kill_switch(risk: RiskManager) -> None:
-    """
-    Attempt to disarm any kill switch configuration that might exist on the
-    risk manager. This tolerates multiple implementations by probing common
-    method and attribute names.
-    """
-
     for attr in ("disarm", "disarm_kill_switch", "reset_kill_switch"):
         if hasattr(risk, attr):
             fn = getattr(risk, attr)
             try:
                 fn(False) if getattr(fn, "__code__", None) and fn.__code__.co_argcount >= 2 else fn()
                 return
-            except Exception:  # pragma: no cover - best-effort helper
+            except Exception:
                 pass
 
     for target in (risk, getattr(risk, "state", None)):
@@ -57,7 +51,7 @@ def _force_disarm_kill_switch(risk: RiskManager) -> None:
                 try:
                     setattr(target, name, False)
                     return
-                except Exception:  # pragma: no cover - best-effort helper
+                except Exception:
                     pass
 
 
@@ -84,7 +78,7 @@ def test_happy_path_bracket_and_risk_ok(monkeypatch):
 def test_idempotency_blocks_duplicates():
     state = InMemoryState()
     risk = RiskManager(state)
-    _force_disarm_kill_switch(risk)
+    _force_disarm_kill_switch(risk)  # ensure acceptance for first submit
     adapter = FakeAdapter()
     engine = ExecutionEngine(risk=risk, state=state, adapter=adapter)
 
