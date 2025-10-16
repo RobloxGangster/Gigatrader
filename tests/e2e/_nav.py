@@ -225,6 +225,14 @@ def click_run_diagnostics_if_present(page: Page, timeout_ms: int = 4000) -> bool
     try:
         btn = page.get_by_role("button", name=re.compile(r"^Run Diagnostics$", re.I)).first
         btn.wait_for(state="visible", timeout=timeout_ms)
+        try:
+            btn.scroll_into_view_if_needed()
+        except Exception:
+            pass
+        try:
+            expect(btn).to_be_enabled(timeout=timeout_ms)
+        except Exception:
+            pass
         btn.click()
         return True
     except Exception:
