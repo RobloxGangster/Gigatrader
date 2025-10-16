@@ -6,27 +6,7 @@ from services.execution.engine import ExecutionEngine
 from services.execution.types import ExecIntent
 from services.risk.engine import RiskManager
 from services.risk.state import InMemoryState
-
-
-class FakeAdapter:
-    def __init__(self) -> None:
-        self.submits = []
-        self.cancels = []
-        self.replaces = []
-        self.counter = 0
-
-    async def submit_order(self, payload):
-        self.submits.append(payload)
-        self.counter += 1
-        order_id = f"order-{self.counter}"
-        return {"id": order_id, "status": "accepted", "client_order_id": payload["client_order_id"]}
-
-    async def cancel_order(self, order_id):
-        self.cancels.append(order_id)
-
-    async def replace_order(self, order_id, payload):
-        self.replaces.append((order_id, payload))
-        return {"id": order_id, "status": "replaced"}
+from tests.fakes import FakeAdapter
 
 
 def _run(coro):
@@ -115,6 +95,7 @@ def test_process_updates_reconciles_state(monkeypatch):
 
     intent = ExecIntent(symbol="AAPL", side="buy", qty=2, limit_price=100.0)
     submit_result = _run(engine.submit(intent))
+    assert submit_result.client_order_id is not None
     order_info = engine._orders[submit_result.client_order_id]
 
     _run(
