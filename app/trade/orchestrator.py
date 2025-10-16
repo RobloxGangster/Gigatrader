@@ -30,110 +30,115 @@ def _uppercase(symbol: str) -> str:
     return symbol.upper() if symbol else symbol
 
 
-def _get_attr(obj: Any, names: Iterable[str], default: float = float("nan")) -> float:
-    """Safely fetch the first present numeric attribute from ``names``."""
+def _dig(obj: Any, path: str) -> Any:
+    """Dot-path getter that works for dicts, dataclasses, pydantic models, and attrs."""
+    parts = path.split(".")
+    cur = obj
+    for p in parts:
+        try:
+            if isinstance(cur, dict):
+                cur = cur.get(p, None)
+            elif is_dataclass(cur):
+                cur = asdict(cur).get(p, None)
+            elif hasattr(cur, "model_dump"):
+                d = cur.model_dump()
+                cur = d.get(p, None) if isinstance(d, dict) else getattr(cur, p, None)
+            else:
+                cur = getattr(cur, p)
+        except Exception:
+            return None
+        if cur is None:
+            return None
+    return cur
 
-    if isinstance(obj, dict):
-        for n in names:
-            v = obj.get(n)
-            if v is not None:
-                try:
-                    return float(v)
-                except Exception:  # pragma: no cover - defensive
-                    continue
-        return default
 
-    if is_dataclass(obj):
-        data = asdict(obj)
-        for n in names:
-            v = data.get(n)
-            if v is not None:
-                try:
-                    return float(v)
-                except Exception:  # pragma: no cover - defensive
-                    continue
-        return default
-
-    for n in names:
-        if hasattr(obj, n):
-            v = getattr(obj, n)
-            if v is not None:
-                try:
-                    return float(v)
-                except Exception:  # pragma: no cover - defensive
-                    continue
-
-    try:
-        if hasattr(obj, "model_dump"):
-            data = obj.model_dump()
-            for n in names:
-                v = data.get(n)
-                if v is not None:
-                    try:
-                        return float(v)
-                    except Exception:  # pragma: no cover - defensive
-                        continue
-    except Exception:  # pragma: no cover - defensive
-        pass
+def _get_num(obj: Any, paths: Iterable[str], default: float = float("nan")) -> float:
+    """Try multiple (possibly dotted) paths; return float or default."""
+    for p in paths:
+        v = _dig(obj, p)
+        if v is None:
+            continue
+        try:
+            return float(v)
+        except Exception:
+            continue
     return default
 
 
-def _symbol_of(obj: Any) -> str:
-    for n in ("symbol", "underlying", "ticker"):
-        try:
-            if isinstance(obj, dict) and n in obj and obj[n] is not None:
-                return str(obj[n])
-            if hasattr(obj, n):
-                value = getattr(obj, n)
-                if value is not None:
-                    return str(value)
-            if hasattr(obj, "model_dump"):
-                data = obj.model_dump()
-                if n in data and data[n] is not None:
-                    return str(data[n])
-        except Exception:  # pragma: no cover - defensive
+def _get_str(obj: Any, paths: Iterable[str], default: str = "") -> str:
+    for p in paths:
+        v = _dig(obj, p)
+        if v is None:
             continue
-    return ""
-
-
-def _ts_of(obj: Any) -> float:
-    for n in ("ts", "timestamp", "event_time", "created_at"):
         try:
-            value = None
-            if isinstance(obj, dict):
-                value = obj.get(n)
-            elif hasattr(obj, n):
-                value = getattr(obj, n)
-            elif hasattr(obj, "model_dump"):
-                value = obj.model_dump().get(n)
-            if value is None:
+            return str(v)
+        except Exception:
+            continue
+    return default
+
+
+def _get_ts(obj: Any) -> float:
+    for p in ("ts", "timestamp", "event_time", "created_at", "meta.ts", "meta.timestamp"):
+        v = _dig(obj, p)
+        if v is None:
+            continue
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, datetime):
+            return v.timestamp()
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+            except Exception:
                 continue
-            if isinstance(value, (int, float)):
-                return float(value)
-            if isinstance(value, str):
-                try:
-                    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-                except Exception:
-                    continue
-            if isinstance(value, datetime):
-                return value.timestamp()
-        except Exception:  # pragma: no cover - defensive
-            continue
     return 0.0
 
 
-def _score_candidate(cand: Any) -> tuple[float, float, str, float]:
-    ev = _get_attr(
+def _score_tuple(cand: Any) -> tuple:
+    """
+    Primary: EV (desc) from a wide set of names, even nested.
+    Secondary: win/alpha/policy scores (desc).
+    Ties: symbol asc, then timestamp asc (stable).
+    """
+
+    ev = _get_num(
         cand,
-        ("ev", "expected_value", "score", "alpha", "policy_score"),
+        (
+            "ev",
+            "expected_value",
+            "metrics.ev",
+            "metrics.expected_value",
+            "scores.ev",
+            "scores.expected_value",
+            "score",
+            "alpha",
+            "policy_score",
+        ),
         default=float("nan"),
     )
-    if isinstance(ev, float) and math.isnan(ev):
+    if ev is None or (isinstance(ev, float) and math.isnan(ev)):
         ev = 0.0
-    secondary = _get_attr(cand, ("score", "alpha", "policy_score", "p_win"), default=0.0)
-    symbol = _symbol_of(cand)
-    ts = _ts_of(cand)
-    return (-float(ev or 0.0), -float(secondary or 0.0), symbol, float(ts))
+
+    secondary = _get_num(
+        cand,
+        (
+            "p_win",
+            "prob",
+            "score",
+            "alpha",
+            "policy_score",
+            "metrics.score",
+            "scores.alpha",
+            "scores.policy_score",
+        ),
+        default=0.0,
+    )
+
+    sym = _get_str(cand, ("symbol", "underlying", "ticker", "meta.symbol"), default="")
+    ts = _get_ts(cand)
+
+    # sort asc -> negate numeric keys to get desc
+    return (-float(ev), -float(secondary), sym, float(ts))
 
 
 @dataclass
@@ -375,7 +380,7 @@ class TradeOrchestrator:
                 self._record_decision(record)
             return
 
-        scored.sort(key=lambda item: _score_candidate(item[3]))
+        scored.sort(key=lambda item: _score_tuple(item[3]))
         selected = scored[: config.top_n]
         dropped = scored[config.top_n :]
         for candidate, ev_value, direction_prob, _ in dropped:
@@ -546,32 +551,22 @@ class TradeOrchestrator:
             log.info("route_top_event: no proposals")
             return None
 
-        ranked = sorted(proposals, key=_score_candidate)
+        ranked = sorted(list(proposals), key=_score_tuple)
         top = ranked[0]
-        identifier = getattr(top, "client_order_id", None) or _symbol_of(top)
+        identifier = getattr(top, "client_order_id", None) or _get_str(
+            top, ("symbol", "underlying", "ticker", "meta.symbol"), ""
+        )
         log.info("route_top_event: selected=%s", identifier)
 
-        allow: bool = True
-        for flag_name in ("should_trade", "allow", "approved", "ok"):
-            value = None
-            if isinstance(top, Mapping):
-                value = top.get(flag_name)
-            elif hasattr(top, flag_name):
-                value = getattr(top, flag_name)
-            else:
-                try:
-                    if hasattr(top, "model_dump"):
-                        dumped = top.model_dump()
-                        if isinstance(dumped, dict):
-                            value = dumped.get(flag_name)
-                except Exception:  # pragma: no cover - defensive
-                    value = None
-            if value is not None:
-                allow = bool(value)
+        allow = True
+        for name in ("should_trade", "allow", "approved", "ok"):
+            v = _dig(top, name)
+            if v is not None:
+                allow = bool(v)
                 break
 
         if not allow:
-            log.info("route_top_event: blocked by risk/policy")
+            log.info("route_top_event: blocked by policy gate")
             return None
 
         submit = getattr(self.router, "submit", None)
