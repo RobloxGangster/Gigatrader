@@ -84,6 +84,7 @@ def test_happy_path_bracket_and_risk_ok(monkeypatch):
 def test_idempotency_blocks_duplicates():
     state = InMemoryState()
     risk = RiskManager(state)
+    _force_disarm_kill_switch(risk)
     adapter = FakeAdapter()
     engine = ExecutionEngine(risk=risk, state=state, adapter=adapter)
 
