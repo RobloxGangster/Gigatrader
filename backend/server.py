@@ -761,7 +761,14 @@ def health():
     breaker_info = breakers.breaker_state()
     kill = _kill_switch_on()
     ok = bool(not kill and not breaker_info.get("current"))
-    return {"ok": ok, "kill_switch": kill, "breakers": breaker_info}
+    status = "ok" if ok else "degraded"
+    return {
+        "status": status,
+        "ok": ok,
+        "kill_switch": kill,
+        "breakers": breaker_info,
+        "mock_mode": MOCK_MODE,
+    }
 
 @app.get("/status", response_model=StatusResp)
 def status():
