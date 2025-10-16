@@ -45,32 +45,25 @@ function Add-PluginIfPresent([ref]$arr, [string]$pkg, [string]$pluginModule) {
   if ($LASTEXITCODE -eq 0) { $arr.Value += @('-p', $pluginModule) }
 }
 
-# -------- PHASE 1: non-E2E (plugin autoload OFF, explicit safe whitelist) --------
-Log "[STEP] PYTEST (non-E2E): tests -m 'not e2e' --ignore=tests\\e2e" | Tee-Object $LOG -Append | Write-Host
+# ----- PHASE 1: non-E2E (autoload OFF; safe whitelist) -----
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
 $plugins1 = @()
-Add-PluginIfPresent ([ref]$plugins1) 'pytest-env'     'pytest_env'
-Add-PluginIfPresent ([ref]$plugins1) 'pytest-dotenv'  'pytest_dotenv'
-Add-PluginIfPresent ([ref]$plugins1) 'pytest-asyncio' 'pytest_asyncio'
-Add-PluginIfPresent ([ref]$plugins1) 'pytest-asyncio' 'pytest_asyncio.plugin'  # fallback import path
+& $PYEXE -m pip show pytest-env     1>$null 2>$null; if ($LASTEXITCODE -eq 0) { $plugins1 += @('-p','pytest_env') }
+& $PYEXE -m pip show pytest-dotenv  1>$null 2>$null; if ($LASTEXITCODE -eq 0) { $plugins1 += @('-p','pytest_dotenv') }
+& $PYEXE -m pip show pytest-asyncio 1>$null 2>$null; if ($LASTEXITCODE -eq 0) { $plugins1 += @('-p','pytest_asyncio') }
 
 & $PYEXE -m pytest tests -rA -m "not e2e" --ignore=tests\e2e @plugins1 2>&1 `
   | Tee-Object $LOG -Append | Write-Host
 $rc1 = $LASTEXITCODE
 if ($rc1 -ne 0) { Log "[WARN] non-E2E failed with rc=$rc1 (continuing to E2E)" | Tee-Object $LOG -Append | Write-Host }
 
-# -------- PHASE 2: E2E (Playwright) --------
-Log "[STEP] playwright install chromium" | Tee-Object $LOG -Append | Write-Host
+# ----- PHASE 2: E2E (autoload OFF; explicitly load playwright; force Chromium) -----
 & $PYEXE -m playwright install chromium 2>&1 | Tee-Object $LOG -Append | Write-Host
-
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-$plugins2 = @()
-Add-PluginIfPresent ([ref]$plugins2) 'pytest-playwright' 'pytest_playwright'
-Add-PluginIfPresent ([ref]$plugins2) 'pytest-asyncio'    'pytest_asyncio'
-Add-PluginIfPresent ([ref]$plugins2) 'pytest-asyncio'    'pytest_asyncio.plugin'  # fallback
+$plugins2 = @('-p','pytest_playwright')
+& $PYEXE -m pip show pytest-asyncio 1>$null 2>$null; if ($LASTEXITCODE -eq 0) { $plugins2 += @('-p','pytest_asyncio') }
 
-Log "[STEP] PYTEST (E2E): -m e2e -rA (plugins: $($plugins2 -join ' '))" | Tee-Object $LOG -Append | Write-Host
-& $PYEXE -m pytest -m e2e tests/e2e -rA --screenshot=off --video=off --tracing=off @plugins2 2>&1 `
+& $PYEXE -m pytest -m e2e tests/e2e -rA --browser=chromium --screenshot=off --video=off --tracing=off @plugins2 2>&1 `
   | Tee-Object $LOG -Append | Write-Host
 $rc2 = $LASTEXITCODE
 

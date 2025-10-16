@@ -1,5 +1,10 @@
-from __future__ import annotations
-import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# tests/e2e/conftest.py
+# Force-load the Playwright plugin so 'page' is available even with autoload disabled.
+pytest_plugins = ("pytest_playwright",)
+
+# Optional: if you use pytest-base-url, this keeps its plugin available too.
+try:
+    import pytest_base_url  # noqa: F401
+    pytest_plugins += ("pytest_base_url.plugin",)
+except Exception:
+    pass
