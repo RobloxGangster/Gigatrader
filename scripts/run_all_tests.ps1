@@ -45,15 +45,12 @@ if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorActio
 
 # ----------------- PHASE 1: non-E2E -----------------
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-# Put plugin first so it's registered before test discovery
+# Register asyncio plugin(s) BEFORE args so collection sees them
 $plugins1 = @('-p','pytest_asyncio','-p','pytest_asyncio.plugin')
 $nonE2E = @() + $plugins1 + @('tests','-rA','-m','not e2e','--ignore=tests\e2e')
-
 & $PYEXE -m pytest @nonE2E 2>&1 | Tee-Object $LOG -Append | Write-Host
 $rc1 = $LASTEXITCODE
-if ($rc1 -ne 0) {
-  Log "[WARN] non-E2E failed with rc=$rc1 (continuing to E2E)" | Tee-Object $LOG -Append | Write-Host
-}
+if ($rc1 -ne 0) { Log "[WARN] non-E2E failed with rc=$rc1 (continuing to E2E)" | Tee-Object $LOG -Append | Write-Host }
 
 # ----------------- PHASE 2: E2E (Playwright) -----------------
 & $PYEXE -m pip show pytest-playwright 1>$null 2>$null
@@ -64,27 +61,15 @@ if ($hasPW) {
   & $PYEXE -m playwright install chromium 2>&1 | Tee-Object $LOG -Append | Write-Host
 
   $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-  # Load the actual plugin module first; some versions require *.pytest_plugin
-  $plugins2 = @('-p','pytest_playwright.pytest_plugin','-p','pytest_playwright','-p','pytest_asyncio','-p','pytest_asyncio.plugin')
+  # Use only the public plugin name; do NOT import 'pytest_playwright.pytest_plugin'
+  $plugins2 = @('-p','pytest_playwright','-p','pytest_asyncio','-p','pytest_asyncio.plugin')
 
-  # Build args with flags AFTER plugin entries so options are recognized
-  $e2eArgs = @() + $plugins2 + @('tests/e2e','-m','e2e','-rA','--screenshot=off','--video=off','--tracing=off')
-
+  # DO NOT pass --screenshot/--video/--tracing (fragile across versions)
+  $e2eArgs = @() + $plugins2 + @('tests/e2e','-m','e2e','-rA')
   & $PYEXE -m pytest @e2eArgs 2>&1 | Tee-Object $LOG -Append | Write-Host
   $rc2 = $LASTEXITCODE
-
-  # If pytest still complains about unrecognized PW flags, retry once without them
-  if ($rc2 -ne 0) {
-    $tail = (Get-Content $LOG -Tail 80) -join "`n"
-    if ($tail -match 'unrecognized arguments:.*(--screenshot|--video|--tracing)') {
-      Log "[STEP] Retrying E2E without Playwright flags (plugin not accepting them)" | Tee-Object $LOG -Append | Write-Host
-      $e2eArgsNoFlags = @() + $plugins2 + @('tests/e2e','-m','e2e','-rA')
-      & $PYEXE -m pytest @e2eArgsNoFlags 2>&1 | Tee-Object $LOG -Append | Write-Host
-      $rc2 = $LASTEXITCODE
-    }
-  }
 } else {
-  Log "[STEP] pytest-playwright not installed; running E2E without PW flags" | Tee-Object $LOG -Append | Write-Host
+  Log "[STEP] pytest-playwright not installed; running E2E without PW plugin" | Tee-Object $LOG -Append | Write-Host
   $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
   $e2eLite = @('-p','pytest_asyncio','-p','pytest_asyncio.plugin','tests/e2e','-m','e2e','-rA')
   & $PYEXE -m pytest @e2eLite 2>&1 | Tee-Object $LOG -Append | Write-Host
