@@ -51,6 +51,7 @@ from app.state import ExecutionState
 from core.config import alpaca_config_ok
 from core.kill_switch import KillSwitch
 from services.safety import breakers
+from backend.pacing import load_pacing_snapshot
 from app.trade.orchestrator import TradeOrchestrator
 from app.execution.audit import AuditLog
 from app.execution.reconcile import Reconciler
@@ -1192,6 +1193,13 @@ def metrics() -> PlainTextResponse:
     stream_flag = metrics_snapshot.get("flags", {}).get("alpaca_stream_connected", 0.0)
     lines.append(f"alpaca_stream_connected {int(stream_flag)}")
     return PlainTextResponse("\n".join(lines) + "\n")
+
+
+@app.get("/pacing")
+def pacing_snapshot() -> Dict[str, Any]:
+    """Expose pacing telemetry for the UI control center."""
+
+    return load_pacing_snapshot()
 
 # ---------- Paper controls ----------
 @app.post("/paper/start", response_model=StartResp)
