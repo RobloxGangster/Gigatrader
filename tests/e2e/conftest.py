@@ -1,3 +1,1 @@
-# tests/e2e/conftest.py
-# Make the Playwright 'page' fixture available under plugin autoload=OFF
-pytest_plugins = ("pytest_playwright",)
+"""Pytest configuration for E2E tests (Playwright plugin loaded via CLI when available)."""
