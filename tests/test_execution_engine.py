@@ -96,6 +96,7 @@ def test_process_updates_reconciles_state(monkeypatch):
     intent = ExecIntent(symbol="AAPL", side="buy", qty=2, limit_price=100.0)
     submit_result = _run(engine.submit(intent))
     assert submit_result.client_order_id is not None
+    assert submit_result.client_order_id in engine._orders
     order_info = engine._orders[submit_result.client_order_id]
 
     _run(
