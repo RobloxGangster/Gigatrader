@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, time, subprocess, sys, signal, pathlib, contextlib
+import os, time, subprocess, sys, pathlib, contextlib
 import pytest, requests
 
 def pytest_addoption(parser) -> None:
@@ -44,35 +44,14 @@ def ensure_browsers():
 
 @contextlib.contextmanager
 def _spawn(cmd, cwd=None, env=None, stdout_path=None, stderr_path=None):
-    """
-    Start a child process in its own process group on Windows so teardown signals
-    don't bubble to pytest/Playwright. Always terminate; never send CTRL_BREAK.
-    """
+    """Start a child process without sending CTRL_BREAK during teardown."""
     out = open(stdout_path, "wb") if stdout_path else subprocess.DEVNULL
     err = open(stderr_path, "wb") if stderr_path else subprocess.DEVNULL
-
-    creationflags = 0
-    startupinfo = None
-    if os.name == "nt":
-        # Create a new process group so signals don't hit the whole console.
-        creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
-        # (Optional) prevent new window flashes:
-        # si = subprocess.STARTUPINFO(); si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        # startupinfo = si
-
-    p = subprocess.Popen(
-        cmd,
-        cwd=cwd,
-        env=env,
-        stdout=out,
-        stderr=err,
-        creationflags=creationflags,
-        startupinfo=startupinfo,
-    )
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    p = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=out, stderr=err, creationflags=flags)
     try:
         yield p
     finally:
-        # Do NOT send CTRL_BREAK on Windows; just terminate.
         with contextlib.suppress(Exception):
             p.terminate()
         try:
