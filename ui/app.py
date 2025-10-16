@@ -15,8 +15,8 @@ from ui.utils.runtime import get_runtime_flags
 
 PAGE_MAP = {
     "Control Center": control_center,
-    "Backtests": backtest_reports,
     "Option Chain": option_chain,
+    "Backtest Reports": backtest_reports,
     "Diagnostics / Logs": logs_pacing,
 }
 
