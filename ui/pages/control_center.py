@@ -201,6 +201,7 @@ def _positions_preview(positions: List[Position]) -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Control Center")
+    st.header("Control Center")
     st.caption("CONTROL_CENTER_READY")
     try:
         status = api.get_status()
