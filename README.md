@@ -122,3 +122,30 @@ start "" diagnostics
 - **Missing Alpaca keys**: `/orders` and `/positions` return 400 with a clear message; add keys to `.env`.
 - **Sentiment slow or noisy**: It’s cached 5 minutes per symbol. Reduce `hours_back` or `limit` in the query.
 
+
+## Testing
+
+### Unit + Integration (safe in MOCK_MODE)
+```powershell
+$env:MOCK_MODE = 'true'
+scripts/test_all.ps1
+
+Full UI E2E (Playwright)
+# Mock (safe):
+$env:MOCK_MODE = 'true'
+scripts/test_e2e.ps1
+
+# Paper (requires Alpaca paper creds):
+$env:MOCK_MODE = 'false'
+$env:ALPACA_API_KEY_ID = '...'
+$env:ALPACA_API_SECRET_KEY = '...'
+$env:APCA_API_BASE_URL = 'https://paper-api.alpaca.markets'
+scripts/test_e2e.ps1
+```
+
+Paper-only tests are marked @pytest.mark.paper_only.
+
+Mock-only tests are marked @pytest.mark.mock_only.
+
+
+---
