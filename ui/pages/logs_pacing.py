@@ -74,6 +74,13 @@ def _logs_table(logs: list[dict]) -> None:
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Diagnostics / Logs")
     st.markdown('<div data-testid="logs-panel"></div>', unsafe_allow_html=True)
+    if st.button("Run Diagnostics", key="btn_run_diag"):
+        try:
+            api.get_logs(50)
+            st.success("Diagnostics complete")
+        except Exception as e:  # noqa: BLE001 - show issues inline
+            st.warning(f"Diagnostics error: {e}")
+
     st.header("Diagnostics / Logs")
     st.caption("Logs & Pacing")
     st.caption("DIAGNOSTICS_READY")

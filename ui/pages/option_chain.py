@@ -72,7 +72,7 @@ def _spread_builder(df: pd.DataFrame) -> None:
 
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
-    st.title("Option Chain & Greeks")
+    st.title("Option Chain")
     st.markdown('<div data-testid="option-chain-root"></div>', unsafe_allow_html=True)
     default_symbol = (state.selected_symbol or "AAPL").upper()
     symbol_input = st.text_input("Underlying", value=default_symbol, key="oc_symbol")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any, Callable, Dict
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -20,7 +21,7 @@ from ui.services.config import api_base_url, mock_mode
 from ui.state import AppSessionState, init_session_state
 from ui.utils.runtime import get_runtime_flags
 
-PAGE_MAP = {
+PAGE_MAP: Dict[str, Callable[[Any, Any], None]] = {
     "Control Center": control_center,
     "Option Chain": option_chain,
     "Research": research,
@@ -29,7 +30,12 @@ PAGE_MAP = {
     "Diagnostics / Logs": logs_pacing,
 }
 
-DEFAULT_PAGE = "Control Center"
+
+def to_slug(label: str) -> str:
+    return label.lower().replace(" ", "-").replace("/", "").replace("&", "and")
+
+
+SLUG_TO_LABEL = {to_slug(lbl): lbl for lbl in PAGE_MAP.keys()}
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -54,24 +60,6 @@ def _hide_streamlit_sidebar_nav() -> None:
 
 def _is_mock_mode() -> bool:
     return os.getenv("MOCK_MODE", "").strip().lower() in ("1", "true", "yes")
-
-
-def _sidebar_nav() -> str:
-    st.sidebar.markdown("### Navigation")
-    options = list(PAGE_MAP.keys())
-    default_selection = st.session_state.get("nav_selection", DEFAULT_PAGE)
-    if default_selection not in options:
-        default_selection = DEFAULT_PAGE
-    default_index = options.index(default_selection)
-    selection = st.sidebar.selectbox(
-        "Navigation",
-        options=options,
-        index=default_index,
-        key="nav_selection",
-    )
-    st.sidebar.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
-    st.session_state["nav_selection"] = selection
-    return selection
 
 
 def _render_mode_badge(mock_enabled: bool) -> None:
@@ -100,7 +88,37 @@ def main() -> None:
 
     st.title("Gigatrader")
 
-    selection = _sidebar_nav()
+    try:
+        qp = st.query_params  # type: ignore[attr-defined]
+        qp_get = qp.get
+        qp_set = qp.update
+    except Exception:
+        qp = None
+        qp_get = lambda key, default=None: st.experimental_get_query_params().get(key, [default])[0]
+        qp_set = lambda d: st.experimental_set_query_params(**d)
+
+    requested = qp_get("page", None)
+    if requested:
+        req = requested if isinstance(requested, str) else (requested[0] if requested else None)
+        normalized = SLUG_TO_LABEL.get(to_slug(req), None) or (req if req in PAGE_MAP else None)
+    else:
+        normalized = None
+
+    st.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
+    page_labels = list(PAGE_MAP.keys())
+
+    default_index = page_labels.index(normalized) if normalized in page_labels else 0
+    selection = st.selectbox(
+        "Navigation",
+        page_labels,
+        index=default_index,
+        key="nav_select",
+        help="Jump to any page",
+    )
+
+    qp_set({"page": to_slug(selection)})
+
+    st.markdown('<div data-testid="app-ready" style="display:none"></div>', unsafe_allow_html=True)
 
     state: AppSessionState = init_session_state()
     api = get_backend()
@@ -129,9 +147,9 @@ def main() -> None:
             except Exception:
                 pass
 
-    page = PAGE_MAP.get(selection, control_center)
-    if page and hasattr(page, "render"):
-        page.render(api, state)
+    page_mod = PAGE_MAP.get(selection, control_center)
+    if page_mod and hasattr(page_mod, "render"):
+        page_mod.render(api, state)
     else:
         st.error(f"Page '{selection}' is not available.")
 
