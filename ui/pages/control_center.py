@@ -7,6 +7,7 @@ from difflib import unified_diff
 from pathlib import Path
 from typing import Any, Dict, List
 
+import time
 import streamlit as st
 
 from ui.components.badges import status_pill
@@ -224,6 +225,12 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
 
     snapshot: RiskSnapshot = api.get_risk_snapshot()
     flags = get_runtime_flags(api)
+    acct: Dict[str, Any] = {}
+    try:
+        acct = api.get_account()
+    except Exception as exc:  # noqa: BLE001 - surface to UI
+        st.warning(f"Failed to load account: {exc}")
+        acct = {}
     mock_mode = flags.mock_mode
     if mock_mode:
         st.info(
@@ -246,7 +253,56 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     _live_controls(api, state, preset, mock_mode)
     _render_status(status)
 
+    pv = acct.get("portfolio_value") or acct.get("equity")
+    cash = acct.get("cash")
+    bp = acct.get("buying_power")
+    st.subheader("Account")
+    c1, c2, c3 = st.columns(3)
+
+    def _fmt(value: Any, digits: int = 2) -> str:
+        try:
+            return f"{float(value):,.{digits}f}"
+        except (TypeError, ValueError):
+            return "—"
+
+    c1.metric("Portfolio Value", _fmt(pv))
+    c2.metric("Cash", _fmt(cash))
+    c3.metric("Buying Power", _fmt(bp))
+
+    st.divider()
+
     _risk_overview(snapshot)
+
+    sync_col, refresh_col, ts_col = st.columns([1, 1, 2])
+    sync_disabled = mock_mode or not hasattr(api, "_request")
+    if sync_col.button(
+        "Sync Now",
+        help="Fetch latest Alpaca orders/positions",
+        disabled=sync_disabled,
+    ):
+        request_fn = getattr(api, "_request", None)
+        if callable(request_fn):
+            try:
+                request_fn("POST", "/orders/sync")
+            except Exception as exc:  # noqa: BLE001 - network failures
+                st.error(f"Sync failed: {exc}")
+            else:
+                st.success("Synced from Alpaca.")
+                st.session_state["__last_sync_ts__"] = int(time.time())
+                st_rerun()
+        else:
+            st.warning("Sync unavailable in mock mode.")
+
+    if refresh_col.button("Refresh"):
+        st_rerun()
+
+    last_ts = st.session_state.get("__last_sync_ts__")
+    if last_ts:
+        ts_col.caption(
+            f"Last sync: {time.strftime('%H:%M:%S', time.localtime(last_ts))}"
+        )
+    else:
+        ts_col.caption("Last sync: —")
 
     orders = api.get_orders()
     positions = api.get_positions()

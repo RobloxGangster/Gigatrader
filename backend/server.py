@@ -721,6 +721,7 @@ from backend.routes import logs as logs_routes  # noqa: E402
 from backend.routes import backtest_v2 as backtest_v2_routes  # noqa: E402
 from backend.routes import ml as ml_routes  # noqa: E402
 from backend.routes import metrics_extended as metrics_routes  # noqa: E402
+from backend.routes import alpaca_live as alpaca_live_routes  # noqa: E402
 
 app.include_router(ml_routes.router)
 app.include_router(metrics_routes.router)
@@ -728,6 +729,7 @@ app.include_router(backtest_v2_routes.router)
 app.include_router(backtests_compat.router)
 app.include_router(options_routes.router)
 app.include_router(logs_routes.router)
+app.include_router(alpaca_live_routes.router)
 
 def start_background_runner(profile: str = "paper"):
     global runner_task, runner_loop, runner_last_error
