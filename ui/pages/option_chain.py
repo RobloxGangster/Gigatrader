@@ -74,7 +74,12 @@ def _spread_builder(df: pd.DataFrame) -> None:
 
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
-    st.title("Option Chain")
+    st.header("Option Chain")
+    st.markdown(
+        '<h1 aria-label="Option Chain" '
+        'style="position:absolute;left:-9999px;height:1px;width:1px;overflow:hidden;"></h1>',
+        unsafe_allow_html=True,
+    )
     st.markdown('<div data-testid="page-option-chain"></div>', unsafe_allow_html=True)
     st.markdown('<div data-testid="option-chain-root"></div>', unsafe_allow_html=True)
     default_symbol = (state.selected_symbol or "AAPL").upper()
