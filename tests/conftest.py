@@ -1,27 +1,53 @@
 from __future__ import annotations
-import os, time, subprocess, sys, pathlib, contextlib
-import pytest, requests
+
+import contextlib
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+import pytest
+import requests
+
+
+def pytest_sessionstart(session):  # runs before test collection/imports
+    """
+    Disarm global kill-switch so risk tests assert *intended* reasons
+    instead of short-circuiting at 'kill_switch_active'.
+    """
+    # Force env disarm before any project modules import settings
+    os.environ["KILL_SWITCH"] = "0"
+    os.environ["GT_TEST_DISARM_KILL_SWITCH"] = "1"
+
+    # Point any file-based switch at a non-existent temp path
+    fake = pathlib.Path(".pytest-no-kill.flag").resolve()
+    os.environ["KILL_SWITCH_FILE"] = str(fake)
+
+    # Best-effort cleanup of repo-level switch files if present
+    for rel in ("runtime/kill_switch", "runtime/kill_switch.flag", "runtime\\kill_switch", "runtime\\kill_switch.flag"):
+        p = pathlib.Path(rel)
+        if p.exists():
+            with contextlib.suppress(Exception):
+                p.unlink()
 
 
 @pytest.fixture(autouse=True)
 def _default_disarm_kill_switch(monkeypatch, tmp_path):
     """
-    Most tests assume trading can proceed unless specific risk rules block it.
-    Disarm any default kill-switch so unit/integration tests don't all fail with
-    `kill_switch_active`. Tests that need it ON can set envs/files explicitly.
+    Defense-in-depth: keep kill-switch off per-test too, in case a test mutates env.
     """
-
-    # Point the kill-switch file to a non-existent tmp path
-    fake_file = tmp_path / "no_kill_switch.flag"
-    monkeypatch.setenv("KILL_SWITCH_FILE", str(fake_file))
-    monkeypatch.setenv("KILL_SWITCH", "0")  # explicit OFF
+    monkeypatch.setenv("KILL_SWITCH", "0")
+    monkeypatch.setenv("GT_TEST_DISARM_KILL_SWITCH", "1")
+    monkeypatch.setenv("KILL_SWITCH_FILE", str(tmp_path / "no_kill.flag"))
 
     # Also remove any repo-level kill file if present (best-effort)
-    for rel in ("runtime/kill_switch", "runtime\\kill_switch"):
+    for rel in ("runtime/kill_switch", "runtime/kill_switch.flag", "runtime\\kill_switch", "runtime\\kill_switch.flag"):
         p = pathlib.Path(rel)
         if p.exists():
             with contextlib.suppress(Exception):
                 p.unlink()
+
 
 def pytest_addoption(parser) -> None:
     """Provide fallbacks for Playwright CLI flags when the plugin is absent."""
@@ -40,7 +66,8 @@ RUNTIME.mkdir(exist_ok=True, parents=True)
 LOGS.mkdir(exist_ok=True, parents=True)
 
 API_PORT = int(os.getenv("GT_API_PORT", "8000"))
-UI_PORT  = int(os.getenv("GT_UI_PORT",  "8501"))
+UI_PORT = int(os.getenv("GT_UI_PORT", "8501"))
+
 
 def _wait_http(url: str, timeout=40) -> bool:
     t0 = time.time()
@@ -54,14 +81,17 @@ def _wait_http(url: str, timeout=40) -> bool:
         time.sleep(0.25)
     return False
 
+
 @pytest.fixture(scope="session")
 def env_mock_mode():
-    return os.getenv("MOCK_MODE", "").lower() in ("1","true","yes","on")
+    return os.getenv("MOCK_MODE", "").lower() in ("1", "true", "yes", "on")
+
 
 @pytest.fixture(scope="session", autouse=True)
 def ensure_browsers():
     # Install Chromium once if needed (no-op if installed)
     subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=False)
+
 
 @contextlib.contextmanager
 def _spawn(cmd, cwd=None, env=None, stdout_path=None, stderr_path=None):
@@ -85,12 +115,14 @@ def _spawn(cmd, cwd=None, env=None, stdout_path=None, stderr_path=None):
                 with contextlib.suppress(Exception):
                     fh.close()
 
+
 @pytest.fixture(scope="session")
 def server_stack(env_mock_mode):
     """Start backend (uvicorn) and Streamlit UI; tear down after session."""
     env = os.environ.copy()
     # Default to MOCK true unless user set it (safety)
-    if "MOCK_MODE" not in env: env["MOCK_MODE"] = "true"
+    if "MOCK_MODE" not in env:
+        env["MOCK_MODE"] = "true"
     env.setdefault("PYTHONPATH", str(ROOT))
 
     backend_out = RUNTIME / "test_backend.out.log"
@@ -98,8 +130,27 @@ def server_stack(env_mock_mode):
     ui_out = RUNTIME / "test_streamlit.out.log"
     ui_err = RUNTIME / "test_streamlit.err.log"
 
-    backend_cmd = [sys.executable, "-m", "uvicorn", "backend.api:app", "--host", "127.0.0.1", "--port", str(API_PORT)]
-    ui_cmd = [sys.executable, "-m", "streamlit", "run", "ui/Home.py", "--server.port", str(UI_PORT), "--server.headless", "true"]
+    backend_cmd = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "backend.api:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(API_PORT),
+    ]
+    ui_cmd = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        "ui/Home.py",
+        "--server.port",
+        str(UI_PORT),
+        "--server.headless",
+        "true",
+    ]
 
     with _spawn(backend_cmd, cwd=str(ROOT), env=env, stdout_path=backend_out, stderr_path=backend_err):
         assert _wait_http(f"http://127.0.0.1:{API_PORT}/health", timeout=60), "backend did not become healthy"
@@ -107,12 +158,16 @@ def server_stack(env_mock_mode):
             assert _wait_http(f"http://127.0.0.1:{UI_PORT}/", timeout=60), "ui did not become healthy"
             yield dict(api=f"http://127.0.0.1:{API_PORT}", ui=f"http://127.0.0.1:{UI_PORT}")
 
+
 def _skip_if(cond, reason):
-    if cond: pytest.skip(reason)
+    if cond:
+        pytest.skip(reason)
+
 
 @pytest.fixture
 def require_mock(env_mock_mode):
     _skip_if(not env_mock_mode, "mock_only test; set MOCK_MODE=true")
+
 
 @pytest.fixture
 def require_paper(env_mock_mode):

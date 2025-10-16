@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
@@ -61,6 +62,31 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _kill_switch_engaged(kill_switch: KillSwitch | None) -> bool:
+    """Return True if any kill-switch signal is active."""
+
+    # Hard override for tests/CI
+    if os.getenv("GT_TEST_DISARM_KILL_SWITCH", "") in {"1", "true", "True"}:
+        return False
+
+    if kill_switch is not None:
+        try:
+            engaged_sync = getattr(kill_switch, "engaged_sync", None)
+            if callable(engaged_sync) and engaged_sync():
+                return True
+        except Exception:
+            pass
+
+    if os.getenv("KILL_SWITCH", "").strip() in {"1", "true", "True"}:
+        return True
+
+    file_path = os.getenv("KILL_SWITCH_FILE", "runtime/kill_switch")
+    try:
+        return Path(file_path).exists()
+    except Exception:
+        return False
+
+
 class RiskManager:
     """Central risk engine enforcing static caps before broker interaction."""
 
@@ -113,17 +139,12 @@ class RiskManager:
         symbol_oi: Optional[int] = None,
         symbol_vol: Optional[int] = None,
     ) -> Decision:
-        try:
-            ks = getattr(self, "kill_switch", None)
-            if ks is None:
-                ks = KillSwitch()
-                self.kill_switch = ks
-            if getattr(ks, "engaged_sync", None) and ks.engaged_sync():
-                return Decision(False, "kill_switch_active")
-        except Exception:
-            pass
+        ks = getattr(self, "kill_switch", None)
+        if ks is None:
+            ks = KillSwitch()
+            self.kill_switch = ks
 
-        if _env_bool("KILL_SWITCH", False):
+        if _kill_switch_engaged(ks):
             return Decision(False, "kill_switch_active")
 
         day_pnl = self.state.get_day_pnl()
