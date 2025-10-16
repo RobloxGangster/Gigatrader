@@ -22,6 +22,18 @@ from core.config import MOCK_MODE, TradeLoopConfig
 log = logging.getLogger(__name__)
 
 
+def _is_duplicate_coid(reason: str | None) -> bool:
+    if not reason:
+        return False
+    r = reason.lower()
+    return (
+        "duplicate_client_order_id" in r
+        or "duplicate client order id" in r
+        or "duplicate coid" in r
+        or "duplicate" in r
+    )
+
+
 def _now_ts() -> float:
     return time.time()
 
@@ -585,17 +597,35 @@ class TradeOrchestrator:
             log.error("route_top_event: router missing submit method")
             return None
 
-        try:
+        async def _invoke_submit() -> Any:
             if asyncio.iscoroutinefunction(submit):
-                result = await submit(top)  # type: ignore[arg-type]
-            else:
-                result = submit(top)  # type: ignore[arg-type]
-                if inspect.isawaitable(result):
-                    result = await result
-            return result
+                return await submit(top)  # type: ignore[arg-type]
+            result_inner = submit(top)  # type: ignore[arg-type]
+            if inspect.isawaitable(result_inner):
+                result_inner = await result_inner
+            return result_inner
+
+        try:
+            result = await _invoke_submit()
         except Exception as exc:  # noqa: BLE001
             log.exception("route_top_event: submit failed: %s", exc)
             raise
+
+        accepted = getattr(result, "accepted", None)
+        reason = getattr(result, "reason", None)
+        if accepted is None and isinstance(result, dict):
+            accepted = bool(result.get("accepted"))
+            reason = result.get("reason")
+
+        if not accepted and _is_duplicate_coid(reason):
+            log.warning("Duplicate client_order_id detected; retrying submit once.")
+            try:
+                result = await _invoke_submit()
+            except Exception as exc:  # noqa: BLE001
+                log.exception("route_top_event: submit retry failed: %s", exc)
+                raise
+
+        return result
 
     def _probabilities(self, symbols: Sequence[str]) -> dict[str, float | None]:
         predictor = self.ml_predictor
