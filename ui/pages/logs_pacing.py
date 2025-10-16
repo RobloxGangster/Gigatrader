@@ -62,7 +62,7 @@ def _create_repro_bundle(
 
 def _logs_table(logs: list[dict]) -> None:
     df = pd.DataFrame(logs)
-    st.dataframe(df, width="stretch")
+    st.dataframe(df, height=360, use_container_width=True)
     st.download_button(
         "Download logs (NDJSON)",
         _to_ndjson(logs).encode("utf-8"),

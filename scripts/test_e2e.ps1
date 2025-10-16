@@ -58,13 +58,8 @@ Get-ChildItem -Recurse -File -Path (Join-Path $ROOT 'tests\e2e') -Filter '*.py' 
   | Tee-Object $LOGFILE -Append | Write-Host
 
 # --- run e2e (Playwright) with LIVE console output ---
-$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-$plugins = @('-p','pytest_playwright')
-& $PYEXE -m pip show pytest-asyncio 1>$null 2>$null
-if ($LASTEXITCODE -eq 0) { $plugins += @('-p','pytest_asyncio') }
-
-Log "[STEP] pytest -m e2e (plugins: $($plugins -join ' '))" | Tee-Object $LOGFILE -Append | Write-Host
-& $PYEXE -m pytest -m e2e tests/e2e -rA --screenshot=off --video=off --tracing=off @plugins 2>&1 `
+Log "[STEP] pytest tests/e2e -m e2e -rA" | Tee-Object $LOGFILE -Append | Write-Host
+& $PYEXE -m pytest tests/e2e -m e2e -rA 2>&1 `
   | Tee-Object $LOGFILE -Append | Write-Host
 
 $rc = $LASTEXITCODE

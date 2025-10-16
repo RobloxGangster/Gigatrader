@@ -7,7 +7,7 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
-from ui.pages import control_center, backtest_reports, option_chain, logs_pacing
+from ui.pages import control_center, option_chain, logs_pacing
 from ui.services.backend import get_backend
 from ui.services.config import api_base_url, mock_mode
 from ui.state import AppSessionState, init_session_state
@@ -16,11 +16,8 @@ from ui.utils.runtime import get_runtime_flags
 PAGE_MAP = {
     "Control Center": control_center,
     "Option Chain": option_chain,
-    "Backtest Reports": backtest_reports,
     "Diagnostics / Logs": logs_pacing,
 }
-
-NAV_OPTIONS = ["Control Center", "Option Chain", "Diagnostics / Logs"]
 
 DEFAULT_PAGE = "Control Center"
 
@@ -49,20 +46,20 @@ def _is_mock_mode() -> bool:
     return os.getenv("MOCK_MODE", "").strip().lower() in ("1", "true", "yes")
 
 
-def _select_page() -> str:
-    options = NAV_OPTIONS
+def _sidebar_nav() -> str:
+    st.sidebar.markdown("### Navigation")
+    options = list(PAGE_MAP.keys())
     default_selection = st.session_state.get("nav_selection", DEFAULT_PAGE)
     if default_selection not in options:
         default_selection = DEFAULT_PAGE
     default_index = options.index(default_selection)
-    with st.sidebar:
-        selection = st.selectbox(
-            "Navigation",
-            options=options,
-            index=default_index,
-            key="nav_selection",
-        )
-        st.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
+    selection = st.sidebar.selectbox(
+        "Navigation",
+        options=options,
+        index=default_index,
+        key="nav_selection",
+    )
+    st.sidebar.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
     st.session_state["nav_selection"] = selection
     return selection
 
@@ -93,7 +90,7 @@ def main() -> None:
 
     st.title("Gigatrader")
 
-    selection = _select_page()
+    selection = _sidebar_nav()
 
     state: AppSessionState = init_session_state()
     api = get_backend()
@@ -122,7 +119,7 @@ def main() -> None:
             except Exception:
                 pass
 
-    page = PAGE_MAP.get(selection)
+    page = PAGE_MAP.get(selection, control_center)
     if page and hasattr(page, "render"):
         page.render(api, state)
     else:
