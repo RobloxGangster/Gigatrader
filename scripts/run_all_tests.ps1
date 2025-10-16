@@ -47,10 +47,7 @@ function Add-PluginIfPresent([ref]$arr, [string]$pkg, [string]$pluginModule) {
 
 # ----- PHASE 1: non-E2E (autoload OFF; safe whitelist) -----
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-$plugins1 = @()
-& $PYEXE -m pip show pytest-env     1>$null 2>$null; if ($LASTEXITCODE -eq 0) { $plugins1 += @('-p','pytest_env') }
-& $PYEXE -m pip show pytest-dotenv  1>$null 2>$null; if ($LASTEXITCODE -eq 0) { $plugins1 += @('-p','pytest_dotenv') }
-& $PYEXE -m pip show pytest-asyncio 1>$null 2>$null; if ($LASTEXITCODE -eq 0) { $plugins1 += @('-p','pytest_asyncio') }
+$plugins1 = @('-p','pytest_asyncio')
 
 & $PYEXE -m pytest tests -rA -m "not e2e" --ignore=tests\e2e @plugins1 2>&1 `
   | Tee-Object $LOG -Append | Write-Host
@@ -60,10 +57,9 @@ if ($rc1 -ne 0) { Log "[WARN] non-E2E failed with rc=$rc1 (continuing to E2E)" |
 # ----- PHASE 2: E2E (autoload OFF; explicitly load playwright; force Chromium) -----
 & $PYEXE -m playwright install chromium 2>&1 | Tee-Object $LOG -Append | Write-Host
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-$plugins2 = @('-p','pytest_playwright')
-& $PYEXE -m pip show pytest-asyncio 1>$null 2>$null; if ($LASTEXITCODE -eq 0) { $plugins2 += @('-p','pytest_asyncio') }
+$plugins2 = @('-p','pytest_playwright', '-p','pytest_asyncio')
 
-& $PYEXE -m pytest -m e2e tests/e2e -rA --browser=chromium --screenshot=off --video=off --tracing=off @plugins2 2>&1 `
+& $PYEXE -m pytest -m e2e tests/e2e -rA --screenshot=off --video=off --tracing=off @plugins2 2>&1 `
   | Tee-Object $LOG -Append | Write-Host
 $rc2 = $LASTEXITCODE
 

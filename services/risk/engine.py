@@ -62,12 +62,22 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _truthy(val: str | None) -> bool:
+    return (val or "").strip().lower() in {"1", "true", "on", "yes"}
+
+
 def _kill_switch_engaged(kill_switch: KillSwitch | None) -> bool:
     """Return True if any kill-switch signal is active."""
 
-    # Hard override for tests/CI
-    if os.getenv("GT_TEST_DISARM_KILL_SWITCH", "") in {"1", "true", "True"}:
-        return False
+    if _truthy(os.getenv("KILL_SWITCH")):
+        return True
+
+    file_path = os.getenv("KILL_SWITCH_FILE", "runtime/kill_switch")
+    try:
+        if Path(file_path).exists():
+            return True
+    except Exception:
+        pass
 
     if kill_switch is not None:
         try:
@@ -77,14 +87,10 @@ def _kill_switch_engaged(kill_switch: KillSwitch | None) -> bool:
         except Exception:
             pass
 
-    if os.getenv("KILL_SWITCH", "").strip() in {"1", "true", "True"}:
-        return True
-
-    file_path = os.getenv("KILL_SWITCH_FILE", "runtime/kill_switch")
-    try:
-        return Path(file_path).exists()
-    except Exception:
+    if _truthy(os.getenv("GT_TEST_DISARM_KILL_SWITCH")):
         return False
+
+    return False
 
 
 class RiskManager:

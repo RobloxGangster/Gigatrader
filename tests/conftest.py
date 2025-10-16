@@ -12,20 +12,17 @@ import requests
 
 
 def pytest_sessionstart(session):  # runs before test collection/imports
-    """
-    Disarm global kill-switch so risk tests assert *intended* reasons
-    instead of short-circuiting at 'kill_switch_active'.
-    """
-    # Force env disarm before any project modules import settings
-    os.environ["KILL_SWITCH"] = "0"
-    os.environ["GT_TEST_DISARM_KILL_SWITCH"] = "1"
-
-    # Point any file-based switch at a non-existent temp path
-    fake = pathlib.Path(".pytest-no-kill.flag").resolve()
-    os.environ["KILL_SWITCH_FILE"] = str(fake)
-
-    # Best-effort cleanup of repo-level switch files if present
-    for rel in ("runtime/kill_switch", "runtime/kill_switch.flag", "runtime\\kill_switch", "runtime\\kill_switch.flag"):
+    os.environ.setdefault("GT_TEST_DISARM_KILL_SWITCH", "1")
+    os.environ.setdefault("KILL_SWITCH", "0")
+    os.environ.setdefault(
+        "KILL_SWITCH_FILE", str(pathlib.Path(".pytest-no-kill.flag").resolve())
+    )
+    for rel in (
+        "runtime/kill_switch",
+        "runtime/kill_switch.flag",
+        "runtime\\kill_switch",
+        "runtime\\kill_switch.flag",
+    ):
         p = pathlib.Path(rel)
         if p.exists():
             with contextlib.suppress(Exception):
@@ -34,19 +31,9 @@ def pytest_sessionstart(session):  # runs before test collection/imports
 
 @pytest.fixture(autouse=True)
 def _default_disarm_kill_switch(monkeypatch, tmp_path):
-    """
-    Defense-in-depth: keep kill-switch off per-test too, in case a test mutates env.
-    """
-    monkeypatch.setenv("KILL_SWITCH", "0")
     monkeypatch.setenv("GT_TEST_DISARM_KILL_SWITCH", "1")
+    monkeypatch.setenv("KILL_SWITCH", "0")
     monkeypatch.setenv("KILL_SWITCH_FILE", str(tmp_path / "no_kill.flag"))
-
-    # Also remove any repo-level kill file if present (best-effort)
-    for rel in ("runtime/kill_switch", "runtime/kill_switch.flag", "runtime\\kill_switch", "runtime\\kill_switch.flag"):
-        p = pathlib.Path(rel)
-        if p.exists():
-            with contextlib.suppress(Exception):
-                p.unlink()
 
 
 def pytest_addoption(parser) -> None:
