@@ -62,8 +62,8 @@ Get-ChildItem -Recurse -File -Path (Join-Path $ROOT 'tests') -Filter '*.py' -Err
   | Tee-Object $LOGFILE -Append | Write-Host
 
 # --- PHASE 1: run ALL non-E2E tests in one go ---
-Log "[STEP] PYTEST (non-E2E): tests -m \"not e2e\" -rA --maxfail=1" | Tee-Object $LOGFILE -Append | Write-Host
-& $PYEXE -m pytest tests -rA -m "not e2e" --maxfail=1 2>&1 `
+Log "[STEP] PYTEST (non-E2E): tests -m \"not e2e\" -rA --ignore=tests\\e2e --maxfail=1" | Tee-Object $LOGFILE -Append | Write-Host
+& $PYEXE -m pytest tests -rA -m "not e2e" --ignore=tests\e2e --maxfail=1 2>&1 `
   | Tee-Object $LOGFILE -Append | Write-Host
 $rc1 = $LASTEXITCODE
 if ($rc1 -ne 0) {
