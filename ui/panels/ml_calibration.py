@@ -112,7 +112,7 @@ def render(api_base: str = "http://127.0.0.1:8000") -> None:
 
         chart = _build_reliability_chart(payload)
         if chart is not None:
-            st.plotly_chart(chart, width="stretch")
+            st.plotly_chart(chart, use_container_width=True)
         else:
             st.info("Plotly not available – showing tabular calibration details instead.")
 
@@ -129,4 +129,4 @@ def render(api_base: str = "http://127.0.0.1:8000") -> None:
         if table.empty:
             st.info("No calibration bins available for the requested window.")
         else:
-            st.dataframe(table, width="stretch")
+            st.dataframe(table, use_container_width=True)

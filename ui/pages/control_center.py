@@ -94,7 +94,6 @@ def _action_buttons(
     confirm_halt = st.checkbox("Confirm flatten & halt", key="confirm_halt")
     start_paper = col1.button(
         "Start Paper",
-        width="stretch",
         disabled=mock_mode,
         help="Disabled in Mock mode; flip MOCK_MODE=false to send to Alpaca paper.",
     )
@@ -104,7 +103,6 @@ def _action_buttons(
         st.toast(f"Paper run started ({state.run_id})", icon="✅")
     stop_runs = col2.button(
         "Stop",
-        width="stretch",
         disabled=mock_mode,
         help="Disabled in Mock mode.",
     )
@@ -114,7 +112,6 @@ def _action_buttons(
         st.toast("All paper runs stopped", icon="🛑")
     flatten_halt = col3.button(
         "Flatten & Halt",
-        width="stretch",
         disabled=(mock_mode or not confirm_halt),
         help="Disabled in Mock mode; requires confirmation when enabled.",
     )
@@ -140,7 +137,6 @@ def _live_controls(
     disabled = not armed
     start_live = st.button(
         "Start Live",
-        width="stretch",
         disabled=(disabled or mock_mode),
         help="Disabled in Mock mode; flip MOCK_MODE=false to send to Alpaca paper.",
     )
@@ -201,6 +197,7 @@ def _positions_preview(positions: List[Position]) -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Control Center")
+    st.markdown('<div data-testid="page-control-center"></div>', unsafe_allow_html=True)
     st.markdown('<div data-testid="control-center-root"></div>', unsafe_allow_html=True)
     st.header("Control Center")
     st.caption("CONTROL_CENTER_READY")

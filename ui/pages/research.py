@@ -54,7 +54,7 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
                 "Trend": [series.trend or "—" for series in indicators.series],
             }
         )
-        st.dataframe(df, width="stretch")
+        st.dataframe(df, use_container_width=True)
 
         try:
             numeric = pd.Series([float(s.value) for s in indicators.series], name="value")
