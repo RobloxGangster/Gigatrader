@@ -301,8 +301,17 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     else:
         ts_col.caption("Last sync: —")
 
-    orders = api.get_orders()
-    positions = api.get_positions()
+    try:
+        orders = api.get_orders()
+    except Exception as exc:  # noqa: BLE001 - surface backend failures
+        st.error(f"Orders failed to load: {exc}")
+        orders = []
+
+    try:
+        positions = api.get_positions()
+    except Exception as exc:  # noqa: BLE001 - surface backend failures
+        st.error(f"Positions failed to load: {exc}")
+        positions = []
     _orders_preview(orders)
     _positions_preview(positions)
 

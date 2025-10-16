@@ -33,76 +33,158 @@ from ui.utils.runtime import get_runtime_flags
 _FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "fixtures"
 _DEFAULT_TIMEOUT = 8
 
-_ALPACA_TO_UI_STATUS = {
+# --- Normalization helpers (keep near other helpers) ---
+
+
+def _coerce_str(x) -> Optional[str]:
+    if x is None:
+        return None
+    try:
+        return str(x)
+    except Exception:
+        return None
+
+
+def _coerce_float(x) -> Optional[float]:
+    try:
+        if x is None:
+            return None
+        return float(x)
+    except Exception:
+        return None
+
+
+def _coerce_int(x) -> Optional[int]:
+    try:
+        if x is None:
+            return None
+        return int(float(x))
+    except Exception:
+        return None
+
+
+_STATUS_MAP = {
+    # Alpaca → UI
     "new": "pending",
-    "accepted": "working",
+    "accepted": "pending",
     "pending_new": "pending",
+    "accepted_for_bidding": "pending",
+    "calculated": "pending",
+
     "partially_filled": "working",
-    "filled": "filled",
-    "canceled": "cancelled",
-    "cancelled": "cancelled",
-    "expired": "cancelled",
-    "rejected": "rejected",
     "pending_cancel": "working",
-    "done_for_day": "working",
-    "stopped": "cancelled",
+    "pending_replace": "working",
+    "stopped": "working",
+    "suspended": "working",
+
+    "filled": "filled",
+
+    "canceled": "cancelled",
+    "expired": "cancelled",
+    "replaced": "cancelled",
+    "done_for_day": "cancelled",
+
+    "rejected": "rejected",
 }
 
 
-def _coerce_float(x: Any, default: float = 0.0) -> float:
+def _map_status(raw_status: Optional[str]) -> Optional[str]:
+    if not raw_status:
+        return None
+    return _STATUS_MAP.get(raw_status.lower(), raw_status.lower())
+
+
+def _first(*keys_and_dicts) -> Any:
+    """
+    _first(('symbol', raw), ('asset_symbol', raw), ('asset', raw, 'symbol')) → returns first non-null
+    Each arg is (key, dict) or (k1, dict, k2) for nested.
+    """
+    for item in keys_and_dicts:
+        if len(item) == 2:
+            k, d = item
+            if isinstance(d, dict) and d.get(k) is not None:
+                return d.get(k)
+        elif len(item) == 3:
+            k1, d, k2 = item
+            if isinstance(d, dict) and isinstance(d.get(k1), dict):
+                v = d[k1].get(k2)
+                if v is not None:
+                    return v
+    return None
+
+
+def _iso(ts: Optional[str]) -> Optional[str]:
+    if not ts:
+        return None
     try:
-        return float(x)
+        # Accept common formats and return ISO8601
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).isoformat()
     except Exception:
-        return default
+        return _coerce_str(ts)
 
 
 def _normalize_order_shape(raw: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Accepts either our internal Order JSON or a broker-native Alpaca order.
-    Returns a dict compatible with ui.services.models.Order:
-      order_id, symbol, side, qty, filled_qty, leaves_qty, tif, status, created_at, (limit_price, stop_price, order_type, client_order_id)
+    Accepts Alpaca Trading v3 raw order or our internal shape and returns the UI Order schema.
+    Required keys for UI model: order_id, client_order_id, symbol, side, tif, status, leaves_qty, created_at, updated_at
     """
+    if not isinstance(raw, dict):
+        return {}
 
-    order_id = raw.get("order_id") or raw.get("id")
-    symbol = raw.get("symbol") or raw.get("asset_symbol") or raw.get("asset", {}).get("symbol")
-    side = raw.get("side")
-    tif = raw.get("tif") or raw.get("time_in_force")
-    status_in = (raw.get("status") or "").lower()
-    status = _ALPACA_TO_UI_STATUS.get(status_in, raw.get("status"))
+    # IDs
+    order_id = _coerce_str(_first(("order_id", raw), ("id", raw), ("client_order_id", raw)))
+    client_order_id = _coerce_str(_first(("client_order_id", raw), ("clientOrderId", raw)))
 
-    qty = _coerce_float(raw.get("qty") or raw.get("quantity"))
-    filled_qty = _coerce_float(raw.get("filled_qty") or raw.get("filled_quantity"))
-    leaves_qty = raw.get("leaves_qty")
-    if leaves_qty is None:
-        leaves_qty = max(0.0, qty - filled_qty)
+    # Basics
+    symbol = _coerce_str(_first(("symbol", raw), ("asset_symbol", raw), ("asset", raw, "symbol")))
+    side = _coerce_str(_first(("side", raw), ("order_side", raw)))
+    tif = _coerce_str(_first(("tif", raw), ("time_in_force", raw)))
 
-    created_at = (
-        raw.get("created_at")
-        or raw.get("submitted_at")
-        or raw.get("timestamp")
-        or datetime.utcnow().isoformat()
-    )
+    # Quantities
+    qty = _coerce_float(_first(("qty", raw), ("quantity", raw), ("order_qty", raw)))
+    filled_qty = _coerce_float(_first(("filled_qty", raw), ("filled_quantity", raw)))
+    if qty is None and filled_qty is not None:
+        qty = filled_qty  # minimal fallback
+    leaves_qty = None
+    if qty is not None and filled_qty is not None:
+        leaves = qty - filled_qty
+        leaves_qty = float(leaves if leaves > 0 else 0.0)
 
-    limit_price = raw.get("limit_price")
-    stop_price = raw.get("stop_price")
-    order_type = raw.get("type") or raw.get("order_type")
+    # Pricing (optional)
+    limit_price = _coerce_float(_first(("limit_price", raw), ("limit", raw)))
+    stop_price = _coerce_float(_first(("stop_price", raw), ("stop", raw)))
 
-    out = {
+    # Status + timestamps
+    status_raw = _coerce_str(_first(("status", raw), ("order_status", raw)))
+    status = _map_status(status_raw)
+
+    created_at = _iso(_first(("created_at", raw), ("submitted_at", raw), ("timestamp", raw)))
+    updated_at = _iso(
+        _first(
+            ("updated_at", raw),
+            ("filled_at", raw),
+            ("canceled_at", raw),
+            ("failed_at", raw),
+            ("replaced_at", raw),
+        )
+    ) or created_at
+
+    # Compose normalized dict
+    out: Dict[str, Any] = {
         "order_id": order_id,
+        "client_order_id": client_order_id,
         "symbol": symbol,
         "side": side,
+        "tif": tif,
         "qty": qty,
         "filled_qty": filled_qty,
         "leaves_qty": leaves_qty,
-        "tif": tif,
+        "limit_price": limit_price,
+        "stop_price": stop_price,
         "status": status,
         "created_at": created_at,
-        "limit_price": _coerce_float(limit_price) if limit_price is not None else None,
-        "stop_price": _coerce_float(stop_price) if stop_price is not None else None,
-        "order_type": order_type,
-        "client_order_id": raw.get("client_order_id") or raw.get("clientOrderId"),
+        "updated_at": updated_at,
     }
-    out.update({k: v for k, v in raw.items() if k not in out})
     return out
 
 
@@ -121,13 +203,16 @@ def _normalize_position_shape(raw: Dict[str, Any]) -> Dict[str, Any]:
         or raw.get("exchange_qty")
         or raw.get("position_qty")
     )
+    qty = qty if qty is not None else 0.0
     avg_price = _coerce_float(raw.get("avg_entry_price") or raw.get("avg_price"))
+    avg_price = avg_price if avg_price is not None else 0.0
     market_price = _coerce_float(raw.get("current_price") or raw.get("market_price"))
     unrealized_pl = _coerce_float(
         raw.get("unrealized_pl")
         or raw.get("unrealized_plpc")
         or raw.get("unrealized_intraday_pl")
     )
+    unrealized_pl = unrealized_pl if unrealized_pl is not None else 0.0
     side = "long" if qty >= 0 else "short"
     out = {
         "symbol": symbol,
@@ -307,8 +392,36 @@ class RealAPI:
 
     def get_orders(self) -> List[Order]:
         payload = self._request("GET", "/orders", params={"live": True})
-        normalized = [_normalize_order_shape(item) for item in payload]
-        return [Order(**item) for item in normalized]
+        normalized: List[Dict[str, Any]] = []
+        for item in payload:
+            rec = _normalize_order_shape(item)
+            # Require a minimal set, else skip the row
+            if not (rec.get("order_id") and rec.get("symbol") and rec.get("side")):
+                continue
+            # Ensure status & timestamps are populated
+            rec["status"] = rec.get("status") or "pending"
+            rec["created_at"] = rec.get("created_at") or datetime.utcnow().isoformat()
+            rec["updated_at"] = (
+                rec.get("updated_at")
+                or rec["created_at"]
+                or datetime.utcnow().isoformat()
+            )
+            rec["tif"] = rec.get("tif") or "day"
+            rec["leaves_qty"] = (
+                rec.get("leaves_qty")
+                if rec.get("leaves_qty") is not None
+                else (
+                    max(
+                        0.0,
+                        float(rec.get("qty", 0) or 0)
+                        - float(rec.get("filled_qty", 0) or 0),
+                    )
+                )
+            )
+            rec["qty"] = rec.get("qty") if rec.get("qty") is not None else float(rec.get("filled_qty", 0) or 0)
+            rec["filled_qty"] = rec.get("filled_qty") if rec.get("filled_qty") is not None else 0.0
+            normalized.append(rec)
+        return [Order(**row) for row in normalized]
 
     def get_positions(self) -> List[Position]:
         payload = self._request("GET", "/positions", params={"live": True})
