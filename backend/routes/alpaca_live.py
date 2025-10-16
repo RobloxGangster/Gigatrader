@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..services.reconcile import (
     is_mock,
@@ -38,9 +38,17 @@ def account() -> Dict[str, Any]:
 
 
 @router.post("/orders/sync")
-def orders_sync() -> Dict[str, Any]:
+def orders_sync(request: Request) -> Dict[str, Any]:
     if is_mock():
-        return {"mock_mode": True, "synced": False, "reason": "MOCK_MODE"}
+        reconciler = getattr(request.app.state, "reconciler", None)
+        if reconciler is None:
+            return {"mock_mode": True, "synced": False, "reason": "MOCK_MODE"}
+        summary = reconciler.sync_once(status_scope="all")
+        try:
+            reconciler.seed_mock_order()
+        except Exception:
+            pass
+        return {"mock_mode": True, "synced": True, "summary": summary}
     data = pull_all_if_live()
     # If you have an OMS DB, persist/merge here; for now return pass-through
     return {"mock_mode": False, "synced": True, "ts": int(time.time()), **data}
@@ -57,9 +65,15 @@ def positions(live: bool = Query(False)) -> List[Dict[str, Any]]:  # noqa: ARG00
 
 
 @router.get("/orders")
-def orders(live: bool = Query(False)) -> List[Dict[str, Any]]:  # noqa: ARG001
+def orders(request: Request, live: bool = Query(False)) -> List[Dict[str, Any]]:  # noqa: ARG001
     if is_mock():
-        return []
+        reconciler = getattr(request.app.state, "reconciler", None)
+        if reconciler is None:
+            return []
+        try:
+            return reconciler.fetch_orders(status_scope="all")
+        except Exception:
+            return []
     try:
         return pull_orders() if live else pull_orders()
     except Exception as e:  # pragma: no cover - network errors

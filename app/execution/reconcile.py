@@ -21,6 +21,7 @@ except Exception:  # pragma: no cover - fallback for minimal environments
 _ORDER_STATUS_MAP = {
     "new": "new",
     "pending_new": "new",
+    "pending": "pending",
     "accepted": "accepted",
     "acknowledged": "accepted",
     "partially_filled": "partially_filled",
@@ -45,7 +46,7 @@ _ORDER_TYPE_MAP = {
     "trailing_stop_order": "trailing_stop",
 }
 
-_OPEN_STATUSES = {"new", "accepted", "partially_filled"}
+_OPEN_STATUSES = {"new", "accepted", "partially_filled", "pending"}
 _CLOSED_STATUSES = {"filled", "canceled", "rejected", "expired", "replaced"}
 
 
@@ -125,7 +126,19 @@ class Reconciler:
         self._validate_scope(status_scope)
         raw_orders = self._pull_orders(status_scope)
         normalized = [self._normalize_order(order) for order in raw_orders]
-        return [order for order in normalized if _status_matches(order["status"], status_scope)]
+        filtered = [order for order in normalized if _status_matches(order["status"], status_scope)]
+        if filtered or not self.mock_mode:
+            return filtered
+
+        with self._state_lock:
+            state = self._load_state()
+            if not state.orders:
+                return filtered
+            return [
+                order
+                for order in state.orders.values()
+                if _status_matches(order.get("status", ""), status_scope)
+            ]
 
     def fetch_positions(self) -> List[Dict[str, Any]]:
         raw_positions = self._pull_positions()
@@ -182,6 +195,41 @@ class Reconciler:
             self._save_state(new_state)
 
         return summary
+
+    def seed_mock_order(self) -> None:
+        if not self.mock_mode:
+            return
+
+        with self._state_lock:
+            state = self._load_state()
+            if state.orders:
+                return
+
+            now = datetime.now(timezone.utc).isoformat()
+            seed_order = {
+                "id": "mock-seed-001",
+                "client_order_id": "seed-coid-001",
+                "symbol": "AAPL",
+                "side": "buy",
+                "qty": 1.0,
+                "filled_qty": 0.0,
+                "status": "pending",
+                "type": "limit",
+                "limit_price": None,
+                "stop_price": None,
+                "submitted_at": now,
+                "updated_at": now,
+            }
+
+            state.orders = {seed_order["id"]: seed_order}
+            state.last_sync_at = state.last_sync_at or now
+
+            try:
+                self.audit.append({"ts": now, "event": "order_seed", "order": seed_order})
+            except Exception:
+                pass
+
+            self._save_state(state)
 
     # ------------------------------------------------------------------
     def get_state_summary(self) -> Dict[str, Any]:

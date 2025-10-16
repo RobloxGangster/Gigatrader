@@ -1422,6 +1422,11 @@ def orders_sync(status: Literal["open", "closed", "all"] = Query("all")):
         summary = _reconciler.sync_once(status_scope=status)
     except ValueError as exc:  # invalid scope
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if os.getenv("MOCK_MODE", "true").lower() in {"1", "true", "on", "yes"}:
+        try:
+            _reconciler.seed_mock_order()
+        except Exception:
+            pass
     return summary
 
 
