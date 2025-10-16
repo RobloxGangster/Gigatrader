@@ -21,17 +21,14 @@ from core.config import MOCK_MODE, TradeLoopConfig
 
 log = logging.getLogger(__name__)
 
+DUP_KEYS = ("duplicate_client_order_id", "duplicate client", "duplicate_client")
+
 
 def _is_duplicate_coid(reason: str | None) -> bool:
     if not reason:
         return False
     r = reason.lower()
-    return (
-        "duplicate_client_order_id" in r
-        or "duplicate client order id" in r
-        or "duplicate coid" in r
-        or "duplicate" in r
-    )
+    return any(marker in r for marker in DUP_KEYS) or "duplicate coid" in r or "duplicate" in r
 
 
 def _now_ts() -> float:
@@ -516,7 +513,7 @@ class TradeOrchestrator:
             meta=policy_meta,
         )
 
-        result = self._submit_with_retry(intent)
+        result = await self._submit_with_retry(intent, dry_run=self._mock_routing)
         with self._metrics_lock:
             self._metrics["routed"] += 1
             if result.get("accepted") or result.get("dry_run"):
@@ -533,34 +530,59 @@ class TradeOrchestrator:
                 self._mock_routing = True
         self._record_decision(record)
 
-    def _submit_with_retry(self, intent: ExecIntent) -> dict[str, Any]:
+    async def _submit_with_retry(
+        self,
+        intent: ExecIntent,
+        dry_run: bool | None = None,
+        *,
+        max_retries: int = 1,
+    ) -> dict[str, Any]:
+        dry_run_flag = self._mock_routing if dry_run is None else bool(dry_run)
+
         try:
-            result = self.router.submit(intent, dry_run=self._mock_routing)
+            submission = self.router.submit(intent, dry_run=dry_run_flag)
+            if inspect.isawaitable(submission):
+                result = await submission  # type: ignore[assignment]
+            else:
+                result = submission
         except Exception as exc:  # noqa: BLE001
             log.exception("router submission error", extra={"symbol": intent.symbol, "error": str(exc)})
             self._last_error = str(exc)
             return {"accepted": False, "reason": f"router_error:{exc}"}
 
-        if result.get("accepted") or result.get("dry_run") or self._mock_routing:
+        if not isinstance(result, Mapping):
+            try:
+                result = dict(result)  # type: ignore[arg-type]
+            except Exception:
+                result = {
+                    "accepted": bool(getattr(result, "accepted", False)),
+                    "reason": getattr(result, "reason", None),
+                    "dry_run": bool(getattr(result, "dry_run", dry_run_flag)),
+                }
+
+        if result.get("accepted") or result.get("dry_run") or dry_run_flag:
             return result
 
-        reason = str(result.get("reason", ""))
-        if "duplicate_client_order_id" not in reason.lower():
-            if "alpaca_unauthorized" in reason:
-                self._broker_disabled = True
-                self._mock_routing = True
-            return result
-
-        retry_intent = replace(intent, client_order_id=f"{intent.client_order_id or 'gt'}-retry-{uuid.uuid4().hex[:6]}")
-        try:
-            retry_result = self.router.submit(retry_intent, dry_run=self._mock_routing)
-        except Exception as exc:  # noqa: BLE001
-            log.exception(
-                "router retry error", extra={"symbol": intent.symbol, "error": str(exc)}
+        reason = str(result.get("reason", "") or "")
+        reason_lower = reason.lower()
+        if any(marker in reason_lower for marker in DUP_KEYS) and max_retries > 0:
+            await asyncio.sleep(0.01)
+            retry_id_prefix = intent.client_order_id or "gt"
+            retry_intent = replace(
+                intent,
+                client_order_id=f"{retry_id_prefix}-retry-{uuid.uuid4().hex[:6]}",
             )
-            self._last_error = str(exc)
-            return {"accepted": False, "reason": f"router_error:{exc}"}
-        return retry_result
+            return await self._submit_with_retry(
+                retry_intent,
+                dry_run=dry_run_flag,
+                max_retries=max_retries - 1,
+            )
+
+        if "alpaca_unauthorized" in reason_lower:
+            self._broker_disabled = True
+            self._mock_routing = True
+
+        return result
 
     async def route_top_event(self, proposals: Sequence[Any]) -> Any:
         """

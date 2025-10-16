@@ -20,6 +20,8 @@ PAGE_MAP = {
     "Diagnostics / Logs": logs_pacing,
 }
 
+NAV_OPTIONS = ["Control Center", "Option Chain", "Diagnostics / Logs"]
+
 DEFAULT_PAGE = "Control Center"
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,17 +50,19 @@ def _is_mock_mode() -> bool:
 
 
 def _select_page() -> str:
-    options = list(PAGE_MAP.keys())
+    options = NAV_OPTIONS
     default_selection = st.session_state.get("nav_selection", DEFAULT_PAGE)
-    if default_selection not in PAGE_MAP:
+    if default_selection not in options:
         default_selection = DEFAULT_PAGE
     default_index = options.index(default_selection)
-    selection = st.selectbox(
-        "Navigate",
-        options=options,
-        index=default_index,
-        key="nav_selection",
-    )
+    with st.sidebar:
+        selection = st.selectbox(
+            "Navigation",
+            options=options,
+            index=default_index,
+            key="nav_selection",
+        )
+        st.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
     st.session_state["nav_selection"] = selection
     return selection
 

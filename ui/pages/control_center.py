@@ -201,6 +201,7 @@ def _positions_preview(positions: List[Position]) -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Control Center")
+    st.markdown('<div data-testid="control-center-root"></div>', unsafe_allow_html=True)
     st.header("Control Center")
     st.caption("CONTROL_CENTER_READY")
     try:
