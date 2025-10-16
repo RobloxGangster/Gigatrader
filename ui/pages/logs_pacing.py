@@ -16,6 +16,11 @@ from ui.state import AppSessionState
 from ui.utils.charts import pacing_history_chart
 from ui.utils.diagnostics import UI_DIAG_PATH, run_ui_diagnostics
 
+# --- Test-friendly, visible markers ---
+st.header("Diagnostics / Logs")
+st.caption("Logs & Pacing")
+st.markdown('<div data-testid="logs-panel"></div>', unsafe_allow_html=True)
+
 
 def _to_ndjson(records: Iterable[dict]) -> str:
     return "\n".join(json.dumps(record, default=str) for record in records)
