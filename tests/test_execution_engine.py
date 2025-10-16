@@ -4,7 +4,7 @@ import pytest
 
 from services.execution.engine import ExecutionEngine
 from services.execution.types import ExecIntent
-from services.risk.engine import RiskManager
+from app.risk.manager import RiskManager
 from services.risk.state import InMemoryState
 from tests.fakes import FakeAdapter
 
@@ -90,6 +90,7 @@ def test_risk_denial_propagates(monkeypatch):
 def test_process_updates_reconciles_state(monkeypatch):
     state = InMemoryState()
     risk = RiskManager(state)
+    _force_disarm_kill_switch(risk)  # ensure acceptance so submit() persists _orders[coid]
     adapter = FakeAdapter()
     engine = ExecutionEngine(risk=risk, state=state, adapter=adapter)
 
