@@ -38,6 +38,7 @@ def _render_chain(df: pd.DataFrame, highlight_strategy: bool) -> None:
     else:
         st.dataframe(df, use_container_width=True)
     st.caption("Strategy pick highlights the highest volume contract in view.")
+    st.caption("OPTION_CHAIN_READY")
 
 
 def _greeks_panel(api: BrokerAPI, symbol: str, expiry: str | None) -> None:
