@@ -160,3 +160,25 @@ Mock-only tests are marked @pytest.mark.mock_only.
 
 Both windows **pause** at the end so you can read errors.  
 If venv/dev deps/browsers are missing, the scripts auto-install them.
+
+### Unified test run (one click, one log)
+```powershell
+# Default (safe): Mock mode
+scripts\run_all_tests.cmd
+
+# Paper mode (requires Alpaca paper creds)
+$env:MOCK_MODE = 'false'
+$env:ALPACA_API_KEY_ID = '...'
+$env:ALPACA_API_SECRET_KEY = '...'
+$env:APCA_API_BASE_URL = 'https://paper-api.alpaca.markets'
+scripts\run_all_tests.cmd
+```
+
+Live output streams to the console.
+
+All results written to a single file: logs\tests\test_all_in_one-YYYYMMDD-HHMMSS.log.
+
+Playwright artifacts for failures are under test-results/.
+
+
+---
