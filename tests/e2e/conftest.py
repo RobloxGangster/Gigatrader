@@ -1,27 +1,34 @@
 from __future__ import annotations
+
+import os
+
 import pytest
+from playwright.sync_api import sync_playwright
 
 
-def pytest_configure(config):
-    # Force-load the plugin even when PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-    if config.pluginmanager.has_plugin("pytest_playwright"):
-        return
+os.environ.setdefault("PWTEST_SCREENSHOT", "off")
+os.environ.setdefault("PWTEST_VIDEO", "off")
+os.environ.setdefault("PWTEST_TRACING", "off")
+
+
+@pytest.fixture(scope="session")
+def _pw():
+    with sync_playwright() as p:
+        yield p
+
+
+@pytest.fixture(scope="session")
+def browser(_pw):
+    browser = _pw.chromium.launch(headless=True)
+    yield browser
+    browser.close()
+
+
+@pytest.fixture(scope="function")
+def page(browser):
+    ctx = browser.new_context(no_viewport=True)
+    pg = ctx.new_page()
     try:
-        config.pluginmanager.import_plugin("pytest_playwright")
-    except ValueError as e:
-        if "pytest_asyncio.plugin" not in str(e):
-            config._gt_pw_err = e  # type: ignore[attr-defined]
-    except Exception as e:
-        # Remember why it failed and skip e2e tests during collection
-        config._gt_pw_err = e  # type: ignore[attr-defined]
-
-
-def pytest_collection_modifyitems(config, items):
-    err = getattr(config, "_gt_pw_err", None)
-    if not err:
-        return
-    skip_mark = pytest.mark.skip(reason=f"pytest-playwright unavailable: {err}")
-    for item in items:
-        # Only skip tests in this e2e suite
-        if "e2e" in item.keywords:
-            item.add_marker(skip_mark)
+        yield pg
+    finally:
+        ctx.close()

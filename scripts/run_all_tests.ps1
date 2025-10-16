@@ -52,23 +52,13 @@ $rc1 = $LASTEXITCODE
 if ($rc1 -ne 0) { Log "[WARN] non-E2E failed with rc=$rc1 (continuing to E2E)" | Tee-Object $LOG -Append | Write-Host }
 
 # ----------------- PHASE 2: E2E (Playwright) -----------------
-& $PYEXE -m pip show pytest-playwright 1>$null 2>$null
-$hasPW = ($LASTEXITCODE -eq 0)
+Log "[STEP] playwright install chromium" | Tee-Object $LOG -Append | Write-Host
+& $PYEXE -m playwright install chromium 2>&1 | Tee-Object $LOG -Append | Write-Host
 
-if ($hasPW) {
-  Log "[STEP] playwright install chromium" | Tee-Object $LOG -Append | Write-Host
-  & $PYEXE -m playwright install chromium 2>&1 | Tee-Object $LOG -Append | Write-Host
-
-  $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-  # Load plugin explicitly *before* test path; do not pass --screenshot/--video/--tracing.
-  $plugins2 = @('-p','pytest_playwright','-p','pytest_asyncio','-p','pytest_asyncio.plugin')
-  $e2eArgs = @() + $plugins2 + @('tests/e2e','-m','e2e','-rA')
-  & $PYEXE -m pytest @e2eArgs 2>&1 | Tee-Object $LOG -Append | Write-Host
-  $rc2 = $LASTEXITCODE
-} else {
-  Log "[STEP] pytest-playwright not installed; skipping E2E (no page fixture)" | Tee-Object $LOG -Append | Write-Host
-  $rc2 = 0
-}
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+$e2eArgs = @('tests/e2e','-m','e2e','-rA')
+& $PYEXE -m pytest @e2eArgs 2>&1 | Tee-Object $LOG -Append | Write-Host
+$rc2 = $LASTEXITCODE
 
 if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorAction SilentlyContinue }
 
