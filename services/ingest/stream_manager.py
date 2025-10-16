@@ -98,12 +98,18 @@ class StreamManager:
         self._stop_event.clear()
         self._running = True
         backoff = self.reconnect_base_delay
+        should_increment_reconnect = False
 
         try:
             while not self._stop_event.is_set():
                 try:
                     async with self.websocket_factory(self.url) as ws:
                         self._active_ws = ws
+                        if should_increment_reconnect:
+                            async with self._state_lock:
+                                self._state.reconnect_count += 1
+                                await self._persist_state_locked()
+                            should_increment_reconnect = False
                         await self._perform_subscribe(ws)
                         self._connected = True
                         backoff = self.reconnect_base_delay
@@ -129,9 +135,7 @@ class StreamManager:
                     if self._stop_event.is_set():
                         break
 
-                    async with self._state_lock:
-                        self._state.reconnect_count += 1
-                        await self._persist_state_locked()
+                    should_increment_reconnect = True
 
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, self.reconnect_max_delay)

@@ -34,9 +34,11 @@ def _render_chain(df: pd.DataFrame, highlight_strategy: bool) -> None:
             color = "background-color: #2C5282; color: white;" if row.name == target_idx else ""
             return [color] * len(row)
 
-        st.dataframe(df.style.apply(highlight, axis=1), width="stretch")
+        st.dataframe(
+            df.style.apply(highlight, axis=1), use_container_width=True
+        )
     else:
-        st.dataframe(df, width="stretch")
+        st.dataframe(df, use_container_width=True)
     st.caption("Strategy pick highlights the highest volume contract in view.")
     st.caption("OPTION_CHAIN_READY")
 
@@ -73,6 +75,7 @@ def _spread_builder(df: pd.DataFrame) -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Option Chain")
+    st.markdown('<div data-testid="page-option-chain"></div>', unsafe_allow_html=True)
     st.markdown('<div data-testid="option-chain-root"></div>', unsafe_allow_html=True)
     default_symbol = (state.selected_symbol or "AAPL").upper()
     symbol_input = st.text_input("Underlying", value=default_symbol, key="oc_symbol")
