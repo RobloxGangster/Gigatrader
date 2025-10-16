@@ -73,6 +73,7 @@ def _logs_table(logs: list[dict]) -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Diagnostics / Logs")
+    st.caption("DIAGNOSTICS_READY")
     level = st.selectbox("Level", ["", "INFO", "WARN", "ERROR"], index=0)
     component = st.text_input("Component contains", value="")
     correlation = st.text_input("Correlation id", value="")

@@ -1,5 +1,7 @@
 import os, re, pytest
 
+from ._nav import open_nav_and_select
+
 UI = f"http://127.0.0.1:{os.getenv('GT_UI_PORT','8501')}"
 
 
@@ -7,8 +9,7 @@ UI = f"http://127.0.0.1:{os.getenv('GT_UI_PORT','8501')}"
 @pytest.mark.usefixtures("server_stack")
 def test_option_chain_loads(page):
     page.goto(UI, timeout=60_000)
-    page.get_by_label("Navigation").click()
-    page.get_by_role("option", name=re.compile(r"^Option Chain$", re.I)).click()
+    open_nav_and_select(page, r"^Option Chain$")
 
     # 1) Prefer a stable container: st.table or st.dataframe
     #   - st.table => [data-testid="stTable"]
@@ -37,8 +38,7 @@ def test_option_chain_loads(page):
 @pytest.mark.usefixtures("server_stack")
 def test_control_center_kpis_in_paper(page, require_paper):
     page.goto(UI, timeout=60000)
-    page.get_by_label("Navigation").click()
-    page.get_by_role("option", name="Control Center", exact=False).click()
+    open_nav_and_select(page, r"^Control Center$")
     page.wait_for_selector("text=Portfolio Value", timeout=30000)
     page.wait_for_selector("text=Buying Power", timeout=30000)
     # Try Sync Now if present
