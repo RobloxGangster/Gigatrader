@@ -55,10 +55,10 @@ $plugins = @()
 if ($LASTEXITCODE -eq 0) { $plugins += '-p'; $plugins += 'pytest_asyncio' }
 
 $cmd = @($PYEXE, '-m', 'pytest', 'tests', '-rA', '-m', 'not e2e', '--ignore=tests\e2e') + $plugins
-$proc = Start-Process -FilePath $cmd[0] -ArgumentList $cmd[1..($cmd.Count-1)] -NoNewWindow -PassThru -RedirectStandardOutput $LOGFILE -RedirectStandardError $LOGFILE
-$null = $proc.WaitForExit()
+$arguments = $cmd[1..($cmd.Count-1)]
+& $cmd[0] @arguments 2>&1 | Tee-Object $LOGFILE -Append | Write-Host
 Get-Content $LOGFILE -Tail 200 | Write-Host
-$rc1 = $proc.ExitCode
+$rc1 = $LASTEXITCODE
 if ($rc1 -ne 0) {
   Log "[WARN] non-E2E tests failed with exit code $rc1 (continuing to E2E)" | Tee-Object $LOGFILE -Append | Write-Host
 }
@@ -75,10 +75,10 @@ if ($LASTEXITCODE -eq 0) { $plugins += @('-p','pytest_asyncio') }
 
 Log "[STEP] PYTEST (E2E): -m e2e -rA (plugins: $($plugins -join ' '))" | Tee-Object $LOGFILE -Append | Write-Host
 $cmd = @($PYEXE, '-m', 'pytest', '-m', 'e2e', 'tests/e2e', '-rA', '--screenshot=off', '--video=off', '--tracing=off') + $plugins
-$proc = Start-Process -FilePath $cmd[0] -ArgumentList $cmd[1..($cmd.Count-1)] -NoNewWindow -PassThru -RedirectStandardOutput $LOGFILE -RedirectStandardError $LOGFILE
-$null = $proc.WaitForExit()
+$arguments = $cmd[1..($cmd.Count-1)]
+& $cmd[0] @arguments 2>&1 | Tee-Object $LOGFILE -Append | Write-Host
 Get-Content $LOGFILE -Tail 200 | Write-Host
-$rc2 = $proc.ExitCode
+$rc2 = $LASTEXITCODE
 
 # Clean Playwright artifacts dir after run (belt & suspenders)
 if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorAction SilentlyContinue }
