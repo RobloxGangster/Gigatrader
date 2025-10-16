@@ -69,9 +69,11 @@ def _truthy(val: str | None) -> bool:
 def _kill_switch_engaged(kill_switch: KillSwitch | None) -> bool:
     """Return True if any kill-switch signal is active."""
 
+    # 1) Explicit ON (env) — highest priority
     if _truthy(os.getenv("KILL_SWITCH")):
         return True
 
+    # 2) Explicit ON (file) — next priority
     file_path = os.getenv("KILL_SWITCH_FILE", "runtime/kill_switch")
     try:
         if Path(file_path).exists():
@@ -79,6 +81,11 @@ def _kill_switch_engaged(kill_switch: KillSwitch | None) -> bool:
     except Exception:
         pass
 
+    # 3) Test override — only forces OFF if not explicitly ON
+    if _truthy(os.getenv("GT_TEST_DISARM_KILL_SWITCH")):
+        return False
+
+    # Runtime kill-switch object (if provided)
     if kill_switch is not None:
         try:
             engaged_sync = getattr(kill_switch, "engaged_sync", None)
@@ -87,9 +94,7 @@ def _kill_switch_engaged(kill_switch: KillSwitch | None) -> bool:
         except Exception:
             pass
 
-    if _truthy(os.getenv("GT_TEST_DISARM_KILL_SWITCH")):
-        return False
-
+    # 4) Default OFF (no implicit arming)
     return False
 
 

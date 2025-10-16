@@ -40,25 +40,19 @@ if (-not $env:MOCK_MODE)   { $env:MOCK_MODE   = 'true' }
 $PW_RESULTS = Join-Path $ROOT 'test-results'
 if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorAction SilentlyContinue }
 
-function Add-PluginIfPresent([ref]$arr, [string]$pkg, [string]$pluginModule) {
-  & $PYEXE -m pip show $pkg 1>$null 2>$null
-  if ($LASTEXITCODE -eq 0) { $arr.Value += @('-p', $pluginModule) }
-}
-
-# ----- PHASE 1: non-E2E (autoload OFF; safe whitelist) -----
+# ----------------- PHASE 1: non-E2E -----------------
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+# Always load asyncio plugin so async tests are supported
 $plugins1 = @('-p','pytest_asyncio')
-
 & $PYEXE -m pytest tests -rA -m "not e2e" --ignore=tests\e2e @plugins1 2>&1 `
   | Tee-Object $LOG -Append | Write-Host
 $rc1 = $LASTEXITCODE
 if ($rc1 -ne 0) { Log "[WARN] non-E2E failed with rc=$rc1 (continuing to E2E)" | Tee-Object $LOG -Append | Write-Host }
 
-# ----- PHASE 2: E2E (autoload OFF; explicitly load playwright; force Chromium) -----
+# ----------------- PHASE 2: E2E (Playwright) -----------------
 & $PYEXE -m playwright install chromium 2>&1 | Tee-Object $LOG -Append | Write-Host
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-$plugins2 = @('-p','pytest_playwright', '-p','pytest_asyncio')
-
+$plugins2 = @('-p','pytest_playwright','-p','pytest_asyncio')
 & $PYEXE -m pytest -m e2e tests/e2e -rA --screenshot=off --video=off --tracing=off @plugins2 2>&1 `
   | Tee-Object $LOG -Append | Write-Host
 $rc2 = $LASTEXITCODE
