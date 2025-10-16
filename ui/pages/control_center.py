@@ -245,14 +245,14 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.caption("Mode: 🧪 MOCK" if mock_mode else "Mode: ✅ PAPER")
     st.caption(f"OMS: SQLite active · Stream: {stream_note}")
 
-    with st.sidebar:
-        st.subheader("Run Preset")
-        preset = st.selectbox(
-            "Preset",
-            ["safe", "balanced", "high_risk"],
-            index=["safe", "balanced", "high_risk"].index(status.get("preset", "balanced")),
-            help="Choose risk profile presets served by the backend",
-        )
+    st.subheader("Run Preset")
+    preset = st.selectbox(
+        "Preset",
+        ["safe", "balanced", "high_risk"],
+        index=["safe", "balanced", "high_risk"].index(status.get("preset", "balanced")),
+        help="Choose risk profile presets served by the backend",
+        key="preset_selector",
+    )
 
     _action_buttons(api, state, preset, mock_mode)
     _live_controls(api, state, preset, mock_mode)

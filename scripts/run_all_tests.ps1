@@ -44,9 +44,7 @@ $PW_RESULTS = Join-Path $ROOT 'test-results'
 if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorAction SilentlyContinue }
 
 # ----------------- PHASE 1: non-E2E -----------------
-$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-$plugins1 = @('-p','pytest_asyncio','-p','pytest_asyncio.plugin')  # register before args
-$nonE2E = @() + $plugins1 + @('tests','-rA','-m','not e2e','--ignore=tests\e2e')
+$nonE2E = @('tests','-m','not e2e','-rA')
 & $PYEXE -m pytest @nonE2E 2>&1 | Tee-Object $LOG -Append | Write-Host
 $rc1 = $LASTEXITCODE
 if ($rc1 -ne 0) { Log "[WARN] non-E2E failed with rc=$rc1 (continuing to E2E)" | Tee-Object $LOG -Append | Write-Host }
@@ -55,7 +53,6 @@ if ($rc1 -ne 0) { Log "[WARN] non-E2E failed with rc=$rc1 (continuing to E2E)" |
 Log "[STEP] playwright install chromium" | Tee-Object $LOG -Append | Write-Host
 & $PYEXE -m playwright install chromium 2>&1 | Tee-Object $LOG -Append | Write-Host
 
-$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
 $e2eArgs = @('tests/e2e','-m','e2e','-rA')
 & $PYEXE -m pytest @e2eArgs 2>&1 | Tee-Object $LOG -Append | Write-Host
 $rc2 = $LASTEXITCODE

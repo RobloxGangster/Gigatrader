@@ -75,7 +75,7 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Option Chain & Greeks")
     st.markdown('<div data-testid="option-chain-root"></div>', unsafe_allow_html=True)
     default_symbol = (state.selected_symbol or "AAPL").upper()
-    symbol_input = st.text_input("Underlying", value=default_symbol)
+    symbol_input = st.text_input("Underlying", value=default_symbol, key="oc_symbol")
     symbol = symbol_input.strip().upper() or default_symbol
     expiry = st.text_input("Expiry (YYYY-MM-DD)", value=state.option_expiry or "")
     update_session_state(selected_symbol=symbol, option_expiry=expiry)
