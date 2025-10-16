@@ -2,88 +2,88 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# --- repo root ---
 Set-Location -LiteralPath (Join-Path $PSScriptRoot '..')
 $ROOT    = (Get-Location).Path
 $LOGDIR  = Join-Path $ROOT 'logs\tests'
 New-Item -ItemType Directory -Force -Path $LOGDIR | Out-Null
 
-# --- single timestamped log ---
 $stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
 $LOGFILE = Join-Path $LOGDIR "test_all_in_one-$stamp.log"
-$PW_RESULTS = Join-Path $ROOT 'test-results'
-if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorAction SilentlyContinue }
 
-function Log([string]$m) {
-  $ts = Get-Date -Format 'u'
-  "$ts $m"
-}
+function Log([string]$m) { "$([DateTime]::UtcNow.ToString('u')) $m" }
 function Pause-And-Exit([int]$rc) {
-  Write-Host ""
-  Write-Host "• Log: $LOGFILE"
-  Write-Host "• Exit code: $rc"
+  Write-Host "`n• Log: $LOGFILE`n• Exit code: $rc"
   Read-Host "[Press Enter to close]"
   exit $rc
 }
 
 Log "=== unified test run start; ROOT=$ROOT ===" | Tee-Object $LOGFILE -Append | Write-Host
 
-# --- venv / python ---
+# venv
 $VENV  = Join-Path $ROOT '.venv'
 $PYEXE = Join-Path $VENV 'Scripts\python.exe'
 if (-not (Test-Path $PYEXE)) {
   Log "[INFO] .venv missing; creating..." | Tee-Object $LOGFILE -Append | Write-Host
   & py -3.11 -m venv $VENV 2>&1 | Tee-Object $LOGFILE -Append | Write-Host
-  if (-not (Test-Path $PYEXE)) {
-    Log "[ERR] Failed to create venv" | Tee-Object $LOGFILE -Append | Write-Host
-    Pause-And-Exit 1
-  }
+  if (-not (Test-Path $PYEXE)) { Log "[ERR] Failed to create venv" | Tee-Object $LOGFILE -Append | Write-Host; Pause-And-Exit 1 }
 }
 (& $PYEXE -V) 2>&1 | Tee-Object $LOGFILE -Append | Write-Host
 
-# --- install dev deps ---
+# deps
 if (Test-Path (Join-Path $ROOT 'requirements-dev.txt')) {
   Log "[STEP] pip install -r requirements-dev.txt" | Tee-Object $LOGFILE -Append | Write-Host
   & $PYEXE -m pip install -r (Join-Path $ROOT 'requirements-dev.txt') 2>&1 | Tee-Object $LOGFILE -Append | Write-Host
-} else {
-  Log "[WARN] requirements-dev.txt not found; continuing..." | Tee-Object $LOGFILE -Append | Write-Host
 }
 
-# --- env defaults (safe) ---
+# env defaults
 if (-not $env:PYTHONPATH) { $env:PYTHONPATH = $ROOT }
 if (-not $env:GT_API_PORT) { $env:GT_API_PORT = '8000' }
 if (-not $env:GT_UI_PORT)  { $env:GT_UI_PORT  = '8501' }
-# MOCK_MODE can be true or false; default to true for safe CI unless user set it
 if (-not $env:MOCK_MODE)   { $env:MOCK_MODE   = 'true' }
 
-# --- list tests that will run ---
-Log "[INFO] Discovering tests under /tests" | Tee-Object $LOGFILE -Append | Write-Host
-Get-ChildItem -Recurse -File -Path (Join-Path $ROOT 'tests') -Filter '*.py' -ErrorAction SilentlyContinue `
-  | Select-Object FullName `
-  | ForEach-Object { $_.FullName } `
-  | Tee-Object $LOGFILE -Append | Write-Host
+# Clean Playwright artifacts dir before run
+$PW_RESULTS = Join-Path $ROOT 'test-results'
+if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorAction SilentlyContinue }
 
-# --- PHASE 1: run ALL non-E2E tests in one go ---
-Log "[STEP] PYTEST (non-E2E): tests -m \"not e2e\" -rA --ignore=tests\\e2e --maxfail=1" | Tee-Object $LOGFILE -Append | Write-Host
-& $PYEXE -m pytest tests -rA -m "not e2e" --ignore=tests\e2e --maxfail=1 2>&1 `
-  | Tee-Object $LOGFILE -Append | Write-Host
-$rc1 = $LASTEXITCODE
+# ----------------- PHASE 1: non-E2E -----------------
+Log "[STEP] PYTEST (non-E2E): tests -m 'not e2e' --ignore=tests\\e2e" | Tee-Object $LOGFILE -Append | Write-Host
+
+# Avoid plugin option conflicts: disable autoload, but explicitly load pytest_asyncio if present.
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+& $PYEXE -m pip show pytest-asyncio 1>$null 2>$null
+$plugins = @()
+if ($LASTEXITCODE -eq 0) { $plugins += '-p'; $plugins += 'pytest_asyncio' }
+
+$cmd = @($PYEXE, '-m', 'pytest', 'tests', '-rA', '-m', 'not e2e', '--ignore=tests\e2e') + $plugins
+$proc = Start-Process -FilePath $cmd[0] -ArgumentList $cmd[1..($cmd.Count-1)] -NoNewWindow -PassThru -RedirectStandardOutput $LOGFILE -RedirectStandardError $LOGFILE
+$null = $proc.WaitForExit()
+Get-Content $LOGFILE -Tail 200 | Write-Host
+$rc1 = $proc.ExitCode
 if ($rc1 -ne 0) {
-  Log "[WARN] non-E2E tests failed with exit code $rc1 (continuing to E2E to collect full picture)" `
-    | Tee-Object $LOGFILE -Append | Write-Host
+  Log "[WARN] non-E2E tests failed with exit code $rc1 (continuing to E2E)" | Tee-Object $LOGFILE -Append | Write-Host
 }
 
-# --- PHASE 2: ensure Playwright browser; then run E2E tests ---
+# ----------------- PHASE 2: E2E (Playwright) -----------------
 Log "[STEP] playwright install chromium" | Tee-Object $LOGFILE -Append | Write-Host
 & $PYEXE -m playwright install chromium 2>&1 | Tee-Object $LOGFILE -Append | Write-Host
 
-Log "[STEP] PYTEST (E2E): -m e2e -rA" | Tee-Object $LOGFILE -Append | Write-Host
-& $PYEXE -m pytest -m e2e tests/e2e -rA 2>&1 `
-  | Tee-Object $LOGFILE -Append | Write-Host
-$rc2 = $LASTEXITCODE
+# Explicitly load only pytest_playwright (+ pytest_asyncio if available); pass plugin flags here (not in pytest.ini).
+& $PYEXE -m pip show pytest-playwright 1>$null 2>$null
+$plugins = @('-p','pytest_playwright')
+& $PYEXE -m pip show pytest-asyncio 1>$null 2>$null
+if ($LASTEXITCODE -eq 0) { $plugins += @('-p','pytest_asyncio') }
+
+Log "[STEP] PYTEST (E2E): -m e2e -rA (plugins: $($plugins -join ' '))" | Tee-Object $LOGFILE -Append | Write-Host
+$cmd = @($PYEXE, '-m', 'pytest', '-m', 'e2e', 'tests/e2e', '-rA', '--screenshot=off', '--video=off', '--tracing=off') + $plugins
+$proc = Start-Process -FilePath $cmd[0] -ArgumentList $cmd[1..($cmd.Count-1)] -NoNewWindow -PassThru -RedirectStandardOutput $LOGFILE -RedirectStandardError $LOGFILE
+$null = $proc.WaitForExit()
+Get-Content $LOGFILE -Tail 200 | Write-Host
+$rc2 = $proc.ExitCode
+
+# Clean Playwright artifacts dir after run (belt & suspenders)
 if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorAction SilentlyContinue }
 
-# --- final combined exit status ---
+# Final summary
 $final = if ($rc1 -ne 0 -or $rc2 -ne 0) { 1 } else { 0 }
 if ($final -ne 0) {
   Log "[ERR] unified test run FAILED (unit/integration rc=$rc1, e2e rc=$rc2)" | Tee-Object $LOGFILE -Append | Write-Host
