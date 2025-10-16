@@ -27,3 +27,9 @@ pytest-cov==5.0.0
     # via -r requirements-dev.in
 ruff==0.14.0
     # via -r requirements-dev.in
+
+pytest-playwright
+playwright
+httpx
+requests
+python-dotenv
