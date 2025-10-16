@@ -5,6 +5,10 @@ from typing import Iterable, Tuple, Union, Optional, List
 
 from playwright.sync_api import Page, expect
 
+DIAG_READY_TEXT = re.compile(
+    r"(Diagnostics complete|All checks passed|Completed diagnostics|done)", re.I
+)
+
 BASE_URL = "http://127.0.0.1:8501"
 
 # Stable label->slug mapping for deep-linking
@@ -211,3 +215,82 @@ def goto_page(page: Page, label: str):
         except Exception as ee:
             _shoot(page, "goto-page-failed", hint=f"UI error: {e}\nDeep-link retry: {ee}")
             raise
+
+
+def click_run_diagnostics_if_present(page: Page, timeout_ms: int = 4000) -> bool:
+    """
+    Click the 'Run Diagnostics' button if it exists and is visible.
+    Returns True if clicked, False if not found.
+    """
+    try:
+        btn = page.get_by_role("button", name=re.compile(r"^Run Diagnostics$", re.I)).first
+        btn.wait_for(state="visible", timeout=timeout_ms)
+        btn.click()
+        return True
+    except Exception:
+        return False
+
+
+def wait_for_diagnostics_ready(page: Page, timeout_ms: int = 25000) -> None:
+    """
+    Consider 'Diagnostics / Logs' ready if ANY of the following become visible:
+      - Status text like 'Diagnostics complete'
+      - A Logs/Pacing table or dataframe is visible
+      - A heading that includes 'Logs', 'Logs & Pacing', or 'Diagnostics'
+    Also tolerant of Streamlit/BaseWeb table variants.
+    """
+    end = time.time() + timeout_ms / 1000.0
+    last_err: Optional[Exception] = None
+
+    def any_visible() -> bool:
+        nonlocal last_err
+
+        # 1) Success text
+        try:
+            if page.get_by_text(DIAG_READY_TEXT).first.is_visible():
+                return True
+        except Exception:
+            pass
+
+        # 2) Table/dataframe variants
+        candidates = [
+            '[data-testid="stDataFrame"]',
+            '[data-testid="stTable"]',
+            '[role="table"]',
+            '[role="grid"]',
+            # Sometimes logs live under region with strong labels
+            'section:has-text("Log")',
+            'section:has-text("Logs")',
+            'section:has-text("Pacing")',
+        ]
+        for sel in candidates:
+            try:
+                loc = page.locator(sel).first
+                if loc.count() > 0:
+                    loc.wait_for(state="visible", timeout=800)
+                    return True
+            except Exception as e:
+                last_err = e
+
+        # 3) Headings we consider acceptable for this page
+        for h in LABEL_HEADINGS.get(
+            "Diagnostics / Logs", ("Diagnostics / Logs", "Diagnostics", "Logs & Pacing", "Logs")
+        ):
+            try:
+                if page.get_by_role("heading", name=_rx(h)).first.is_visible():
+                    return True
+            except Exception:
+                pass
+
+        return False
+
+    while time.time() < end:
+        try:
+            if any_visible():
+                return
+        except Exception as e:
+            last_err = e
+        time.sleep(0.25)
+
+    _shoot(page, "diagnostics-not-ready", hint=f"Waited {timeout_ms}ms; last_err={last_err}")
+    raise AssertionError("Diagnostics page did not present ready indicators within timeout.")

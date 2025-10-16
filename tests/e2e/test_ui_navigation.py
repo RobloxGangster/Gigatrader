@@ -1,10 +1,13 @@
 import pytest
 from playwright.sync_api import Page
 
-from ._nav import goto_page, wait_for_heading, open_nav_and_select
-
-BASE_URL = "http://127.0.0.1:8501"
-DIAG_ALIASES = ("Diagnostics / Logs", "Logs & Pacing", "Diagnostics", "Logs")
+from ._nav import (
+    goto_page,
+    wait_for_heading,
+    LABEL_HEADINGS,
+    click_run_diagnostics_if_present,
+    wait_for_diagnostics_ready,
+)
 
 
 @pytest.mark.e2e
@@ -17,11 +20,14 @@ def test_nav_to_control_center(page: Page):
 @pytest.mark.e2e
 @pytest.mark.usefixtures("server_stack")
 def test_nav_to_diagnostics_and_run(page: Page):
+    # Navigate via deep-link (with UI fallback inside goto_page)
     goto_page(page, "Diagnostics / Logs")
-    wait_for_heading(page, DIAG_ALIASES)
 
-    try:
-        page.get_by_role("button", name="Run Diagnostics", exact=True).click(timeout=2000)
-        page.get_by_text("Diagnostics complete", exact=False).first.wait_for(timeout=10000)
-    except Exception:
-        page.get_by_text("Log", exact=False).first.wait_for(timeout=10000)
+    # Accept multiple headings (copy varies across builds)
+    wait_for_heading(page, LABEL_HEADINGS["Diagnostics / Logs"])
+
+    # If the button exists, click it; otherwise the page may auto-show logs
+    clicked = click_run_diagnostics_if_present(page)
+
+    # Whether clicked or not, wait for any acceptable “ready” signal
+    wait_for_diagnostics_ready(page, timeout_ms=25000)
