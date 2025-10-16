@@ -31,7 +31,6 @@ def _uppercase(symbol: str) -> str:
 
 
 def _dig(obj: Any, path: str) -> Any:
-    """Dot-path getter that works for dicts, dataclasses, pydantic models, and attrs."""
     parts = path.split(".")
     cur = obj
     for p in parts:
@@ -63,6 +62,42 @@ def _get_num(obj: Any, paths: Iterable[str], default: float = float("nan")) -> f
         except Exception:
             continue
     return default
+
+
+def _ev_and_secondary(cand: Any) -> tuple[float, float]:
+    ev = _get_num(
+        cand,
+        (
+            "ev",
+            "expected_value",
+            "metrics.ev",
+            "metrics.expected_value",
+            "scores.ev",
+            "scores.expected_value",
+            "score",
+            "alpha",
+            "policy_score",
+        ),
+        default=float("nan"),
+    )
+    if ev is None or (isinstance(ev, float) and math.isnan(ev)):
+        ev = 0.0
+
+    secondary = _get_num(
+        cand,
+        (
+            "p_win",
+            "prob",
+            "score",
+            "alpha",
+            "policy_score",
+            "metrics.score",
+            "scores.alpha",
+            "scores.policy_score",
+        ),
+        default=0.0,
+    )
+    return float(ev), float(secondary)
 
 
 def _get_str(obj: Any, paths: Iterable[str], default: str = "") -> str:
@@ -101,38 +136,7 @@ def _score_tuple(cand: Any) -> tuple:
     Ties: symbol asc, then timestamp asc (stable).
     """
 
-    ev = _get_num(
-        cand,
-        (
-            "ev",
-            "expected_value",
-            "metrics.ev",
-            "metrics.expected_value",
-            "scores.ev",
-            "scores.expected_value",
-            "score",
-            "alpha",
-            "policy_score",
-        ),
-        default=float("nan"),
-    )
-    if ev is None or (isinstance(ev, float) and math.isnan(ev)):
-        ev = 0.0
-
-    secondary = _get_num(
-        cand,
-        (
-            "p_win",
-            "prob",
-            "score",
-            "alpha",
-            "policy_score",
-            "metrics.score",
-            "scores.alpha",
-            "scores.policy_score",
-        ),
-        default=0.0,
-    )
+    ev, secondary = _ev_and_secondary(cand)
 
     sym = _get_str(cand, ("symbol", "underlying", "ticker", "meta.symbol"), default="")
     ts = _get_ts(cand)
@@ -547,11 +551,18 @@ class TradeOrchestrator:
         return retry_result
 
     async def route_top_event(self, proposals: Sequence[Any]) -> Any:
+        """
+        Pick the highest-EV candidate; break ties *stably* (preserve input order).
+        Return router result or None if blocked by policy flag.
+        """
         if not proposals:
             log.info("route_top_event: no proposals")
             return None
 
-        ranked = sorted(list(proposals), key=_score_tuple)
+        ranked = sorted(
+            proposals,
+            key=lambda cand: tuple([-x for x in _ev_and_secondary(cand)]),
+        )
         top = ranked[0]
         identifier = getattr(top, "client_order_id", None) or _get_str(
             top, ("symbol", "underlying", "ticker", "meta.symbol"), ""
