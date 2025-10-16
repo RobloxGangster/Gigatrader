@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_serializer, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 
 class BaseModelDecimal(BaseModel):
@@ -136,19 +145,22 @@ class Indicators(BaseModelDecimal):
 
 
 class ChainRow(BaseModelDecimal):
+    symbol: Optional[str] = None
     strike: Decimal
     bid: Decimal
     ask: Decimal
-    mid: Decimal
-    iv: Decimal
-    delta: Decimal
-    gamma: Decimal
-    theta: Decimal
-    vega: Decimal
-    oi: int
-    volume: int
-    expiry: datetime
-    option_type: str
+    mid: Optional[Decimal] = None
+    iv: Optional[Decimal] = None
+    delta: Optional[Decimal] = None
+    gamma: Optional[Decimal] = None
+    theta: Optional[Decimal] = None
+    vega: Optional[Decimal] = None
+    oi: Optional[int] = None
+    volume: Optional[int] = None
+    expiry: Optional[datetime] = None
+    option_type: Optional[str] = Field(
+        default=None, validation_alias=AliasChoices("option_type", "type")
+    )
     is_liquid: bool = True
 
     @field_validator("mid", mode="before")
@@ -163,11 +175,37 @@ class ChainRow(BaseModelDecimal):
             return Decimal("0")
         return (Decimal(str(bid)) + Decimal(str(ask))) / Decimal("2")
 
+    @field_validator("expiry", mode="before")
+    @classmethod
+    def parse_expiry(cls, v):
+        if v in (None, ""):
+            return None
+        if isinstance(v, datetime):
+            return v
+        if isinstance(v, date):
+            return datetime.combine(v, datetime.min.time())
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v)
+            except ValueError:
+                return None
+        return v
+
 
 class OptionChain(BaseModelDecimal):
-    symbol: str
-    expiry: datetime
+    symbol: Optional[str] = None
+    expiry: Optional[datetime] = None
     rows: List[ChainRow]
+
+    @model_validator(mode="after")
+    def _populate_metadata(self):
+        if self.rows:
+            first = self.rows[0]
+            if self.symbol is None and first.symbol is not None:
+                self.symbol = first.symbol
+            if self.expiry is None and first.expiry is not None:
+                self.expiry = first.expiry
+        return self
 
 
 class Greeks(BaseModelDecimal):
