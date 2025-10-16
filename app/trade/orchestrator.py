@@ -7,9 +7,11 @@ import logging
 import time
 import uuid
 from collections import deque
-from dataclasses import replace
+from dataclasses import asdict, dataclass, is_dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Sequence
+import inspect
+import math
 import threading
 
 from app.execution.router import ExecIntent, OrderRouter
@@ -26,6 +28,165 @@ def _now_ts() -> float:
 
 def _uppercase(symbol: str) -> str:
     return symbol.upper() if symbol else symbol
+
+
+def _get_attr(obj: Any, names: Iterable[str], default: float = float("nan")) -> float:
+    """Safely fetch the first present numeric attribute from ``names``."""
+
+    if isinstance(obj, dict):
+        for n in names:
+            v = obj.get(n)
+            if v is not None:
+                try:
+                    return float(v)
+                except Exception:  # pragma: no cover - defensive
+                    continue
+        return default
+
+    if is_dataclass(obj):
+        data = asdict(obj)
+        for n in names:
+            v = data.get(n)
+            if v is not None:
+                try:
+                    return float(v)
+                except Exception:  # pragma: no cover - defensive
+                    continue
+        return default
+
+    for n in names:
+        if hasattr(obj, n):
+            v = getattr(obj, n)
+            if v is not None:
+                try:
+                    return float(v)
+                except Exception:  # pragma: no cover - defensive
+                    continue
+
+    try:
+        if hasattr(obj, "model_dump"):
+            data = obj.model_dump()
+            for n in names:
+                v = data.get(n)
+                if v is not None:
+                    try:
+                        return float(v)
+                    except Exception:  # pragma: no cover - defensive
+                        continue
+    except Exception:  # pragma: no cover - defensive
+        pass
+    return default
+
+
+def _symbol_of(obj: Any) -> str:
+    for n in ("symbol", "underlying", "ticker"):
+        try:
+            if isinstance(obj, dict) and n in obj and obj[n] is not None:
+                return str(obj[n])
+            if hasattr(obj, n):
+                value = getattr(obj, n)
+                if value is not None:
+                    return str(value)
+            if hasattr(obj, "model_dump"):
+                data = obj.model_dump()
+                if n in data and data[n] is not None:
+                    return str(data[n])
+        except Exception:  # pragma: no cover - defensive
+            continue
+    return ""
+
+
+def _ts_of(obj: Any) -> float:
+    for n in ("ts", "timestamp", "event_time", "created_at"):
+        try:
+            value = None
+            if isinstance(obj, dict):
+                value = obj.get(n)
+            elif hasattr(obj, n):
+                value = getattr(obj, n)
+            elif hasattr(obj, "model_dump"):
+                value = obj.model_dump().get(n)
+            if value is None:
+                continue
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                try:
+                    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    continue
+            if isinstance(value, datetime):
+                return value.timestamp()
+        except Exception:  # pragma: no cover - defensive
+            continue
+    return 0.0
+
+
+def _score_candidate(cand: Any) -> tuple[float, float, str, float]:
+    ev = _get_attr(
+        cand,
+        ("ev", "expected_value", "score", "alpha", "policy_score"),
+        default=float("nan"),
+    )
+    if isinstance(ev, float) and math.isnan(ev):
+        ev = 0.0
+    secondary = _get_attr(cand, ("score", "alpha", "policy_score", "p_win"), default=0.0)
+    symbol = _symbol_of(cand)
+    ts = _ts_of(cand)
+    return (-float(ev or 0.0), -float(secondary or 0.0), symbol, float(ts))
+
+
+@dataclass
+class _RankPayload:
+    base: Any
+    ev: float
+    expected_value: float
+    score: float | None
+    alpha: float | None
+    policy_score: float | None
+    p_win: float | None
+    symbol: str
+    timestamp: Any
+    ts: Any
+    event_time: Any
+    created_at: Any
+
+    def model_dump(self) -> dict[str, Any]:
+        if hasattr(self.base, "model_dump"):
+            try:
+                data = self.base.model_dump()
+                if isinstance(data, dict):
+                    return data
+            except Exception:  # pragma: no cover - defensive
+                pass
+        return {}
+
+
+def _build_rank_payload(candidate: Any, expected_value: float, direction_prob: float | None) -> _RankPayload:
+    meta: Mapping[str, Any] | None = getattr(candidate, "meta", None)
+    meta_dict: Mapping[str, Any] = meta if isinstance(meta, Mapping) else {}
+
+    def _meta_or_attr(name: str) -> Any:
+        if name in meta_dict and meta_dict[name] is not None:
+            return meta_dict[name]
+        if isinstance(candidate, dict):
+            return candidate.get(name)
+        return getattr(candidate, name, None)
+
+    return _RankPayload(
+        base=candidate,
+        ev=float(expected_value),
+        expected_value=float(expected_value),
+        score=_meta_or_attr("score"),
+        alpha=_meta_or_attr("alpha"),
+        policy_score=_meta_or_attr("policy_score"),
+        p_win=direction_prob if direction_prob is not None else _meta_or_attr("p_win"),
+        symbol=str(_meta_or_attr("symbol") or getattr(candidate, "symbol", "") or ""),
+        timestamp=_meta_or_attr("timestamp"),
+        ts=_meta_or_attr("ts"),
+        event_time=_meta_or_attr("event_time"),
+        created_at=_meta_or_attr("created_at"),
+    )
 
 
 class TradeOrchestrator:
@@ -178,7 +339,7 @@ class TradeOrchestrator:
 
         ml_probs = self._probabilities([c.symbol for c in candidates])
 
-        scored: list[tuple[SignalCandidate, float, float | None]] = []
+        scored: list[tuple[SignalCandidate, float, float | None, _RankPayload]] = []
         skipped: list[dict[str, Any]] = []
         for candidate in candidates:
             symbol = _uppercase(candidate.symbol)
@@ -203,7 +364,8 @@ class TradeOrchestrator:
             if filters:
                 skipped.append(record)
                 continue
-            scored.append((candidate, expected_value, direction_prob))
+            rank_payload = _build_rank_payload(candidate, expected_value, direction_prob)
+            scored.append((candidate, expected_value, direction_prob, rank_payload))
 
         with self._metrics_lock:
             self._metrics["considered"] += len(scored)
@@ -213,10 +375,10 @@ class TradeOrchestrator:
                 self._record_decision(record)
             return
 
-        scored.sort(key=lambda item: item[1], reverse=True)
+        scored.sort(key=lambda item: _score_candidate(item[3]))
         selected = scored[: config.top_n]
         dropped = scored[config.top_n :]
-        for candidate, ev_value, direction_prob in dropped:
+        for candidate, ev_value, direction_prob, _ in dropped:
             self._record_decision(
                 {
                     "symbol": _uppercase(candidate.symbol),
@@ -233,7 +395,7 @@ class TradeOrchestrator:
         for record in skipped:
             self._record_decision(record)
 
-        for candidate, expected_value, direction_prob in selected:
+        for candidate, expected_value, direction_prob, _ in selected:
             await self._execute_candidate(candidate, expected_value, direction_prob)
 
     async def _execute_candidate(
@@ -378,6 +540,56 @@ class TradeOrchestrator:
             self._last_error = str(exc)
             return {"accepted": False, "reason": f"router_error:{exc}"}
         return retry_result
+
+    async def route_top_event(self, proposals: Sequence[Any]) -> Any:
+        if not proposals:
+            log.info("route_top_event: no proposals")
+            return None
+
+        ranked = sorted(proposals, key=_score_candidate)
+        top = ranked[0]
+        identifier = getattr(top, "client_order_id", None) or _symbol_of(top)
+        log.info("route_top_event: selected=%s", identifier)
+
+        allow: bool = True
+        for flag_name in ("should_trade", "allow", "approved", "ok"):
+            value = None
+            if isinstance(top, Mapping):
+                value = top.get(flag_name)
+            elif hasattr(top, flag_name):
+                value = getattr(top, flag_name)
+            else:
+                try:
+                    if hasattr(top, "model_dump"):
+                        dumped = top.model_dump()
+                        if isinstance(dumped, dict):
+                            value = dumped.get(flag_name)
+                except Exception:  # pragma: no cover - defensive
+                    value = None
+            if value is not None:
+                allow = bool(value)
+                break
+
+        if not allow:
+            log.info("route_top_event: blocked by risk/policy")
+            return None
+
+        submit = getattr(self.router, "submit", None)
+        if submit is None:
+            log.error("route_top_event: router missing submit method")
+            return None
+
+        try:
+            if asyncio.iscoroutinefunction(submit):
+                result = await submit(top)  # type: ignore[arg-type]
+            else:
+                result = submit(top)  # type: ignore[arg-type]
+                if inspect.isawaitable(result):
+                    result = await result
+            return result
+        except Exception as exc:  # noqa: BLE001
+            log.exception("route_top_event: submit failed: %s", exc)
+            raise
 
     def _probabilities(self, symbols: Sequence[str]) -> dict[str, float | None]:
         predictor = self.ml_predictor
