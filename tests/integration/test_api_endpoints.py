@@ -21,7 +21,6 @@ def test_orders_positions_ok_or_empty():
 
 
 @pytest.mark.usefixtures("server_stack")
-@pytest.mark.mock_only
 def test_account_skipped_in_mock(require_mock):
     r = requests.get(f"{API}/alpaca/account", timeout=10)
     assert r.status_code in (200, 404)  # mock may return 200 with mock flag, or route hidden
