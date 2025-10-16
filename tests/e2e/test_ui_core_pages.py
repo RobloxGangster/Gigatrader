@@ -1,6 +1,8 @@
 import os, re, pytest
-
-from ._nav import open_nav_and_select
+try:
+    from ._nav import open_nav_and_select
+except Exception:
+    from tests.e2e._nav import open_nav_and_select
 
 UI = f"http://127.0.0.1:{os.getenv('GT_UI_PORT','8501')}"
 
