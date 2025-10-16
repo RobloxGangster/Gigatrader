@@ -29,6 +29,7 @@ ruff==0.14.0
     # via -r requirements-dev.in
 
 pytest-playwright
+pytest-base-url
 playwright
 httpx
 requests

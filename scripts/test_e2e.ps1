@@ -58,8 +58,8 @@ Get-ChildItem -Recurse -File -Path (Join-Path $ROOT 'tests\e2e') -Filter '*.py' 
   | Tee-Object $LOGFILE -Append | Write-Host
 
 # --- run e2e (Playwright) with LIVE console output ---
-Log "[STEP] pytest tests/e2e -m e2e -rA" | Tee-Object $LOGFILE -Append | Write-Host
-& $PYEXE -m pytest tests/e2e -m e2e -rA 2>&1 `
+Log "[STEP] pytest -m e2e -rA" | Tee-Object $LOGFILE -Append | Write-Host
+& $PYEXE -m pytest -m e2e -rA 2>&1 `
   | Tee-Object $LOGFILE -Append | Write-Host
 
 $rc = $LASTEXITCODE

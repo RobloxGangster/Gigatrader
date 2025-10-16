@@ -44,7 +44,7 @@ $PW_RESULTS = Join-Path $ROOT 'test-results'
 if (Test-Path $PW_RESULTS) { Remove-Item -Recurse -Force $PW_RESULTS -ErrorAction SilentlyContinue }
 
 # ----------------- PHASE 1: non-E2E -----------------
-$nonE2E = @('tests','-m','not e2e','-rA')
+$nonE2E = @('tests','-m','not e2e','--ignore=tests/e2e','-rA')
 & $PYEXE -m pytest @nonE2E 2>&1 | Tee-Object $LOG -Append | Write-Host
 $rc1 = $LASTEXITCODE
 if ($rc1 -ne 0) { Log "[WARN] non-E2E failed with rc=$rc1 (continuing to E2E)" | Tee-Object $LOG -Append | Write-Host }
@@ -53,7 +53,7 @@ if ($rc1 -ne 0) { Log "[WARN] non-E2E failed with rc=$rc1 (continuing to E2E)" |
 Log "[STEP] playwright install chromium" | Tee-Object $LOG -Append | Write-Host
 & $PYEXE -m playwright install chromium 2>&1 | Tee-Object $LOG -Append | Write-Host
 
-$e2eArgs = @('tests/e2e','-m','e2e','-rA')
+$e2eArgs = @('-m','e2e','-rA')
 & $PYEXE -m pytest @e2eArgs 2>&1 | Tee-Object $LOG -Append | Write-Host
 $rc2 = $LASTEXITCODE
 

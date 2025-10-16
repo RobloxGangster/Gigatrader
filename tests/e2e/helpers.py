@@ -53,7 +53,7 @@ def wait_for_heading(page: Page, candidates: Iterable[str], timeout_ms: int = 10
     # Wait for any acceptable heading to appear
     for name in candidates:
         try:
-            page.get_by_role("heading", name=name).wait_for(timeout=timeout_ms)
+            page.get_by_role("heading", name=name, exact=False).wait_for(timeout=timeout_ms)
             return
         except Exception:
             continue
