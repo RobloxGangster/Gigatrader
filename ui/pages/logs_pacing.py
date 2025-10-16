@@ -16,11 +16,6 @@ from ui.state import AppSessionState
 from ui.utils.charts import pacing_history_chart
 from ui.utils.diagnostics import UI_DIAG_PATH, run_ui_diagnostics
 
-# --- Test-friendly, visible markers ---
-st.header("Diagnostics / Logs")
-st.caption("Logs & Pacing")
-st.markdown('<div data-testid="logs-panel"></div>', unsafe_allow_html=True)
-
 
 def _to_ndjson(records: Iterable[dict]) -> str:
     return "\n".join(json.dumps(record, default=str) for record in records)
@@ -67,7 +62,7 @@ def _create_repro_bundle(
 
 def _logs_table(logs: list[dict]) -> None:
     df = pd.DataFrame(logs)
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width="stretch")
     st.download_button(
         "Download logs (NDJSON)",
         _to_ndjson(logs).encode("utf-8"),
@@ -78,6 +73,7 @@ def _logs_table(logs: list[dict]) -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Diagnostics / Logs")
+    st.markdown('<div data-testid="logs-panel"></div>', unsafe_allow_html=True)
     st.header("Diagnostics / Logs")
     st.caption("Logs & Pacing")
     st.caption("DIAGNOSTICS_READY")
@@ -91,7 +87,8 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     if run_now:
         result = run_ui_diagnostics(api)
         st.success(
-            f"Ran {result['summary']['total']} checks — "
+            "Diagnostics complete — "
+            f"ran {result['summary']['total']} checks, "
             f"{result['summary']['passed']} passed, {result['summary']['failed']} failed."
         )
         with st.expander("Details", expanded=True):
