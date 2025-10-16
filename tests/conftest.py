@@ -1,17 +1,17 @@
 from __future__ import annotations
-import os, pathlib, contextlib, inspect, pytest
+import contextlib, inspect, os, pathlib, pytest
 
-# --- Register asyncio plugin even when PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ---
-# Try both plugin module paths (older/newer versions)
-pytest_plugins = [
+pytest_plugins = (
     "tests.fixtures.server_stack",
     "tests.fixtures.env_mode",
-]
-try:
-    import pytest_asyncio.plugin  # noqa: F401
-    pytest_plugins.append("pytest_asyncio.plugin")
-except Exception:
-    pytest_plugins.append("pytest_asyncio")  # fallback
+)
+
+
+# Let tests choose mock vs paper by env; default to mock for safety.
+@pytest.fixture(scope="session", autouse=True)
+def env_mock_mode():
+    os.environ.setdefault("MOCK_MODE", "true")
+    return os.environ["MOCK_MODE"]
 
 def pytest_sessionstart(session):
     # Default OFF unless a test explicitly sets ON

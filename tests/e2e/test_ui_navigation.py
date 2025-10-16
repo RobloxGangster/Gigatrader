@@ -2,6 +2,7 @@ from __future__ import annotations
 import os, pytest, requests
 from playwright.sync_api import Page, expect
 from ._nav import open_nav_and_select
+from .helpers import DIAG_ALIASES, wait_for_heading
 
 BASE_URL = os.getenv("GT_UI_URL", "http://127.0.0.1:8501")
 
@@ -24,6 +25,7 @@ def test_nav_to_diagnostics_and_run(page: Page):
     page.goto(BASE_URL, wait_until="domcontentloaded", timeout=30_000)
     open_nav_and_select(page, "Diagnostics / Logs")
 
+    wait_for_heading(page, DIAG_ALIASES)
     # Wait for our stable, visible test hook
     expect(page.locator('[data-testid="logs-panel"]')).to_be_visible(timeout=10_000)
 

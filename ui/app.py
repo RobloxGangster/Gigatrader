@@ -7,7 +7,14 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
-from ui.pages import control_center, option_chain, logs_pacing
+from ui.pages import (
+    backtest_reports,
+    control_center,
+    logs_pacing,
+    option_chain,
+    research,
+    strategy_tuning,
+)
 from ui.services.backend import get_backend
 from ui.services.config import api_base_url, mock_mode
 from ui.state import AppSessionState, init_session_state
@@ -16,6 +23,9 @@ from ui.utils.runtime import get_runtime_flags
 PAGE_MAP = {
     "Control Center": control_center,
     "Option Chain": option_chain,
+    "Research": research,
+    "Strategy Tuning": strategy_tuning,
+    "Backtest Reports": backtest_reports,
     "Diagnostics / Logs": logs_pacing,
 }
 

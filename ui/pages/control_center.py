@@ -94,7 +94,7 @@ def _action_buttons(
     confirm_halt = st.checkbox("Confirm flatten & halt", key="confirm_halt")
     start_paper = col1.button(
         "Start Paper",
-        use_container_width=True,
+        width="stretch",
         disabled=mock_mode,
         help="Disabled in Mock mode; flip MOCK_MODE=false to send to Alpaca paper.",
     )
@@ -104,7 +104,7 @@ def _action_buttons(
         st.toast(f"Paper run started ({state.run_id})", icon="✅")
     stop_runs = col2.button(
         "Stop",
-        use_container_width=True,
+        width="stretch",
         disabled=mock_mode,
         help="Disabled in Mock mode.",
     )
@@ -114,7 +114,7 @@ def _action_buttons(
         st.toast("All paper runs stopped", icon="🛑")
     flatten_halt = col3.button(
         "Flatten & Halt",
-        use_container_width=True,
+        width="stretch",
         disabled=(mock_mode or not confirm_halt),
         help="Disabled in Mock mode; requires confirmation when enabled.",
     )
@@ -140,7 +140,7 @@ def _live_controls(
     disabled = not armed
     start_live = st.button(
         "Start Live",
-        use_container_width=True,
+        width="stretch",
         disabled=(disabled or mock_mode),
         help="Disabled in Mock mode; flip MOCK_MODE=false to send to Alpaca paper.",
     )
