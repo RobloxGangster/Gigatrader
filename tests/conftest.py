@@ -44,23 +44,46 @@ def ensure_browsers():
 
 @contextlib.contextmanager
 def _spawn(cmd, cwd=None, env=None, stdout_path=None, stderr_path=None):
+    """
+    Start a child process in its own process group on Windows so teardown signals
+    don't bubble to pytest/Playwright. Always terminate; never send CTRL_BREAK.
+    """
     out = open(stdout_path, "wb") if stdout_path else subprocess.DEVNULL
     err = open(stderr_path, "wb") if stderr_path else subprocess.DEVNULL
-    p = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=out, stderr=err)
+
+    creationflags = 0
+    startupinfo = None
+    if os.name == "nt":
+        # Create a new process group so signals don't hit the whole console.
+        creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+        # (Optional) prevent new window flashes:
+        # si = subprocess.STARTUPINFO(); si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        # startupinfo = si
+
+    p = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdout=out,
+        stderr=err,
+        creationflags=creationflags,
+        startupinfo=startupinfo,
+    )
     try:
         yield p
     finally:
+        # Do NOT send CTRL_BREAK on Windows; just terminate.
         with contextlib.suppress(Exception):
-            if os.name == "nt":
-                p.send_signal(signal.CTRL_BREAK_EVENT)
             p.terminate()
         try:
-            p.wait(timeout=5)
+            p.wait(timeout=8)
         except Exception:
             with contextlib.suppress(Exception):
                 p.kill()
-        if out not in (None, subprocess.DEVNULL): out.close()
-        if err not in (None, subprocess.DEVNULL): err.close()
+        for fh in (out, err):
+            if fh not in (None, subprocess.DEVNULL):
+                with contextlib.suppress(Exception):
+                    fh.close()
 
 @pytest.fixture(scope="session")
 def server_stack(env_mock_mode):
