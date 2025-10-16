@@ -89,6 +89,20 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
         with st.expander("Details", expanded=True):
             st.json(result)
 
+    st.subheader("Broker Sanity")
+    try:
+        acc = api.get_account()
+        pv = acc.get("portfolio_value") or acc.get("equity")
+        st.write(
+            "Portfolio Value: **{pv}**  |  Cash: **{cash}**  |  BP: **{bp}**".format(
+                pv=pv,
+                cash=acc.get("cash"),
+                bp=acc.get("buying_power"),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - best effort surface
+        st.warning(f"Account check failed: {exc}")
+
     # Show last few saved diagnostic runs
     st.markdown("**Recent Diagnostic Runs**")
     if UI_DIAG_PATH.exists():

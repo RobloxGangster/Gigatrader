@@ -8,4 +8,5 @@ __all__ = [
     "backtests_compat",
     "options",
     "logs",
+    "alpaca_live",
 ]

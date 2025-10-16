@@ -105,6 +105,41 @@ def _normalize_order_shape(raw: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _normalize_position_shape(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize positions coming from Alpaca or internal sources."""
+
+    symbol = (
+        raw.get("symbol")
+        or raw.get("asset_symbol")
+        or raw.get("asset", {}).get("symbol")
+    )
+    qty = _coerce_float(
+        raw.get("qty")
+        or raw.get("quantity")
+        or raw.get("qty_available")
+        or raw.get("exchange_qty")
+        or raw.get("position_qty")
+    )
+    avg_price = _coerce_float(raw.get("avg_entry_price") or raw.get("avg_price"))
+    market_price = _coerce_float(raw.get("current_price") or raw.get("market_price"))
+    unrealized_pl = _coerce_float(
+        raw.get("unrealized_pl")
+        or raw.get("unrealized_plpc")
+        or raw.get("unrealized_intraday_pl")
+    )
+    side = "long" if qty >= 0 else "short"
+    out = {
+        "symbol": symbol,
+        "qty": qty,
+        "avg_price": avg_price,
+        "market_price": market_price,
+        "unrealized_pl": unrealized_pl,
+        "side": side,
+    }
+    out.update({k: v for k, v in raw.items() if k not in out})
+    return out
+
+
 class BackendError(RuntimeError):
     """Raised when the backend cannot fulfil a request."""
 
@@ -129,6 +164,7 @@ class BrokerAPI(Protocol):
     def get_orders(self) -> List[Order]: ...
 
     def get_positions(self) -> List[Position]: ...
+    def get_account(self) -> Dict[str, Any]: ...
 
     def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Trade]: ...
 
@@ -269,13 +305,17 @@ class RealAPI:
         return RiskSnapshot(**payload)
 
     def get_orders(self) -> List[Order]:
-        payload = self._request("GET", "/orders")
+        payload = self._request("GET", "/orders", params={"live": True})
         normalized = [_normalize_order_shape(item) for item in payload]
         return [Order(**item) for item in normalized]
 
     def get_positions(self) -> List[Position]:
-        payload = self._request("GET", "/positions")
-        return [Position(**item) for item in payload]
+        payload = self._request("GET", "/positions", params={"live": True})
+        normalized = [_normalize_position_shape(item) for item in payload]
+        return [Position(**item) for item in normalized]
+
+    def get_account(self) -> Dict[str, Any]:
+        return self._request("GET", "/alpaca/account")
 
     def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Trade]:
         payload = self._request("GET", "/trades", params=filters)
@@ -444,7 +484,18 @@ class MockAPI:
 
     def get_positions(self) -> List[Position]:
         payload = _load_json_fixture("positions")
-        return [Position(**item) for item in payload]
+        normalized = [_normalize_position_shape(item) for item in payload]
+        return [Position(**item) for item in normalized]
+
+    def get_account(self) -> Dict[str, Any]:
+        snapshot = self.get_risk_snapshot()
+        return {
+            "mock_mode": True,
+            "equity": snapshot.equity,
+            "cash": snapshot.cash,
+            "buying_power": snapshot.max_exposure,
+            "portfolio_value": snapshot.equity,
+        }
 
     def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Trade]:
         payload = _load_json_fixture("trades")

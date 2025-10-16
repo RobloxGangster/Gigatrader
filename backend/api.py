@@ -1,4 +1,4 @@
-import os, threading
+import os, threading, asyncio
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -14,6 +14,7 @@ from backend.routes import logs as logs_routes  # noqa: E402
 from backend.routes import backtest_v2 as backtest_v2_routes  # noqa: E402
 from backend.routes import ml as ml_routes  # noqa: E402
 from backend.routes import ml_calibration as ml_calibration_routes  # noqa: E402
+from backend.routes import alpaca_live as alpaca_live_routes  # noqa: E402
 
 app.include_router(ml_routes.router)
 app.include_router(ml_calibration_routes.router)
@@ -21,6 +22,20 @@ app.include_router(backtest_v2_routes.router)
 app.include_router(backtests_compat.router)
 app.include_router(options_routes.router)
 app.include_router(logs_routes.router)
+app.include_router(alpaca_live_routes.router)
+
+
+@app.on_event("startup")
+async def _startup_reconcile():
+    if os.getenv("MOCK_MODE", "").lower() in ("1", "true", "yes", "on"):
+        return
+    try:
+        from backend.services.reconcile import pull_all_if_live
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, pull_all_if_live)
+    except Exception:
+        pass
 
 
 _kill_switch = KillSwitch()
