@@ -3,46 +3,41 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Callable, Dict, Iterable, Tuple
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from ui.pages import (
-    backtest_reports,
-    control_center,
-    diagnostics_logs,
-    option_chain,
-    research,
-    strategy_tuning,
-)
+from ui.pages.backtest_reports import render as render_backtest_reports
+from ui.pages.control_center import render as render_control_center
+from ui.pages.option_chain import render as render_option_chain
+from ui.pages.research import render as render_research
+from ui.pages.strategy_tuning import render as render_strategy_tuning
+from ui.pages.diagnostics_logs import render_diagnostics_logs
 from ui.router import Page, render_nav_and_route, slugify
 from ui.services.backend import get_backend
 from ui.services.config import api_base_url, mock_mode
 from ui.state import AppSessionState, init_session_state
 from ui.utils.runtime import get_runtime_flags
 
-def _page_definitions() -> Iterable[Tuple[str, object]]:
+def _page_definitions(api: object, state: AppSessionState) -> Iterable[Tuple[str, Callable[[], None]]]:
     return (
-        ("Control Center", control_center),
-        ("Option Chain", option_chain),
-        ("Research", research),
-        ("Strategy Tuning", strategy_tuning),
-        ("Backtest Reports", backtest_reports),
-        ("Diagnostics / Logs", diagnostics_logs),
+        ("Control Center", lambda: render_control_center(api, state)),
+        ("Option Chain", lambda: render_option_chain(api, state)),
+        ("Research", lambda: render_research(api, state)),
+        ("Strategy Tuning", lambda: render_strategy_tuning(api, state)),
+        ("Backtest Reports", lambda: render_backtest_reports(api, state)),
+        ("Diagnostics / Logs", lambda: render_diagnostics_logs(api=api, state=state)),
     )
 
 
 def _build_pages(api: object, state: AppSessionState) -> Dict[str, Page]:
     pages: Dict[str, Page] = {}
-    for label, module in _page_definitions():
-        render_fn = getattr(module, "render", None)
-        if not callable(render_fn):
-            continue
+    for label, render_fn in _page_definitions(api, state):
         page = Page(
             label=label,
             slug=slugify(label),
-            render=lambda render_fn=render_fn, api=api, state=state: render_fn(api, state),
+            render=render_fn,
         )
         pages[page.slug] = page
     return pages
