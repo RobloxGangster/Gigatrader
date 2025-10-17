@@ -3,6 +3,7 @@
 from . import (
     backtest_reports,
     control_center,
+    diagnostics_logs,
     logs_pacing,
     option_chain,
     research,
@@ -12,6 +13,7 @@ from . import (
 __all__ = [
     "backtest_reports",
     "control_center",
+    "diagnostics_logs",
     "logs_pacing",
     "option_chain",
     "research",

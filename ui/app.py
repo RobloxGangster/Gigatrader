@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Dict, Iterable, Tuple
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -11,31 +11,41 @@ from dotenv import load_dotenv
 from ui.pages import (
     backtest_reports,
     control_center,
-    logs_pacing,
+    diagnostics_logs,
     option_chain,
     research,
     strategy_tuning,
 )
+from ui.router import Page, render_nav_and_route, slugify
 from ui.services.backend import get_backend
 from ui.services.config import api_base_url, mock_mode
 from ui.state import AppSessionState, init_session_state
 from ui.utils.runtime import get_runtime_flags
 
-PAGE_MAP: Dict[str, Callable[[Any, Any], None]] = {
-    "Control Center": control_center,
-    "Option Chain": option_chain,
-    "Research": research,
-    "Strategy Tuning": strategy_tuning,
-    "Backtest Reports": backtest_reports,
-    "Diagnostics / Logs": logs_pacing,
-}
+def _page_definitions() -> Iterable[Tuple[str, object]]:
+    return (
+        ("Control Center", control_center),
+        ("Option Chain", option_chain),
+        ("Research", research),
+        ("Strategy Tuning", strategy_tuning),
+        ("Backtest Reports", backtest_reports),
+        ("Diagnostics / Logs", diagnostics_logs),
+    )
 
 
-def to_slug(label: str) -> str:
-    return label.lower().replace(" ", "-").replace("/", "").replace("&", "and")
-
-
-SLUG_TO_LABEL = {to_slug(lbl): lbl for lbl in PAGE_MAP.keys()}
+def _build_pages(api: object, state: AppSessionState) -> Dict[str, Page]:
+    pages: Dict[str, Page] = {}
+    for label, module in _page_definitions():
+        render_fn = getattr(module, "render", None)
+        if not callable(render_fn):
+            continue
+        page = Page(
+            label=label,
+            slug=slugify(label),
+            render=lambda render_fn=render_fn, api=api, state=state: render_fn(api, state),
+        )
+        pages[page.slug] = page
+    return pages
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -88,43 +98,18 @@ def main() -> None:
 
     st.title("Gigatrader")
 
-    try:
-        qp = st.query_params  # type: ignore[attr-defined]
-        qp_get = qp.get
-        qp_set = qp.update
-    except Exception:
-        qp = None
-        qp_get = lambda key, default=None: st.experimental_get_query_params().get(key, [default])[0]
-        qp_set = lambda d: st.experimental_set_query_params(**d)
-
-    requested = qp_get("page", None)
-    if requested:
-        req = requested if isinstance(requested, str) else (requested[0] if requested else None)
-        normalized = SLUG_TO_LABEL.get(to_slug(req), None) or (req if req in PAGE_MAP else None)
-    else:
-        normalized = None
-
-    st.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
-    page_labels = list(PAGE_MAP.keys())
-
-    default_index = page_labels.index(normalized) if normalized in page_labels else 0
-    selection = st.selectbox(
-        "Navigation",
-        page_labels,
-        index=default_index,
-        key="nav_select",
-        help="Jump to any page",
-    )
-
-    qp_set({"page": to_slug(selection)})
-
-    st.markdown('<div data-testid="app-ready" style="display:none"></div>', unsafe_allow_html=True)
-
     state: AppSessionState = init_session_state()
     api = get_backend()
 
     flags = get_runtime_flags(api)
     st.session_state["__mock_mode__"] = flags.mock_mode
+
+    pages = _build_pages(api, state)
+
+    st.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
+    selected_page = render_nav_and_route(pages, default_label="Control Center", auto_render=False)
+
+    st.markdown('<div data-testid="app-ready" style="display:none"></div>', unsafe_allow_html=True)
 
     _render_mode_badge(flags.mock_mode)
     st.write("")  # spacer
@@ -147,11 +132,7 @@ def main() -> None:
             except Exception:
                 pass
 
-    page_mod = PAGE_MAP.get(selection, control_center)
-    if page_mod and hasattr(page_mod, "render"):
-        page_mod.render(api, state)
-    else:
-        st.error(f"Page '{selection}' is not available.")
+    selected_page.render()
 
 
 if __name__ == "__main__":  # pragma: no cover - executed by Streamlit runtime
