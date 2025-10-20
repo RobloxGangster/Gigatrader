@@ -77,7 +77,8 @@ def _clear_results() -> None:
 
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
-    st.title("Diagnostics")
+    st.title("Diagnostics / Logs")
+    st.subheader("Logs & Pacing")
     st.write("Runs each page, captures exceptions, and writes a JSON report under `logs/`.")
 
     run_all = st.button("Run full sweep", type="primary")
