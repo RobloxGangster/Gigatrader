@@ -60,5 +60,7 @@ def get_page_from_query_params(qp: dict, default_slug: str) -> str:
     if isinstance(raw, list):
         raw = raw[0]
     slug = str(raw).strip().lower()
+    if slug not in PAGES and slug == "diagnostics":
+        slug = "diagnostics-logs"
     return slug if slug in PAGES else default_slug
 

@@ -3,14 +3,17 @@ import os
 import threading
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from core.kill_switch import KillSwitch
+from app.market.stream_manager import StreamManager
 
 load_dotenv()
 
 app = FastAPI(title="Gigatrader API")
+stream_manager = StreamManager()
+stream_router = APIRouter()
 
 from backend.routes import backtests_compat  # noqa: E402
 from backend.routes import options as options_routes  # noqa: E402
@@ -20,6 +23,7 @@ from backend.routes import backtest_v2 as backtest_v2_routes  # noqa: E402
 from backend.routes import ml as ml_routes  # noqa: E402
 from backend.routes import ml_calibration as ml_calibration_routes  # noqa: E402
 from backend.routes import alpaca_live as alpaca_live_routes  # noqa: E402
+from backend.routes import broker as broker_routes  # noqa: E402
 from backend.routes import health as health_routes  # noqa: E402
 
 app.include_router(ml_routes.router)
@@ -30,11 +34,17 @@ app.include_router(options_routes.router)
 app.include_router(logs_routes.router)
 app.include_router(pacing_routes.router)
 app.include_router(alpaca_live_routes.router)
+app.include_router(broker_routes.router)
 app.include_router(health_routes.router)
 
 
 @app.on_event("startup")
 async def _startup_reconcile():
+    try:
+        loop = asyncio.get_event_loop()
+        stream_manager.start(loop)
+    except Exception:
+        pass
     if os.getenv("MOCK_MODE", "").lower() in ("1", "true", "yes", "on"):
         return
     try:
@@ -65,6 +75,14 @@ def _run_runner():
         R.main()
     finally:
         _running = False
+
+
+@stream_router.get("/stream/status")
+def stream_status() -> dict:
+    return stream_manager.status()
+
+
+app.include_router(stream_router)
 
 
 @app.get("/status")

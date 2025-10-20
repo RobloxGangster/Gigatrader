@@ -12,7 +12,7 @@ from ui.pages.control_center import render as render_control_center
 from ui.pages.option_chain import render as render_option_chain
 from ui.pages.research import render as render_research
 from ui.pages.strategy_tuning import render as render_strategy_tuning
-from ui.pages.diagnostics import render as render_diagnostics
+from ui.pages.diagnostics_logs import render as render_diagnostics
 from ui.router import (
     PAGES,
     all_labels,
