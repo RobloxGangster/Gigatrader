@@ -62,7 +62,47 @@ class StreamManager:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
 
+    async def _close_ws(self) -> None:
+        if self._ws is not None:
+            try:
+                await self._ws.close()
+            except Exception:  # pragma: no cover - best effort cleanup
+                pass
+            finally:
+                self._ws = None
+
     def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         loop = loop or asyncio.get_event_loop()
         if not self._task or self._task.done():
             self._task = loop.create_task(self._run())
+
+    def stop(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
+        """Terminate the background websocket task if active."""
+
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = None
+        self._status = "offline"
+
+        try:
+            loop = loop or asyncio.get_event_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            try:
+                loop.create_task(self._close_ws())
+            except RuntimeError:
+                pass
+        else:
+            try:
+                asyncio.run(self._close_ws())
+            except RuntimeError:
+                # Already inside a running loop without handle – fallback to sync close
+                if self._ws is not None:
+                    try:
+                        self._ws.close()  # type: ignore[call-arg]
+                    except Exception:
+                        pass
+                    finally:
+                        self._ws = None
