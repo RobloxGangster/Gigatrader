@@ -7,6 +7,15 @@ from typing import Any, Dict, Iterable, List, Tuple
 import requests
 import streamlit as st
 
+
+def _safe_rerun() -> None:
+    """Streamlit rerun that works on both old and new versions."""
+    try:
+        st.rerun()  # Streamlit >= 1.32
+    except AttributeError:
+        # Fallback for older Streamlit versions
+        st.experimental_rerun()  # type: ignore[attr-defined]
+
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
 from ui.services.backend import BrokerAPI
@@ -484,7 +493,7 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
         refresh_col, auto_col = st.columns([1, 1])
         if refresh_col.button("Refresh", key="cc_manual_refresh"):
             st.session_state["__cc_manual_refresh_ts__"] = time.time()
-            st.experimental_rerun()
+            _safe_rerun()
         auto_enabled = auto_col.checkbox(
             "Auto-refresh telemetry",
             value=st.session_state.get("__cc_auto_refresh__", True),
@@ -539,4 +548,4 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
         if wait > 0:
             time.sleep(wait)
         st.session_state["__cc_auto_refresh_last__"] = time.time()
-        st.experimental_rerun()
+        _safe_rerun()

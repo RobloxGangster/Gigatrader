@@ -9,7 +9,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from backend.routers import broker, stream, strategy, risk, orchestrator, metrics
+from backend.routers import (
+    broker,
+    diagnostics as diagnostics_router,
+    logs as logs_router,
+    metrics,
+    orchestrator,
+    risk,
+    strategy,
+    stream,
+)
 from backend.routers.deps import get_kill_switch, get_orchestrator, get_stream_manager
 from backend.services import reconcile
 from backend.services.alpaca_client import get_trading_client
@@ -33,6 +42,8 @@ app.include_router(strategy.router)
 app.include_router(risk.router)
 app.include_router(orchestrator.router)
 app.include_router(metrics.router)
+app.include_router(logs_router.router)
+app.include_router(diagnostics_router.router)
 
 from backend.routes import backtests_compat  # noqa: E402
 from backend.routes import options as options_routes  # noqa: E402

@@ -7,4 +7,6 @@ __all__ = [
     "risk",
     "orchestrator",
     "metrics",
+    "logs",
+    "diagnostics",
 ]
