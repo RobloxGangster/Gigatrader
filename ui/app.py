@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Tuple
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -13,34 +12,88 @@ from ui.pages.control_center import render as render_control_center
 from ui.pages.option_chain import render as render_option_chain
 from ui.pages.research import render as render_research
 from ui.pages.strategy_tuning import render as render_strategy_tuning
-from ui.pages.diagnostics_logs import render_diagnostics_logs
-from ui.router import Page, render_nav_and_route, slugify
+from ui.pages.diagnostics import render as render_diagnostics
+from ui.router import (
+    PAGES,
+    all_labels,
+    get_page_from_query_params,
+    label_to_slug,
+    register_page,
+)
 from ui.services.backend import get_backend
 from ui.services.config import api_base_url, mock_mode
 from ui.state import AppSessionState, init_session_state
 from ui.utils.runtime import get_runtime_flags
 
-def _page_definitions(api: object, state: AppSessionState) -> Iterable[Tuple[str, Callable[[], None]]]:
-    return (
-        ("Control Center", lambda: render_control_center(api, state)),
-        ("Option Chain", lambda: render_option_chain(api, state)),
-        ("Research", lambda: render_research(api, state)),
-        ("Strategy Tuning", lambda: render_strategy_tuning(api, state)),
-        ("Backtest Reports", lambda: render_backtest_reports(api, state)),
-        ("Diagnostics / Logs", lambda: render_diagnostics_logs(api=api, state=state)),
+
+def _register_pages(api: object, state: AppSessionState) -> None:
+    """Populate the global page registry with Streamlit renderers."""
+
+    PAGES.clear()
+
+    register_page(
+        slug="control-center",
+        label="Control Center",
+        render=lambda: render_control_center(api, state),
+        headings=("Control Center",),
+    )
+    register_page(
+        slug="option-chain",
+        label="Option Chain",
+        render=lambda: render_option_chain(api, state),
+        headings=("Option Chain",),
+    )
+    register_page(
+        slug="research",
+        label="Research",
+        render=lambda: render_research(api, state),
+        headings=("Research",),
+    )
+    register_page(
+        slug="strategy-tuning",
+        label="Strategy Tuning",
+        render=lambda: render_strategy_tuning(api, state),
+        headings=("Strategy Tuning",),
+    )
+    register_page(
+        slug="backtest-reports",
+        label="Backtest Reports",
+        render=lambda: render_backtest_reports(api, state),
+        headings=("Backtest Reports",),
+    )
+    register_page(
+        slug="diagnostics-logs",
+        label="Diagnostics / Logs",
+        render=lambda: render_diagnostics(api, state),
+        headings=("Diagnostics / Logs", "Diagnostics", "Logs & Pacing", "Logs"),
     )
 
 
-def _build_pages(api: object, state: AppSessionState) -> Dict[str, Page]:
-    pages: Dict[str, Page] = {}
-    for label, render_fn in _page_definitions(api, state):
-        page = Page(
-            label=label,
-            slug=slugify(label),
-            render=render_fn,
-        )
-        pages[page.slug] = page
-    return pages
+def _get_query_params_state() -> tuple[dict, object | None, bool]:
+    """Return current query params, backing object, and API availability flag."""
+
+    try:
+        qp_obj = st.query_params  # type: ignore[attr-defined]
+        return dict(qp_obj), qp_obj, True
+    except Exception:
+        qp_dict = st.experimental_get_query_params()  # type: ignore[attr-defined]
+        return qp_dict, None, False
+
+
+def _update_page_query_param(slug: str, qp_obj: object | None, has_new_api: bool) -> None:
+    """Update the ?page=<slug> query parameter without clobbering others."""
+
+    if has_new_api and qp_obj is not None:
+        try:
+            qp_obj["page"] = slug  # type: ignore[index]
+        except Exception:
+            pass
+        return
+
+    existing = st.experimental_get_query_params()  # type: ignore[attr-defined]
+    existing["page"] = slug
+    st.experimental_set_query_params(**existing)  # type: ignore[attr-defined]
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -99,10 +152,61 @@ def main() -> None:
     flags = get_runtime_flags(api)
     st.session_state["__mock_mode__"] = flags.mock_mode
 
-    pages = _build_pages(api, state)
+    _register_pages(api, state)
 
-    st.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
-    selected_page = render_nav_and_route(pages, default_label="Control Center", auto_render=False)
+    if not PAGES:
+        raise RuntimeError("No pages registered")
+
+    qp_dict, qp_obj, has_new_api = _get_query_params_state()
+    current_slug = get_page_from_query_params(qp_dict, default_slug="control-center")
+    if current_slug not in PAGES:
+        current_slug = "control-center"
+
+    labels = all_labels()
+    try:
+        current_label = PAGES[current_slug].label
+    except KeyError:
+        # Fallback to the first registered page if something goes wrong.
+        current_slug = next(iter(PAGES))
+        current_label = PAGES[current_slug].label
+
+    try:
+        current_index = labels.index(current_label)
+    except ValueError:
+        current_index = 0
+        current_slug = next(iter(PAGES))
+        current_label = labels[current_index]
+
+    st.markdown(
+        """
+        <style>
+        div[data-baseweb="menu"] { display: block !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.sidebar:
+        st.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
+        choice = st.selectbox(
+            "Navigate",
+            labels,
+            index=current_index,
+            key="nav_select",
+            label_visibility="collapsed",
+            help="Jump to a page",
+        )
+
+    if choice != current_label:
+        try:
+            new_slug = label_to_slug(choice)
+        except KeyError:
+            new_slug = current_slug
+        if new_slug != current_slug:
+            _update_page_query_param(new_slug, qp_obj, has_new_api)
+            st.rerun()
+
+    current_page = PAGES[current_slug]
 
     st.markdown('<div data-testid="app-ready" style="display:none"></div>', unsafe_allow_html=True)
 
@@ -127,7 +231,7 @@ def main() -> None:
             except Exception:
                 pass
 
-    selected_page.render()
+    current_page.render()
 
 
 if __name__ == "__main__":  # pragma: no cover - executed by Streamlit runtime
