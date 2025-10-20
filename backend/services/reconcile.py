@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List
 
 from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.requests import GetOrdersRequest
 
+from core.broker_config import is_mock
+
 from .alpaca_client import get_trading_client
-
-
-def is_mock() -> bool:
-    v = os.getenv("MOCK_MODE")
-    return v is not None and v.strip().lower() in ("1", "true", "yes", "on")
 
 
 def pull_orders() -> List[Dict[str, Any]]:

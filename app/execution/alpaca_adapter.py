@@ -16,6 +16,8 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
 from alpaca.trading.requests import LimitOrderRequest, StopLossRequest, TakeProfitRequest
 
+from core.broker_config import AlpacaConfig
+
 from app.oms.store import OmsStore
 from services.telemetry import metrics, record_order_latency
 
@@ -87,7 +89,9 @@ def _is_unauthorized(exc: APIError) -> bool:
 class AlpacaAdapter:
     """Thin wrapper over ``TradingClient`` with defensive error handling."""
 
-    def __init__(self) -> None:
+    def __init__(self, cfg: AlpacaConfig | None = None, dry_run: bool = False) -> None:
+        self.cfg = cfg or AlpacaConfig()
+        self.dry_run = dry_run
         self.client: Optional[TradingClient] = None
         self._api_key: Optional[str] = None
         self._api_secret: Optional[str] = None
@@ -95,10 +99,15 @@ class AlpacaAdapter:
         self._configured = False
         self._last_error: Optional[str] = None
         self._seen_client_ids: Set[str] = set()
-        key = os.getenv("ALPACA_API_KEY_ID") or os.getenv("APCA_API_KEY_ID")
-        secret = os.getenv("ALPACA_API_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY")
+        key = self.cfg.key_id or os.getenv("ALPACA_API_KEY_ID") or os.getenv("APCA_API_KEY_ID")
+        secret = (
+            self.cfg.secret_key
+            or os.getenv("ALPACA_API_SECRET_KEY")
+            or os.getenv("APCA_API_SECRET_KEY")
+        )
         base_env = (
-            os.getenv("APCA_API_BASE_URL")
+            self.cfg.base_url
+            or os.getenv("APCA_API_BASE_URL")
             or os.getenv("ALPACA_API_BASE_URL")
             or "https://paper-api.alpaca.markets"
         )
@@ -112,6 +121,7 @@ class AlpacaAdapter:
             "base_url": base_env,
             "paper": paper_flag,
             "key_tail": self.key_tail,
+            "data_feed": self.cfg.data_feed,
         }
 
         if not key or not secret:
