@@ -7,6 +7,8 @@ from typing import Any, Dict, List
 import pandas as pd
 import streamlit as st
 
+from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
 from ui.services.config import mock_mode
 from ui.state import AppSessionState
@@ -36,6 +38,10 @@ def _render_importances(importances: List[Dict[str, Any]]) -> None:
 def render(api: BrokerAPI, state: AppSessionState) -> None:  # noqa: ARG001
     st.title("ML Ops")
     st.caption("Inspect model health, probe features, and trigger lightweight training runs.")
+
+    backend_guard = ApiClient()
+    if not require_backend(backend_guard):
+        st.stop()
 
     try:
         status = api.get_ml_status()

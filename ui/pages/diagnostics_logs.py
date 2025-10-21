@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from __future__ import annotations
+
 from typing import Any, Dict
 
 import os
@@ -10,6 +12,7 @@ import zipfile
 import streamlit as st
 
 from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 
 _MESSAGE_KEY = "diagnostics_logs_status"
 _REFRESH_TOGGLE = "_refresh_logs_toggle"
@@ -62,6 +65,8 @@ def render(*_: Any) -> None:
     st.header("Diagnostics / Logs")
 
     api = ApiClient()
+    if not require_backend(api):
+        st.stop()
 
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
@@ -83,16 +88,22 @@ def render(*_: Any) -> None:
 
     with col3:
         try:
-            log_bytes = api.logs_download_bytes()
+            raw = api._request("GET", "/logs/download")
+            if isinstance(raw, bytes):
+                payload = raw
+            elif isinstance(raw, str):
+                payload = raw.encode("utf-8")
+            else:
+                payload = bytes(raw)
             st.download_button(
                 "Export log file",
-                data=log_bytes,
+                data=payload,
                 file_name="app.log",
                 mime="text/plain",
                 use_container_width=True,
             )
         except Exception as exc:  # noqa: BLE001 - surface to UI
-            st.warning(f"Download not available: {exc}")
+            st.warning(f"Export unavailable: {exc}")
         if st.button("Create Repro Bundle", use_container_width=True):
             try:
                 bundle_path = _create_repro_bundle()

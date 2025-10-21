@@ -1,280 +1,319 @@
-"""Centralized HTTP client with route discovery and fallback logic."""
+"""Resilient HTTP client with backend auto-discovery and fallbacks."""
 
 from __future__ import annotations
 
-import json
 import os
-import urllib.error
-import urllib.parse
-import urllib.request
-from functools import lru_cache
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-DEFAULT_HOSTS = [
-    "http://127.0.0.1:8000",
-    "http://localhost:8000",
-]
+import requests
 
-PREFIXES: Sequence[str] = ("", "/api", "/v1")
+DEFAULT_BASES = ["http://127.0.0.1:8000", "http://localhost:8000"]
+DEFAULT_PREFIXES = ["", "/api", "/v1"]
 
 
-def _get_env_base() -> Optional[str]:
-    value = os.getenv("GIGAT_API_URL") or os.getenv("API_BASE_URL")
-    if value:
-        return value.rstrip("/")
-    return None
+def _split_base(candidate: str) -> Tuple[str, str]:
+    """Return ``(host, prefix)`` for a candidate base URL."""
 
-
-def _try_request(url: str, method: str = "GET", data: bytes | None = None, timeout: float = 3.0) -> Tuple[int, Optional[str]]:
-    headers = {"Accept": "application/json"}
-    if data is not None:
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-            payload = resp.read().decode("utf-8", "ignore")
-            return resp.getcode(), payload
-    except urllib.error.HTTPError as exc:  # pragma: no cover - network branch
-        try:
-            body = exc.read().decode("utf-8", "ignore")
-        except Exception:  # noqa: BLE001 - defensive guard
-            body = None
-        return exc.code, body
-    except Exception:  # noqa: BLE001 - defensive guard
-        return -1, None
-
-
-def _looks_ok(code: int) -> bool:
-    return code in (200, 201, 202, 203, 204)
-
-
-def _split_host_and_prefix(url: str) -> Tuple[str, int]:
-    trimmed = url.rstrip("/")
-    for idx, prefix in enumerate(PREFIXES):
-        if prefix and trimmed.endswith(prefix):
+    value = str(candidate or "").strip()
+    if not value:
+        return "", ""
+    trimmed = value.rstrip("/")
+    for prefix in DEFAULT_PREFIXES[1:]:
+        if trimmed.endswith(prefix):
             host = trimmed[: -len(prefix)] or ""
-            return host.rstrip("/"), idx
-    return trimmed, 0
-
-
-@lru_cache(maxsize=1)
-def discover_base_url() -> str:
-    env = _get_env_base()
-    if env:
-        return env
-    hosts = []
-    for candidate in DEFAULT_HOSTS:
-        if candidate and candidate.rstrip("/") not in hosts:
-            hosts.append(candidate.rstrip("/"))
-
-    for host in hosts:
-        if not host:
-            continue
-        for prefix in PREFIXES:
-            base = f"{host}{prefix}".rstrip("/")
-            if not base:
-                continue
-            code, _ = _try_request(f"{base}/health")
-            if _looks_ok(code):
-                return base
-            code, body = _try_request(f"{base}/openapi.json")
-            if _looks_ok(code) and body:
-                try:
-                    spec = json.loads(body)
-                    paths = spec.get("paths", {}) if isinstance(spec, dict) else {}
-                    if any(str(path).startswith("/broker") for path in paths):
-                        return base
-                except Exception:  # noqa: BLE001 - defensive parse guard
-                    continue
-    return (env or DEFAULT_HOSTS[0]).rstrip("/")
-
-
-def reset_discovery_cache() -> None:
-    """Clear the cached discovery result (useful for tests)."""
-
-    discover_base_url.cache_clear()
+            return host.rstrip("/"), prefix
+    return trimmed, ""
 
 
 class ApiClient:
-    """Minimal JSON-over-HTTP client with prefix fallback."""
+    """HTTP client that discovers the backend base URL and retries on failures."""
 
-    def __init__(self) -> None:
-        base = discover_base_url().rstrip("/")
-        host, prefix_index = _split_host_and_prefix(base)
-        self._host = host.rstrip("/")
-        self._prefix_index = prefix_index
+    def __init__(self, base: Optional[str] = None, timeout: float = 4.0):
+        self.timeout = timeout
+        self.session = requests.Session()
+        # Avoid leaking proxy settings to localhost calls.
+        self.session.trust_env = False
+        self._discovered: Optional[Tuple[str, str]] = None
+        self._last_err: Optional[str] = None
+
+        bases: List[Tuple[str, str]] = []
+
+        # 1) Streamlit secrets (best effort)
+        try:
+            import streamlit as st  # type: ignore
+
+            base_from_secrets = st.secrets.get("api", {}).get("base_url")  # type: ignore[attr-defined]
+            if base_from_secrets:
+                bases.append(_split_base(base_from_secrets))
+        except Exception:
+            pass
+
+        # 2) Environment variables
+        for env_key in ("API_BASE_URL", "GIGAT_API_URL"):
+            base_from_env = os.getenv(env_key)
+            if base_from_env:
+                bases.append(_split_base(base_from_env))
+
+        # 3) Explicit argument
+        if base:
+            bases.append(_split_base(base))
+
+        # 4) Fallback defaults
+        bases.extend(_split_base(candidate) for candidate in DEFAULT_BASES)
+
+        # Deduplicate while preserving order and drop empty hosts
+        deduped: List[Tuple[str, str]] = []
+        for host, prefix in bases:
+            if not host:
+                continue
+            entry = (host.rstrip("/"), prefix.rstrip("/"))
+            if entry not in deduped:
+                deduped.append(entry)
+
+        if not deduped:
+            deduped.append(_split_base(DEFAULT_BASES[0]))
+
+        self._candidates = deduped
+        self._discover()
+
+    # ---- Discovery helpers -------------------------------------------------
 
     @property
-    def base(self) -> str:
-        prefix = PREFIXES[self._prefix_index]
-        return f"{self._host}{prefix}" if prefix else self._host
+    def base_url(self) -> str:
+        """Return the currently discovered base URL or the first candidate."""
 
-    def _rotate_prefix(self) -> None:
-        self._prefix_index = (self._prefix_index + 1) % len(PREFIXES)
+        if self._discovered:
+            host, prefix = self._discovered
+            return f"{host}{prefix}" if prefix else host
+        host, prefix = self._candidates[0]
+        return f"{host}{prefix}" if prefix else host
 
-    def _build_url(self, path: str, params: Dict[str, Any] | None = None) -> str:
-        clean_path = "/" + path.lstrip("/")
-        query = ""
-        if params:
-            query = "?" + urllib.parse.urlencode(params, doseq=True)
-        prefix = PREFIXES[self._prefix_index]
-        return f"{self._host}{prefix}{clean_path}{query}" if prefix else f"{self._host}{clean_path}{query}"
+    @property
+    def default_base_url(self) -> str:
+        host, prefix = self._candidates[0]
+        return f"{host}{prefix}" if prefix else host
 
-    def _json_request(
-        self,
-        method: str,
-        path: str,
-        *,
-        params: Dict[str, Any] | None = None,
-        payload: Dict[str, Any] | None = None,
-    ) -> Any:
-        data_bytes = None
-        if payload is not None:
-            data_bytes = json.dumps(payload).encode("utf-8")
-        attempts = len(PREFIXES)
-        for _ in range(attempts):
-            url = self._build_url(path, params)
-            code, body = _try_request(url, method=method, data=data_bytes)
-            if _looks_ok(code):
-                if body:
-                    try:
-                        return json.loads(body)
-                    except Exception:  # noqa: BLE001 - defensive parse guard
-                        return {}
-                return {}
-            if code == 404:
-                self._rotate_prefix()
-                continue
-            raise RuntimeError(f"API request failed ({code}): {url}")
-        raise RuntimeError(f"API request failed: {path} via base={self.base}")
+    def explain_last_error(self) -> Optional[str]:
+        return self._last_err
 
-    def _request(
-        self,
-        path: str,
-        *,
-        method: str = "GET",
-        params: Dict[str, Any] | None = None,
-        payload: Dict[str, Any] | None = None,
-    ) -> Any:
-        if "?" in path and params is not None:
-            raise ValueError("Provide either params or a query string, not both")
-        if "?" in path and params is None:
-            path, _, query = path.partition("?")
-            params = dict(urllib.parse.parse_qsl(query, keep_blank_values=True))
-        return self._json_request(method, path, params=params, payload=payload)
+    def is_reachable(self) -> bool:
+        return self._discovered is not None
 
-    # --- Convenience wrappers used by Streamlit pages ---
+    def _discover(self) -> None:
+        self._last_err = None
+        for host, preferred_prefix in self._candidates:
+            prefixes: List[str] = []
+            if preferred_prefix in DEFAULT_PREFIXES:
+                prefixes.append(preferred_prefix)
+            for prefix in DEFAULT_PREFIXES:
+                if prefix not in prefixes:
+                    prefixes.append(prefix)
+
+            for prefix in prefixes:
+                url = f"{host}{prefix}/health"
+                try:
+                    response = self.session.get(url, timeout=self.timeout)
+                    if response.ok and "application/json" in response.headers.get("content-type", ""):
+                        payload = response.json()
+                        if isinstance(payload, dict) and payload.get("ok") is True:
+                            self._discovered = (host, prefix.rstrip("/"))
+                            return
+                except Exception as exc:  # noqa: BLE001 - defensive network guard
+                    self._last_err = f"{url}: {type(exc).__name__}: {exc}"
+                    continue
+
+        self._discovered = None
+        if not self._last_err:
+            self._last_err = "No healthy backend discovered"
+
+    # ---- Core HTTP helpers -------------------------------------------------
+
+    def get(self, path: str):
+        return self._request("GET", path)
+
+    def post(self, path: str, json: Optional[Dict[str, Any]] = None):
+        return self._request("POST", path, json=json)
+
+    def _request(self, method: str, path: str, **kwargs):
+        if not path.startswith("/"):
+            path = "/" + path.lstrip("/")
+
+        if self._discovered is None:
+            self._discover()
+            if self._discovered is None:
+                raise RuntimeError(f"Backend unreachable: {self._last_err}")
+
+        base, prefix = self._discovered
+        url = f"{base}{prefix}{path}" if prefix else f"{base}{path}"
+        try:
+            response = self.session.request(method, url, timeout=self.timeout, **kwargs)
+            if response.status_code in (404, 405, 421, 307, 308):
+                self._discover()
+                if self._discovered is None:
+                    raise RuntimeError(f"Backend lost: {self._last_err}")
+                base, prefix = self._discovered
+                url = f"{base}{prefix}{path}" if prefix else f"{base}{path}"
+                response = self.session.request(method, url, timeout=self.timeout, **kwargs)
+
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if "application/json" in content_type:
+                return response.json()
+            return response.content
+        except Exception as exc:  # noqa: BLE001 - surface error details
+            self._last_err = f"{url}: {type(exc).__name__}: {exc}"
+            raise
+
+    # ---- Convenience endpoints --------------------------------------------
 
     def health(self) -> Dict[str, Any]:
-        return self._request("/health")
+        data = self.get("/health")
+        return data if isinstance(data, dict) else {"ok": True}
 
     def status(self) -> Dict[str, Any]:
-        return self._request("/status")
+        data = self.get("/status")
+        return data if isinstance(data, dict) else {}
 
     def account(self) -> Dict[str, Any]:
-        return self._request("/broker/account")
+        data = self.get("/broker/account")
+        return data if isinstance(data, dict) else {}
 
-    def positions(self) -> Any:
-        return self._request("/broker/positions")
+    def positions(self):
+        return self.get("/broker/positions")
 
-    def orders(self, status: str = "all", limit: int = 50) -> Any:
-        return self._request(
-            "/broker/orders",
-            params={"status": status, "limit": limit},
-        )
+    def orders(self, status: str = "all", limit: int = 50):
+        return self.get(f"/broker/orders?status={status}&limit={int(limit)}")
 
     def stream_status(self) -> Dict[str, Any]:
-        return self._request("/stream/status")
+        data = self.get("/stream/status")
+        return data if isinstance(data, dict) else {}
 
     def orchestrator_status(self) -> Dict[str, Any]:
-        return self._request("/orchestrator/status")
+        data = self.get("/orchestrator/status")
+        return data if isinstance(data, dict) else {}
 
-    def orchestrator_start(self, preset: str | None = None, mode: str | None = None) -> Dict[str, Any]:
+    def orchestrator_start(self, preset: Optional[str] = None, mode: Optional[str] = None) -> Dict[str, Any]:
         payload: Dict[str, Any] = {}
         if preset:
             payload["preset"] = preset
         if mode:
             payload["mode"] = mode
-        return self._request("/orchestrator/start", method="POST", payload=payload)
+        data = self.post("/orchestrator/start", json=payload or {})
+        return data if isinstance(data, dict) else {}
 
     def orchestrator_stop(self) -> Dict[str, Any]:
-        return self._request("/orchestrator/stop", method="POST")
+        data = self.post("/orchestrator/stop")
+        return data if isinstance(data, dict) else {}
 
     def orchestrator_reconcile(self) -> Dict[str, Any]:
-        return self._request("/orchestrator/reconcile", method="POST")
+        data = self.post("/orchestrator/reconcile")
+        return data if isinstance(data, dict) else {}
 
     def strategy_config(self) -> Dict[str, Any]:
-        return self._request("/strategy/config")
+        data = self.get("/strategy/config")
+        return data if isinstance(data, dict) else {}
 
     def strategy_update(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._request("/strategy/config", method="POST", payload=payload)
+        data = self.post("/strategy/config", json=payload)
+        return data if isinstance(data, dict) else {}
 
     def risk_config(self) -> Dict[str, Any]:
-        return self._request("/risk/config")
+        data = self.get("/risk/config")
+        return data if isinstance(data, dict) else {}
 
     def risk_update(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._request("/risk/config", method="POST", payload=payload)
+        data = self.post("/risk/config", json=payload)
+        return data if isinstance(data, dict) else {}
 
     def risk_reset_kill_switch(self) -> Dict[str, Any]:
-        return self._request("/risk/killswitch/reset", method="POST")
+        data = self.post("/risk/killswitch/reset")
+        return data if isinstance(data, dict) else {}
 
     def stream_start(self) -> Dict[str, Any]:
-        return self._request("/stream/start", method="POST")
+        data = self.post("/stream/start")
+        return data if isinstance(data, dict) else {}
 
     def stream_stop(self) -> Dict[str, Any]:
-        return self._request("/stream/stop", method="POST")
+        data = self.post("/stream/stop")
+        return data if isinstance(data, dict) else {}
 
     def pnl_summary(self) -> Dict[str, Any]:
-        return self._request("/pnl/summary")
+        data = self.get("/pnl/summary")
+        return data if isinstance(data, dict) else {}
 
     def exposure(self) -> Dict[str, Any]:
-        return self._request("/telemetry/exposure")
+        data = self.get("/telemetry/exposure")
+        return data if isinstance(data, dict) else {}
 
     def recent_logs(self, limit: int = 200) -> Dict[str, Any]:
-        return self._request("/logs/recent", params={"limit": limit})
+        data = self.get(f"/logs/recent?limit={int(limit)}")
+        return data if isinstance(data, dict) else {}
 
     def cancel_all_orders(self) -> Dict[str, Any]:
-        return self._request("/orders/cancel_all", method="POST")
+        data = self.post("/orders/cancel_all")
+        return data if isinstance(data, dict) else {}
 
     def metrics_extended(self) -> Dict[str, Any]:
-        return self._request("/metrics/extended")
+        data = self.get("/metrics/extended")
+        return data if isinstance(data, dict) else {}
 
-    def paper_start(self, preset: str | None = None) -> Dict[str, Any]:
+    def paper_start(self, preset: Optional[str] = None) -> Dict[str, Any]:
         payload = {"preset": preset} if preset else None
-        return self._request("/paper/start", method="POST", payload=payload or {})
+        data = self.post("/paper/start", json=payload or {})
+        return data if isinstance(data, dict) else {}
 
     def paper_stop(self) -> Dict[str, Any]:
-        return self._request("/paper/stop", method="POST")
+        data = self.post("/paper/stop")
+        return data if isinstance(data, dict) else {}
 
     def paper_flatten(self) -> Dict[str, Any]:
-        return self._request("/paper/flatten", method="POST")
+        data = self.post("/paper/flatten")
+        return data if isinstance(data, dict) else {}
 
-    def live_start(self, preset: str | None = None) -> Dict[str, Any]:
+    def live_start(self, preset: Optional[str] = None) -> Dict[str, Any]:
         payload = {"preset": preset} if preset else None
-        return self._request("/live/start", method="POST", payload=payload or {})
+        data = self.post("/live/start", json=payload or {})
+        return data if isinstance(data, dict) else {}
 
     def diagnostics_run(self) -> Dict[str, Any]:
-        return self._request("/diagnostics/run", method="POST")
+        data = self.post("/diagnostics/run")
+        return data if isinstance(data, dict) else {}
 
     def logs_download_bytes(self) -> bytes:
-        attempts = len(PREFIXES)
-        last_error: Exception | None = None
-        for _ in range(attempts):
-            url = f"{self.base}/logs/download"
-            try:
-                with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310
-                    return resp.read()
-            except urllib.error.HTTPError as exc:  # pragma: no cover - network branch
-                last_error = exc
-                if exc.code == 404:
-                    self._rotate_prefix()
-                    continue
-                raise RuntimeError(f"Log download failed ({exc.code}): {url}") from exc
-            except urllib.error.URLError as exc:  # pragma: no cover - network branch
-                last_error = exc
-                self._rotate_prefix()
-                continue
-            except Exception as exc:  # noqa: BLE001 - defensive guard
-                last_error = exc
-                raise RuntimeError(f"Log download failed: {exc}") from exc
-        raise RuntimeError("Log download failed") from last_error
+        raw = self._request("GET", "/logs/download")
+        if isinstance(raw, bytes):
+            return raw
+        if isinstance(raw, str):
+            return raw.encode("utf-8")
+        return bytes(raw or b"")
+
+
+_DISCOVERY_CACHE: Optional[str] = None
+
+
+def discover_base_url() -> str:
+    """Compatibility helper used by legacy config helpers."""
+
+    global _DISCOVERY_CACHE
+    if _DISCOVERY_CACHE is not None:
+        return _DISCOVERY_CACHE
+
+    for env_key in ("API_BASE_URL", "GIGAT_API_URL"):
+        value = os.getenv(env_key)
+        if value:
+            _DISCOVERY_CACHE = str(value).rstrip("/")
+            return _DISCOVERY_CACHE
+
+    client = ApiClient()
+    if client.is_reachable():
+        _DISCOVERY_CACHE = client.base_url.rstrip("/")
+    else:
+        _DISCOVERY_CACHE = client.default_base_url.rstrip("/")
+    return _DISCOVERY_CACHE
+
+
+def reset_discovery_cache() -> None:
+    """Reset the cached discovery result (primarily for tests)."""
+
+    global _DISCOVERY_CACHE
+    _DISCOVERY_CACHE = None

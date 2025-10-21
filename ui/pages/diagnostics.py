@@ -9,6 +9,8 @@ from typing import Any, List
 
 import streamlit as st
 
+from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState, RiskSnapshot
 from ui.utils.compat import rerun as st_rerun
@@ -80,6 +82,10 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Diagnostics / Logs")
     st.subheader("Logs & Pacing")
     st.write("Runs each page, captures exceptions, and writes a JSON report under `logs/`.")
+
+    backend_guard = ApiClient()
+    if not require_backend(backend_guard):
+        st.stop()
 
     run_all = st.button("Run full sweep", type="primary")
     results: list[PageResult] = []

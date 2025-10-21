@@ -7,6 +7,8 @@ from statistics import mean
 import pandas as pd
 import streamlit as st
 
+from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
 from ui.utils.num import to_float
 from ui.state import AppSessionState, EquityPoint
@@ -93,8 +95,21 @@ def _risk_table(snapshot) -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Equity & Risk")
-    points = api.get_equity_curve(state.run_id)
-    snapshot = api.get_risk_snapshot()
+    backend_guard = ApiClient()
+    if not require_backend(backend_guard):
+        st.stop()
+
+    try:
+        points = api.get_equity_curve(state.run_id)
+    except Exception as exc:  # noqa: BLE001 - guard backend failures
+        st.error(f"Failed to load equity curve: {exc}")
+        return
+
+    try:
+        snapshot = api.get_risk_snapshot()
+    except Exception as exc:  # noqa: BLE001 - guard backend failures
+        st.error(f"Failed to load risk snapshot: {exc}")
+        return
 
     if not points:
         st.warning("No equity data available.")

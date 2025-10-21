@@ -8,6 +8,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState
 from ui.utils.format import fmt_pct
@@ -73,6 +75,10 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Signal Preview")
 
     st.caption("Inspect the latest signals from the strategy engine and enrich them with ML probabilities.")
+
+    backend_guard = ApiClient()
+    if not require_backend(backend_guard):
+        st.stop()
 
     universe = st.multiselect("Universe", DEFAULT_UNIVERSE, default=DEFAULT_UNIVERSE)
     profile = st.selectbox("Profile", ["balanced", "aggressive", "conservative"], index=0)

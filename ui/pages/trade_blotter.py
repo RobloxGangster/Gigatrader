@@ -9,6 +9,8 @@ import pandas as pd
 import streamlit as st
 
 from ui.components.tables import render_table
+from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState, Trade
 
@@ -68,8 +70,16 @@ def _trade_inspector(trades: List[Trade]) -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Trade Blotter")
+    backend_guard = ApiClient()
+    if not require_backend(backend_guard):
+        st.stop()
+
     filters = _filters_form(state)
-    trades = api.get_trades(filters)
+    try:
+        trades = api.get_trades(filters)
+    except Exception as exc:  # noqa: BLE001 - guard backend failures
+        st.error(f"Failed to load trades: {exc}")
+        trades = []
 
     _trade_metrics(trades)
     render_table("trades", [trade.model_dump() for trade in trades])
