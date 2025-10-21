@@ -238,7 +238,13 @@ class TradeOrchestrator:
         self._task: asyncio.Task[None] | None = None
         self._state_lock = asyncio.Lock()
         self._metrics_lock = threading.Lock()
-        self._metrics = {"queued": 0, "considered": 0, "routed": 0, "accepted": 0}
+        self._metrics = {
+            "queued": 0,
+            "considered": 0,
+            "routed": 0,
+            "accepted": 0,
+            "last_cycle_ms": 0.0,
+        }
         self._last_decisions: deque[dict[str, Any]] = deque(maxlen=50)
         self._last_error: str | None = None
         self._last_run: float | None = None
@@ -247,6 +253,9 @@ class TradeOrchestrator:
         self._mock_routing = self._infer_mock_mode()
         self._last_tick: float | None = None
         self._last_backoff: float | None = None
+        self._state: str = "stopped"
+        self._running: bool = False
+        self._hb: int = 0
 
     async def start(self, overrides: Mapping[str, Any] | None = None) -> TradeLoopConfig:
         """Start the trading loop, applying optional config overrides."""
@@ -259,6 +268,10 @@ class TradeOrchestrator:
 
             self._stop_event = asyncio.Event()
             self._reset_metrics()
+            self._hb = 0
+            self._running = True
+            self._state = "running"
+            self._set_last_error(None)
             loop = asyncio.get_running_loop()
             self._task = loop.create_task(self._run_loop())
             return self._config
@@ -271,6 +284,8 @@ class TradeOrchestrator:
             if not task:
                 return
             self._stop_event.set()
+            self._running = False
+            self._state = "stopped"
 
         try:
             await task
@@ -293,6 +308,7 @@ class TradeOrchestrator:
             last_tick_iso = datetime.fromtimestamp(self._last_tick, timezone.utc).isoformat()
         return {
             "running": running,
+            "state": self._state,
             "profile": self._config.profile,
             "universe": list(self._last_universe),
             "interval_sec": float(self._config.interval_sec),
@@ -312,6 +328,8 @@ class TradeOrchestrator:
             "last_run": last_run_iso,
             "last_tick": last_tick_iso,
             "backoff": self._last_backoff,
+            "loop_heartbeats": self._hb,
+            "last_cycle_ms": metrics.get("last_cycle_ms", 0.0),
         }
 
     def resolved_config(self) -> dict[str, Any]:
@@ -319,6 +337,41 @@ class TradeOrchestrator:
 
     def last_decisions(self) -> list[dict[str, Any]]:
         return list(self._last_decisions)
+
+    def _set_last_error(self, message: str | None) -> None:
+        self._last_error = message
+
+    async def _ensure_stream_and_broker(self) -> None:
+        checks: list[tuple[str, Any]] = []
+        broker = getattr(self.router, "broker", None)
+        if broker is not None:
+            checks.append(("broker", broker))
+        stream_candidate = getattr(self.data_client, "stream_manager", None)
+        if stream_candidate is None:
+            stream_candidate = getattr(self.data_client, "stream", None)
+        if stream_candidate is None:
+            stream_candidate = getattr(self.router, "stream_manager", None)
+        if stream_candidate is not None:
+            checks.append(("stream", stream_candidate))
+
+        for kind, obj in checks:
+            status_fn = getattr(obj, "status", None)
+            if not callable(status_fn):
+                continue
+            try:
+                status = status_fn()
+                if inspect.isawaitable(status):  # pragma: no cover - rarely async
+                    status = await status
+            except Exception as exc:  # pragma: no cover - defensive
+                raise RuntimeError(f"{kind}_status_error:{exc}") from exc
+            if not isinstance(status, Mapping):
+                continue
+            if status.get("state") == "error":
+                reason = status.get("last_error") or status.get("reason") or "unknown"
+                raise RuntimeError(f"{kind}_error:{reason}")
+            if status.get("online") is False:
+                reason = status.get("last_error") or status.get("reason") or "offline"
+                raise RuntimeError(f"{kind}_offline:{reason}")
 
     async def _run_loop(self) -> None:
         log.info(
@@ -330,33 +383,46 @@ class TradeOrchestrator:
         )
         backoff = 1.0
         try:
-            while not self._stop_event.is_set():
+            while self._running:
+                started = time.perf_counter()
                 try:
+                    await self._ensure_stream_and_broker()
                     await self._cycle_once()
+                    cycle_ms = (time.perf_counter() - started) * 1000
+                    with self._metrics_lock:
+                        self._metrics["last_cycle_ms"] = cycle_ms
                     self._last_backoff = None
+                    self._hb += 1
+                    self._state = "running"
                     backoff = 1.0
                 except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
                     raise
                 except Exception as exc:  # pragma: no cover - defensive guard
-                    self._last_error = str(exc)
+                    self._set_last_error(str(exc))
+                    self._state = "error"
                     log.exception("trade loop iteration failed", extra={"error": str(exc)})
-                    if not self._flags.auto_restart:
+                    if not self._flags.auto_restart or not self._running:
                         break
                     self._last_backoff = backoff
-                    await asyncio.sleep(backoff)
+                    await asyncio.sleep(min(backoff, 30.0))
                     backoff = min(backoff * 2, 30.0)
                     continue
 
                 wait_time = max(float(self._config.interval_sec), 0.0)
-                if wait_time <= 0:
+                if wait_time <= 0 or not self._running:
                     await asyncio.sleep(0)
                     continue
                 try:
                     await asyncio.wait_for(self._stop_event.wait(), timeout=wait_time)
                 except asyncio.TimeoutError:
                     continue
+                finally:
+                    self._stop_event.clear()
         finally:
             log.info("trade loop stopped")
+            self._running = False
+            if self._state != "error":
+                self._state = "stopped"
 
     async def _cycle_once(self) -> None:
         started = _now_ts()
@@ -453,7 +519,7 @@ class TradeOrchestrator:
         for candidate, expected_value, direction_prob, _ in selected:
             await self._execute_candidate(candidate, expected_value, direction_prob)
 
-        self._last_error = None
+        self._set_last_error(None)
 
     async def _execute_candidate(
         self,
@@ -891,8 +957,11 @@ class TradeOrchestrator:
 
     def _reset_metrics(self) -> None:
         with self._metrics_lock:
-            for key in self._metrics:
-                self._metrics[key] = 0
+            for key in list(self._metrics):
+                if key == "last_cycle_ms":
+                    self._metrics[key] = 0.0
+                else:
+                    self._metrics[key] = 0
 
     def _infer_mock_mode(self) -> bool:
         broker = getattr(self.router, "broker", None)

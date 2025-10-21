@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
+
 from pydantic import BaseModel, Field
+
+from core.runtime_flags import get_runtime_flags
 
 
 def _env(*names: str, default: str = "") -> str:
@@ -12,19 +16,20 @@ def _env(*names: str, default: str = "") -> str:
     return default
 
 
+@lru_cache(maxsize=1)
+def _flags():
+    return get_runtime_flags()
+
+
 class AlpacaConfig(BaseModel):
-    base_url: str = Field(
-        default_factory=lambda: _env(
-            "ALPACA_BASE_URL", "APCA_API_BASE_URL", default="https://paper-api.alpaca.markets"
-        )
-    )
+    base_url: str = Field(default_factory=lambda: _flags().alpaca_base_url)
     key_id: str = Field(
-        default_factory=lambda: _env("ALPACA_KEY_ID", "ALPACA_API_KEY_ID", "APCA_API_KEY_ID")
+        default_factory=lambda: _flags().alpaca_key
+        or _env("ALPACA_KEY_ID", "ALPACA_API_KEY_ID", "APCA_API_KEY_ID")
     )
     secret_key: str = Field(
-        default_factory=lambda: _env(
-            "ALPACA_SECRET_KEY", "ALPACA_API_SECRET_KEY", "APCA_API_SECRET_KEY"
-        )
+        default_factory=lambda: _flags().alpaca_secret
+        or _env("ALPACA_SECRET_KEY", "ALPACA_API_SECRET_KEY", "APCA_API_SECRET_KEY")
     )
     data_feed: str = Field(default_factory=lambda: _env("ALPACA_DATA_FEED", default="iex"))
     data_ws_url: str = Field(
@@ -36,8 +41,8 @@ class AlpacaConfig(BaseModel):
 
 
 def is_mock() -> bool:
-    return os.getenv("MOCK_MODE", "false").lower() == "true"
+    return _flags().broker_mode == "mock"
 
 
 def is_paper() -> bool:
-    return os.getenv("RUN_MODE", "paper").lower() == "paper"
+    return _flags().broker_mode == "paper"

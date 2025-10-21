@@ -18,9 +18,15 @@ class StreamManager:
         self._last_error: str | None = None
         self._ws: websockets.WebSocketClientProtocol | None = None
         self._task: asyncio.Task[Any] | None = None
+        self._reconnects = 0
 
     def status(self) -> dict[str, Any]:
-        return {"status": self._status, "last_error": self._last_error}
+        return {
+            "state": self._status,
+            "online": self._status == "online",
+            "last_error": self._last_error,
+            "reconnects": self._reconnects,
+        }
 
     async def _run(self) -> None:
         backoff = 1
@@ -59,6 +65,7 @@ class StreamManager:
             except Exception as exc:  # pragma: no cover - network dependent
                 self._last_error = str(exc)
                 self._status = "offline"
+                self._reconnects += 1
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
 
@@ -106,3 +113,17 @@ class StreamManager:
                         pass
                     finally:
                         self._ws = None
+
+    async def reconnect(self) -> None:
+        """Force a reconnection cycle with minimal disruption."""
+
+        loop: asyncio.AbstractEventLoop | None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        self.stop(loop)
+        await asyncio.sleep(0)
+        if loop is None:
+            loop = asyncio.get_event_loop()
+        self.start(loop)

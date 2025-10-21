@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, asdict
 
 from pydantic import BaseModel, Field, field_validator
 
-from core.runtime_flags import get_runtime_flags
+from core.runtime_flags import BrokerMode, get_runtime_flags
 
 
 _FLAGS = get_runtime_flags()
@@ -48,6 +48,7 @@ class AlpacaSettings:
     api_secret: str | None
     base_url: str
     paper: bool
+    mode: BrokerMode
 
 
 @dataclass(slots=True)
@@ -173,6 +174,7 @@ def get_alpaca_settings() -> AlpacaSettings:
         api_secret=flags.alpaca_secret,
         base_url=flags.alpaca_base_url,
         paper=flags.paper_trading,
+        mode=flags.broker_mode,
     )
 
 
@@ -230,6 +232,7 @@ def debug_alpaca_snapshot() -> Dict[str, Any]:
         "configured": alpaca_config_ok(),
         "base_url": cfg.base_url or ("paper" if cfg.paper else "live"),
         "paper": cfg.paper,
+        "mode": cfg.mode,
         "key_tail": masked_tail(cfg.api_key),
         "env": env_flags,
     }

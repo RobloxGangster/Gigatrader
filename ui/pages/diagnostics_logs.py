@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import io
 import os
+import time
 import zipfile
+from collections import deque
 from datetime import datetime
 from pathlib import Path
+from typing import Iterable, Sequence
 
 import streamlit as st
 
+from ui._compat import safe_rerun
 from ui.lib.api_client import ApiClient
 from ui.lib.page_guard import require_backend
 
@@ -19,9 +24,36 @@ _BUNDLE_CANDIDATES = (
     Path("ui/fixtures"),
 )
 
+_DEFAULT_LOG_PATH = Path("logs/app.log")
+
 
 def _resolve_api(api_client: ApiClient | None = None) -> ApiClient:
     return api_client or ApiClient()
+
+
+def _read_log_tail(path: Path, limit: int) -> list[str]:
+    if not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            window = deque(handle, maxlen=int(limit))
+    except OSError:
+        return []
+    return [line.rstrip("\n") for line in window]
+
+
+def _build_log_archive(lines: Sequence[str], extra_paths: Iterable[Path]) -> bytes:
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("recent.log", "\n".join(lines).encode("utf-8"))
+        for entry in extra_paths:
+            if entry.exists() and entry.is_file():
+                try:
+                    zf.write(entry, arcname=entry.name)
+                except OSError:
+                    continue
+    payload.seek(0)
+    return payload.read()
 
 
 def render(*_: object, api_client: ApiClient | None = None) -> None:
@@ -30,16 +62,22 @@ def render(*_: object, api_client: ApiClient | None = None) -> None:
 
 def render_page(api_client: ApiClient | None = None) -> None:
     st.title("Diagnostics / Logs")
-
+    st.caption("Inspect backend health, stream recent logs, and export diagnostics bundles.")
     api = _resolve_api(api_client)
     st.caption(f"Resolved API: {api.base()}")
     backend_ok = require_backend(api)
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        limit = st.number_input("Lines", min_value=50, max_value=5000, value=200, step=50)
+        limit = int(
+            st.number_input("Log lines", min_value=50, max_value=5000, value=200, step=50)
+        )
     with col2:
-        st.write("")
+        refresh_seconds = int(
+            st.number_input("Auto refresh (s)", min_value=2, max_value=60, value=5, step=1)
+        )
+
+    auto_refresh = st.checkbox("Auto refresh", value=True, key="diagnostics_auto_refresh")
 
     controls = st.columns([1, 1, 1])
     with controls[0]:
@@ -55,7 +93,8 @@ def render_page(api_client: ApiClient | None = None) -> None:
                 st.success(str(message))
     with controls[1]:
         if st.button("Refresh Logs", use_container_width=True):
-            st.rerun()
+            st.session_state["diagnostics_refresh_due"] = time.time() + refresh_seconds
+            safe_rerun()
     with controls[2]:
         if st.button("Create Repro Bundle", use_container_width=True):
             try:
@@ -65,33 +104,68 @@ def render_page(api_client: ApiClient | None = None) -> None:
             else:
                 st.success(f"Created bundle: {bundle_path}")
 
-    download_placeholder = st.empty()
+    lines: list[str] = []
+    backend_error: str | None = None
 
     if backend_ok:
         try:
-            data = api.get_json("/logs/recent", params={"limit": int(limit)})
+            data = api.get_json("/logs/recent", params={"limit": limit})
+        except Exception as exc:  # noqa: BLE001 - surface the failure
+            backend_error = str(exc)
+            lines = _read_log_tail(_DEFAULT_LOG_PATH, limit)
+        else:
             lines = data.get("lines", []) if isinstance(data, dict) else []
-            st.code("\n".join(lines) or "(no logs yet)", language="text")
-            if st.button("Download logs", disabled=not backend_ok):
-                try:
-                    response = api.request(
-                        "GET",
-                        "/logs/recent",
-                        params={"limit": int(limit), "as_file": True},
-                    )
-                except Exception as exc:  # noqa: BLE001 - show error to user
-                    st.error(f"Failed to download logs: {exc}")
-                else:
-                    download_placeholder.download_button(
-                        "Save logs",
-                        response.content,
-                        file_name="recent.log",
-                        mime="text/plain",
-                    )
-        except Exception as exc:  # noqa: BLE001 - surface the failure to the UI
-            st.error(f"Failed to load logs: {exc}")
     else:
-        st.info("Backend unavailable — log tail and downloads are disabled.")
+        lines = _read_log_tail(_DEFAULT_LOG_PATH, limit)
+
+    if not lines:
+        st.info("No log lines available yet.")
+    else:
+        st.code("\n".join(lines), language="text")
+
+    if backend_error:
+        st.warning(f"Backend log stream unavailable: {backend_error}")
+    elif not backend_ok:
+        st.error("Backend offline — displaying local log tail.")
+    else:
+        st.success("Backend log stream active.")
+
+    archive_bytes: bytes | None = None
+    if backend_ok:
+        try:
+            response = api.request(
+                "GET",
+                "/logs/recent",
+                params={"limit": limit, "as_file": True},
+            )
+        except Exception:
+            archive_bytes = None
+        else:
+            archive_bytes = response.content
+    if archive_bytes is None:
+        archive_bytes = _build_log_archive(lines, [_DEFAULT_LOG_PATH])
+
+    st.download_button(
+        "Download logs",
+        archive_bytes,
+        file_name="logs.zip",
+        mime="application/zip",
+        use_container_width=True,
+    )
+
+    if auto_refresh:
+        now = time.time()
+        refresh_due = st.session_state.get("diagnostics_refresh_due")
+        if refresh_due is None:
+            st.session_state["diagnostics_refresh_due"] = now + refresh_seconds
+        elif now >= refresh_due:
+            st.session_state["diagnostics_refresh_due"] = now + refresh_seconds
+            safe_rerun()
+        else:
+            remaining = max(0, int(refresh_due - now))
+            st.caption(f"Auto refresh in {remaining}s")
+    else:
+        st.session_state.pop("diagnostics_refresh_due", None)
 
 
 def _iter_bundle_sources() -> list[Path]:
