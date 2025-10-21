@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 """Equity & Risk page."""
 
-from __future__ import annotations
 
 from statistics import mean
 

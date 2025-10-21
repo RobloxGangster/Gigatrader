@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 """Trade Blotter page."""
 
-from __future__ import annotations
 
 import json
 from typing import Dict, List

@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 """Backtest Reports page."""
 
-from __future__ import annotations
 
 import io
 import pandas as pd

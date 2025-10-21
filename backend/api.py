@@ -78,6 +78,7 @@ def _is_mock_mode() -> bool:
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {
+        "ok": True,
         "status": "ok",
         "mock_mode": _is_mock_mode(),
         "version": os.getenv("APP_VERSION", "dev"),

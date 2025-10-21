@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from __future__ import annotations
-
 from typing import Any, Dict
 
 import os
@@ -66,7 +64,7 @@ def render(*_: Any) -> None:
 
     api = ApiClient()
     if not require_backend(api):
-        st.stop()
+        return
 
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:

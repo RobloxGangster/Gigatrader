@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 """Strategy tuning page."""
 
-from __future__ import annotations
 
 import json
 
