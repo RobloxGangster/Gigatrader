@@ -8,6 +8,8 @@ import pandas as pd
 import streamlit as st
 
 from ui.components.tables import render_table
+from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState, Order, Position
 
@@ -62,8 +64,21 @@ def _positions_section(positions: List[Position]) -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Orders & Positions")
-    orders = api.get_orders()
-    positions = api.get_positions()
+    backend_guard = ApiClient()
+    if not require_backend(backend_guard):
+        st.stop()
+
+    try:
+        orders = api.get_orders()
+    except Exception as exc:  # noqa: BLE001 - guard backend failures
+        st.error(f"Failed to load orders: {exc}")
+        orders = []
+
+    try:
+        positions = api.get_positions()
+    except Exception as exc:  # noqa: BLE001 - guard backend failures
+        st.error(f"Failed to load positions: {exc}")
+        positions = []
 
     _orders_table(orders)
     _order_actions(orders, state)

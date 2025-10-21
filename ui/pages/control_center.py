@@ -10,6 +10,7 @@ from ui.components.badges import status_pill
 from ui.components.tables import render_table
 from ui.services.backend import BrokerAPI
 from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
@@ -484,6 +485,8 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
     st.markdown('<div data-testid="control-center-root"></div>', unsafe_allow_html=True)
 
     api = ApiClient()
+    if not require_backend(api):
+        st.stop()
 
     if "__cc_auto_refresh_last__" not in st.session_state:
         st.session_state["__cc_auto_refresh_last__"] = time.time()

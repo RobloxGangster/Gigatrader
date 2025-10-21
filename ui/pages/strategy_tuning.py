@@ -6,6 +6,8 @@ import json
 
 import streamlit as st
 
+from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState
 
@@ -13,6 +15,10 @@ from ui.state import AppSessionState
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Strategy Tuning")
     st.caption("Adjust strategy parameters and preview backend configuration profiles.")
+
+    backend_guard = ApiClient()
+    if not require_backend(backend_guard):
+        st.stop()
 
     presets = ["safe", "balanced", "high_risk"]
     default_preset = state.profile if state.profile in presets else "balanced"

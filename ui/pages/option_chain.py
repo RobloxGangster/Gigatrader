@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from __future__ import annotations
+
 import json
 
 import pandas as pd
 import streamlit as st
 
+from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState, update_session_state
 
@@ -46,7 +50,11 @@ def _render_chain(df: pd.DataFrame, highlight_strategy: bool) -> None:
 def _greeks_panel(api: BrokerAPI, symbol: str, expiry: str | None) -> None:
     default_contract = f"{symbol} {expiry or 'Next'} 150C"
     contract = st.text_input("Contract", value=default_contract)
-    greeks = api.get_greeks(contract)
+    try:
+        greeks = api.get_greeks(contract)
+    except Exception as exc:  # noqa: BLE001 - UI guard
+        st.warning(f"Greeks unavailable for {contract}: {exc}")
+        return
     try:
         st.json(json.loads(greeks.model_dump_json()))
     except Exception:
@@ -77,6 +85,9 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Option Chain")
     st.markdown('<div data-testid="page-option-chain"></div>', unsafe_allow_html=True)
     st.markdown('<div data-testid="option-chain-root"></div>', unsafe_allow_html=True)
+    backend_guard = ApiClient()
+    if not require_backend(backend_guard):
+        st.stop()
     default_symbol = (state.selected_symbol or "AAPL").upper()
     symbol_input = st.text_input("Underlying", value=default_symbol, key="oc_symbol")
     symbol = symbol_input.strip().upper() or default_symbol
@@ -88,7 +99,11 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     min_volume = st.slider("Min Volume", min_value=0, max_value=1000, value=50, step=25)
     highlight = st.toggle("Highlight strategy pick", value=True)
 
-    df = _chain_dataframe(api, symbol, expiry or None, liquidity_only)
+    try:
+        df = _chain_dataframe(api, symbol, expiry or None, liquidity_only)
+    except Exception as exc:  # noqa: BLE001 - guard backend failures
+        st.error(f"Failed to load option chain for {symbol}: {exc}")
+        df = pd.DataFrame()
     if not df.empty:
         df = df[(df["oi"] >= min_oi) & (df["volume"] >= min_volume)]
 

@@ -6,6 +6,8 @@ import io
 import pandas as pd
 import streamlit as st
 
+from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState
 from ui.utils.charts import render_equity_curve
@@ -153,14 +155,26 @@ def _trade_tree_placeholder() -> None:
 
 def render(api: BrokerAPI, state: AppSessionState) -> None:  # noqa: ARG001
     st.title("Backtest Reports")
-    runs = api.get_backtest_runs()
+    backend_guard = ApiClient()
+    if not require_backend(backend_guard):
+        st.stop()
+
+    try:
+        runs = api.get_backtest_runs()
+    except Exception as exc:  # noqa: BLE001 - guard backend failures
+        st.error(f"Failed to load backtest runs: {exc}")
+        return
     run_ids = [get_field(run, ["run_id", "id", "uuid"]) for run in runs]
     run_ids = [run_id for run_id in run_ids if run_id is not None]
     if not run_ids:
         st.info("No backtest runs available.")
         return
     run_id = st.selectbox("Run", run_ids)
-    report = api.get_backtest_report(run_id)
+    try:
+        report = api.get_backtest_report(run_id)
+    except Exception as exc:  # noqa: BLE001 - guard backend failures
+        st.error(f"Failed to load backtest report {run_id}: {exc}")
+        return
 
     _metrics(report)
     _equity_section(report)

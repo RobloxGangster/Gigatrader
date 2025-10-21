@@ -7,6 +7,7 @@ from typing import Any, Dict
 import streamlit as st
 
 from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 
 
 def _format_float(value: Any, *, precision: int = 2) -> str:
@@ -24,6 +25,8 @@ def render(api: ApiClient | None = None, *_: Any) -> None:
     st.button("Refresh metrics", type="primary", on_click=st.rerun)
 
     api = api or ApiClient()
+    if not require_backend(api):
+        return
 
     try:
         data: Dict[str, Any] = api.metrics_extended()

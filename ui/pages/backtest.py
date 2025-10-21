@@ -7,6 +7,8 @@ from typing import Any, Dict, List
 import pandas as pd
 import streamlit as st
 
+from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState, update_session_state
 from ui.utils.charts import render_equity_curve
@@ -43,6 +45,10 @@ def _render_trades(trades: List[Dict[str, Any]]) -> None:
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Strategy Backtests")
     st.caption("Run deterministic backtests directly from the backend to sanity-check new ideas.")
+
+    backend_guard = ApiClient()
+    if not require_backend(backend_guard):
+        st.stop()
 
     with st.form("backtest_form"):
         symbol = st.text_input("Symbol", value=state.selected_symbol)

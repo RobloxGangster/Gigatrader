@@ -5,15 +5,16 @@ from __future__ import annotations
 import json
 import os
 import random
+import urllib.parse
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Protocol
 
-import requests
 from pydantic import BaseModel, Field
 
 from .config import api_base_url
+from ui.lib.api_client import ApiClient
 from ui.state import (
     EquityPoint,
     Greeks,
@@ -294,9 +295,19 @@ def _load_json_fixture(name: str) -> Any:
 class RealAPI:
     """HTTP backed API implementation."""
 
-    def __init__(self, base_url: Optional[str] = None) -> None:
-        self.base_url = (base_url or api_base_url()).rstrip("/")
-        self.session = requests.Session()
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        api_client: Optional[ApiClient] = None,
+    ) -> None:
+        base_candidate = base_url or api_base_url()
+        if api_client is not None and base_url is None:
+            self.client = api_client
+        else:
+            self.client = ApiClient(base=base_candidate, timeout=_DEFAULT_TIMEOUT)
+        if self.client.timeout < _DEFAULT_TIMEOUT:
+            self.client.timeout = _DEFAULT_TIMEOUT
+        self.base_url = self.client.base_url.rstrip("/")
 
     def _request(
         self,
@@ -306,23 +317,25 @@ class RealAPI:
         params: Optional[Dict[str, Any]] = None,
         json_payload: Optional[Dict[str, Any]] = None,
     ) -> Any:
-        url = f"{self.base_url}/{path.lstrip('/')}"
-        headers = _build_trace_headers()
+        clean_path = "/" + path.lstrip("/")
+        if params:
+            filtered = {k: v for k, v in params.items() if v is not None}
+            query = urllib.parse.urlencode(filtered, doseq=True)
+            if query:
+                clean_path = f"{clean_path}?{query}"
+
+        request_kwargs: Dict[str, Any] = {"headers": _build_trace_headers()}
+        if json_payload is not None:
+            request_kwargs["json"] = json_payload
+
         try:
-            response = self.session.request(
-                method,
-                url,
-                params=params,
-                json=json_payload,
-                headers=headers,
-                timeout=_DEFAULT_TIMEOUT,
-            )
-            response.raise_for_status()
-        except requests.RequestException as exc:  # pragma: no cover - defensive branch
+            result = self.client._request(method.upper(), clean_path, **request_kwargs)
+        except Exception as exc:  # noqa: BLE001 - defensive network guard
             raise BackendError(str(exc)) from exc
-        if response.headers.get("content-type", "").startswith("application/json"):
-            return response.json()
-        return response.text
+
+        if isinstance(result, bytes):
+            return result.decode("utf-8", "ignore")
+        return result
 
     def get_status(self) -> Dict[str, Any]:
         return self._request("GET", "/status")

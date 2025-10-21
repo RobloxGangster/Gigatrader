@@ -5,6 +5,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from ui.lib.api_client import ApiClient
+from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
 from ui.state import AppSessionState
 
@@ -19,6 +21,10 @@ def _fmt_decimal(value) -> str:
 def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.title("Research")
     st.caption("Explore indicator snapshots, historical trends, and profile-level research tools.")
+
+    backend_guard = ApiClient()
+    if not require_backend(backend_guard):
+        st.stop()
 
     default_symbol = (state.selected_symbol or "SPY").upper()
     symbol = (
