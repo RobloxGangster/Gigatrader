@@ -10,11 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.routers import (
+    audit,
     broker,
     diagnostics,
     logs,
     orchestrator,
     pnl,
+    reconcile,
     risk,
     strategy,
     stream,
@@ -24,6 +26,7 @@ from backend.routers.deps import get_kill_switch, get_orchestrator, get_stream_m
 from backend.services import reconcile
 from backend.services.alpaca_client import get_trading_client
 from core.broker_config import is_mock
+from core.settings import get_settings
 
 load_dotenv()
 
@@ -47,6 +50,8 @@ PRIMARY_ROUTERS: list[tuple[str, Any, list[str]]] = [
     ("/telemetry", telemetry.router, ["telemetry"]),
     ("/logs", logs.router, ["logs"]),
     ("/diagnostics", diagnostics.router, ["diagnostics"]),
+    ("/reconcile", reconcile.router, ["reconcile"]),
+    ("/audit", audit.router, ["audit"]),
 ]
 
 for prefix, router, tags in PRIMARY_ROUTERS:
@@ -67,7 +72,9 @@ def _register_compat_route(
 ) -> None:
     compat_tags = [f"{tag}-compat"] if tag else None
     for alias in ("/api", "/v1"):
-        app.add_api_route(f"{alias}{path}", endpoint, methods=list(methods), tags=compat_tags)
+        app.add_api_route(
+            f"{alias}{path}", endpoint, methods=list(methods), tags=compat_tags
+        )
 
 
 def _is_mock_mode() -> bool:
@@ -147,12 +154,15 @@ def _format_ts(ts: Optional[float]) -> Optional[str]:
 
 @app.get("/status")
 def status():
+    settings = get_settings()
     snapshot = get_orchestrator().status()
     kill_switch = get_kill_switch()
     return {
         "running": snapshot.get("running"),
         "profile": snapshot.get("profile"),
         "paper": os.getenv("TRADING_MODE", "paper") == "paper",
+        "broker": settings.runtime.broker,
+        "dry_run": settings.runtime.dry_run,
         "halted": kill_switch.engaged_sync(),
         "last_run_id": snapshot.get("last_run_id"),
         "last_tick_ts": snapshot.get("last_tick_ts"),
@@ -178,10 +188,16 @@ def orchestrator_reconcile() -> Dict[str, Any]:
     _last_reconcile = time.time()
     orchestrator.mark_tick()
     orchestrator.set_last_error(None)
-    return {"ok": True, "snapshot": snapshot, "last_reconcile": _format_ts(_last_reconcile)}
+    return {
+        "ok": True,
+        "snapshot": snapshot,
+        "last_reconcile": _format_ts(_last_reconcile),
+    }
 
 
-_register_compat_route("/orchestrator/reconcile", orchestrator_reconcile, ["POST"], tag="orchestrator")
+_register_compat_route(
+    "/orchestrator/reconcile", orchestrator_reconcile, ["POST"], tag="orchestrator"
+)
 
 
 @app.post("/paper/start")
@@ -234,8 +250,8 @@ _register_compat_route("/orders/cancel_all", cancel_all_orders, ["POST"], tag="o
 
 @app.post("/live/start")
 def live_start(req: StartReq | None = None):
-    if os.getenv("LIVE_TRADING","false").lower() not in ("1","true","yes"):
-        raise HTTPException(403,"LIVE_TRADING env not enabled")
+    if os.getenv("LIVE_TRADING", "false").lower() not in ("1", "true", "yes"):
+        raise HTTPException(403, "LIVE_TRADING env not enabled")
     preset = req.preset if req else None
     return get_orchestrator().start_sync(mode="live", preset=preset)
 

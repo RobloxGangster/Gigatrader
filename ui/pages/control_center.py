@@ -123,7 +123,8 @@ def _trim_positions(raw: Iterable[Dict[str, Any]] | None) -> List[Dict[str, Any]
                 "qty": pos.get("qty") or pos.get("quantity"),
                 "avg_entry_price": pos.get("avg_entry_price") or pos.get("avg_price"),
                 "market_value": pos.get("market_value"),
-                "unrealized_pl": pos.get("unrealized_pl") or pos.get("unrealized_intraday_pl"),
+                "unrealized_pl": pos.get("unrealized_pl")
+                or pos.get("unrealized_intraday_pl"),
             }
         )
     return rows
@@ -149,7 +150,9 @@ def _render_status_header(
     cols[0].metric("Profile", status.get("profile", "paper"))
     cols[1].metric("Mode", "Paper" if status.get("paper", True) else "Live")
     cols[2].metric("Run State", "Running" if status.get("running") else "Stopped")
-    cols[3].metric("Kill Switch", "Engaged" if orchestrator.get("kill_switch") else "Standby")
+    cols[3].metric(
+        "Kill Switch", "Engaged" if orchestrator.get("kill_switch") else "Standby"
+    )
 
     running = bool(stream.get("running"))
     stream_label = "Running" if running else "Stopped"
@@ -168,7 +171,9 @@ def _render_status_header(
         st.caption(f"Last orchestrator activity: {orchestrator['last_tick_ts']}")
 
 
-def _render_metrics(account: Dict[str, Any], pnl: Dict[str, Any], exposure: Dict[str, Any]) -> None:
+def _render_metrics(
+    account: Dict[str, Any], pnl: Dict[str, Any], exposure: Dict[str, Any]
+) -> None:
     st.subheader("Telemetry")
     top = st.columns(3)
     top[0].metric("Equity", _fmt_money(account.get("equity")))
@@ -178,12 +183,16 @@ def _render_metrics(account: Dict[str, Any], pnl: Dict[str, Any], exposure: Dict
     pnl_cols = st.columns(3)
     pnl_cols[0].metric("Realized PnL", _fmt_signed(pnl.get("realized")))
     pnl_cols[1].metric("Unrealized PnL", _fmt_signed(pnl.get("unrealized")))
-    pnl_cols[2].metric("Total PnL", _fmt_signed(pnl.get("cumulative") or pnl.get("day_pl")))
+    pnl_cols[2].metric(
+        "Total PnL", _fmt_signed(pnl.get("cumulative") or pnl.get("day_pl"))
+    )
 
     exposure_cols = st.columns(3)
     exposure_cols[0].metric("Net Exposure", _fmt_money(exposure.get("net")))
     exposure_cols[1].metric("Gross Exposure", _fmt_money(exposure.get("gross")))
-    symbols = exposure.get("by_symbol") if isinstance(exposure.get("by_symbol"), list) else []
+    symbols = (
+        exposure.get("by_symbol") if isinstance(exposure.get("by_symbol"), list) else []
+    )
     long_total = 0.0
     short_total = 0.0
     for row in symbols:
@@ -195,7 +204,9 @@ def _render_metrics(account: Dict[str, Any], pnl: Dict[str, Any], exposure: Dict
             long_total += notional
         else:
             short_total += notional
-    exposure_cols[2].metric("Long / Short", f"{_fmt_money(long_total)} · {_fmt_money(short_total)}")
+    exposure_cols[2].metric(
+        "Long / Short", f"{_fmt_money(long_total)} · {_fmt_money(short_total)}"
+    )
 
 
 def _render_algorithm_controls(
@@ -207,7 +218,9 @@ def _render_algorithm_controls(
 ) -> None:
     st.subheader("Algorithm Controls")
     mock_mode = bool(account.get("mock_mode"))
-    preset_default = strategy_cfg.get("preset") or orchestrator.get("profile") or "balanced"
+    preset_default = (
+        strategy_cfg.get("preset") or orchestrator.get("profile") or "balanced"
+    )
     try:
         preset_index = DEFAULT_PRESETS.index(preset_default)
     except ValueError:
@@ -292,7 +305,9 @@ def _render_algorithm_controls(
         if start_clicked:
             try:
                 result = api.orchestrator_start(preset=preset)
-                st.toast(f"Trading started ({result.get('run_id', 'paper')})", icon="✅")
+                st.toast(
+                    f"Trading started ({result.get('run_id', 'paper')})", icon="✅"
+                )
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Failed to start trading: {exc}")
         if stop_clicked:
@@ -314,7 +329,9 @@ def _render_algorithm_controls(
                 "confidence_threshold": confidence,
                 "expected_value_threshold": expected_value,
                 "universe": [
-                    sym.strip().upper() for sym in universe_input.split(",") if sym.strip()
+                    sym.strip().upper()
+                    for sym in universe_input.split(",")
+                    if sym.strip()
                 ],
                 "cooldown_sec": cooldown_value,
                 "pacing_per_minute": pacing_limit,
@@ -433,7 +450,11 @@ def _render_runbook(orchestrator: Dict[str, Any], api: ApiClient) -> None:
         st.warning("Kill switch is engaged — trading halted until reset.")
 
 
-def _render_tables(positions: List[Dict[str, Any]], orders: List[Dict[str, Any]]) -> None:
+def _render_tables(
+    positions: List[Dict[str, Any]],
+    orders: List[Dict[str, Any]],
+    orders_source: str,
+) -> None:
     st.subheader("Open Positions")
     if positions:
         render_table("control_center_positions", positions, page_size=10)
@@ -443,6 +464,7 @@ def _render_tables(positions: List[Dict[str, Any]], orders: List[Dict[str, Any]]
     st.subheader("Recent Orders")
     if orders:
         render_table("control_center_orders", orders, page_size=10)
+        st.caption(f"Orders from Alpaca via {orders_source}")
     else:
         st.caption("No recent orders.")
 
@@ -540,7 +562,9 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
     return data
 
 
-def render(_: BrokerAPI, state: AppSessionState, api_client: ApiClient | None = None) -> None:
+def render(
+    _: BrokerAPI, state: AppSessionState, api_client: ApiClient | None = None
+) -> None:
     st.title("Control Center")
     st.markdown('<div data-testid="page-control-center"></div>', unsafe_allow_html=True)
     st.markdown('<div data-testid="control-center-root"></div>', unsafe_allow_html=True)
@@ -587,6 +611,14 @@ def render(_: BrokerAPI, state: AppSessionState, api_client: ApiClient | None = 
 
     data = _load_remote_state(api)
 
+    status_snapshot = data.get("status", {}) if isinstance(data, dict) else {}
+    broker_label = status_snapshot.get("broker", "unknown")
+    dry_run_label = status_snapshot.get("dry_run")
+    profile_label = status_snapshot.get("profile", "paper")
+    st.caption(
+        f"Runtime profile={profile_label} · broker={broker_label} · dry_run={dry_run_label}"
+    )
+
     _render_connection_badge(
         data.get("account", {}),
         data.get("status", {}),
@@ -623,7 +655,9 @@ def render(_: BrokerAPI, state: AppSessionState, api_client: ApiClient | None = 
     _render_status_header(
         data.get("status", {}), data.get("stream", {}), data.get("orchestrator", {})
     )
-    _render_metrics(data.get("account", {}), data.get("pnl", {}), data.get("exposure", {}))
+    _render_metrics(
+        data.get("account", {}), data.get("pnl", {}), data.get("exposure", {})
+    )
     _render_algorithm_controls(
         strategy_cfg=data.get("strategy", {}),
         orchestrator=data.get("orchestrator", {}),
@@ -636,7 +670,7 @@ def render(_: BrokerAPI, state: AppSessionState, api_client: ApiClient | None = 
 
     positions = _trim_positions(data.get("positions"))
     orders = _trim_orders(data.get("orders"))
-    _render_tables(positions, orders)
+    _render_tables(positions, orders, api.base())
     _render_logs(data.get("logs", []), data.get("pacing", {}))
 
     if st.session_state.get("__cc_auto_refresh__"):

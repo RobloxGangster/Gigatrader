@@ -1,114 +1,84 @@
-"""Broker endpoints used by the Control Center UI."""
+"""Broker endpoints that proxy Alpaca without local caching."""
 
 from __future__ import annotations
 
-import os
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+import hashlib
+import json
+from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.execution.alpaca_adapter import AlpacaOrderError, AlpacaUnauthorized
+from app.execution.alpaca_adapter import AlpacaAdapter
+from core.settings import get_settings
 
-from .deps import get_broker
-
-router = APIRouter()
-
-_MOCK_ACCOUNT: Dict[str, float | str] = {
-    "equity": 100_000.0,
-    "cash": 75_000.0,
-    "buying_power": 150_000.0,
-    "portfolio_value": 100_000.0,
-    "status": "ACTIVE",
-}
-
-_MOCK_POSITIONS: List[Dict[str, Any]] = [
-    {
-        "symbol": "AAPL",
-        "qty": 10.0,
-        "avg_entry_price": 175.0,
-        "market_value": 1750.0,
-        "unrealized_pl": 25.0,
-        "unrealized_plpc": 0.0143,
-    },
-    {
-        "symbol": "MSFT",
-        "qty": 5.0,
-        "avg_entry_price": 320.0,
-        "market_value": 1600.0,
-        "unrealized_pl": -40.0,
-        "unrealized_plpc": -0.0247,
-    },
-]
-
-_MOCK_ORDERS: List[Dict[str, Any]] = [
-    {
-        "id": "MOCK-1",
-        "symbol": "AAPL",
-        "side": "buy",
-        "qty": 10.0,
-        "status": "filled",
-        "submitted_at": datetime.now(timezone.utc).isoformat(),
-        "filled_qty": 10.0,
-        "avg_fill_price": 174.5,
-    },
-    {
-        "id": "MOCK-2",
-        "symbol": "MSFT",
-        "side": "sell",
-        "qty": 5.0,
-        "status": "accepted",
-        "submitted_at": datetime.now(timezone.utc).isoformat(),
-        "filled_qty": 0.0,
-        "avg_fill_price": 0.0,
-    },
-]
+router = APIRouter(tags=["broker"])
 
 
-def _alpaca_env_present() -> bool:
-    required = ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "APCA_API_BASE_URL")
-    return all(os.getenv(name) for name in required)
+def alpaca(settings=Depends(get_settings)) -> AlpacaAdapter:
+    alpaca_settings = settings.alpaca
+    if not alpaca_settings.key_id or not alpaca_settings.secret_key:
+        raise HTTPException(status_code=503, detail="Alpaca credentials unavailable")
+    return AlpacaAdapter(
+        base_url=alpaca_settings.base_url,
+        key_id=alpaca_settings.key_id,
+        secret_key=alpaca_settings.secret_key,
+    )
 
 
 @router.get("/account")
-def broker_account() -> dict:
-    if not _alpaca_env_present():
-        return _MOCK_ACCOUNT.copy()
-    broker = get_broker()
-    try:
-        return broker.get_account()
-    except (AlpacaUnauthorized, AlpacaOrderError) as exc:
-        raise HTTPException(status_code=502, detail=f"broker_account: {exc}") from exc
-    except Exception as exc:  # noqa: BLE001 - surfaced to client
-        raise HTTPException(status_code=502, detail=f"broker_account: {exc}") from exc
+def account(adapter: AlpacaAdapter = Depends(alpaca)) -> Dict[str, Any]:
+    return adapter.get_account()
 
 
 @router.get("/positions")
-def broker_positions() -> list[dict]:
-    if not _alpaca_env_present():
-        return list(_MOCK_POSITIONS)
-    broker = get_broker()
-    try:
-        return broker.get_positions()
-    except (AlpacaUnauthorized, AlpacaOrderError) as exc:
-        raise HTTPException(status_code=502, detail=f"broker_positions: {exc}") from exc
-    except Exception as exc:  # noqa: BLE001 - surfaced to client
-        raise HTTPException(status_code=502, detail=f"broker_positions: {exc}") from exc
+def positions(adapter: AlpacaAdapter = Depends(alpaca)) -> list[dict]:
+    return adapter.list_positions()
 
 
 @router.get("/orders")
-def broker_orders(
+def orders(
     status: str = Query("all"),
     limit: int = Query(50, ge=1, le=500),
+    adapter: AlpacaAdapter = Depends(alpaca),
 ) -> list[dict]:
-    if not _alpaca_env_present():
-        return list(_MOCK_ORDERS)[:limit]
-    broker = get_broker()
     try:
-        return broker.get_orders(status=status, limit=limit)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except (AlpacaUnauthorized, AlpacaOrderError) as exc:
-        raise HTTPException(status_code=502, detail=f"broker_orders: {exc}") from exc
-    except Exception as exc:  # noqa: BLE001 - surfaced to client
-        raise HTTPException(status_code=502, detail=f"broker_orders: {exc}") from exc
+        raw = adapter.list_orders(status=status, limit=limit)
+    except Exception as exc:  # noqa: BLE001 - surface Alpaca errors
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return [AlpacaAdapter.normalize_order(order) for order in raw]
+
+
+@router.post("/orders")
+def place_order(
+    order: Dict[str, Any], adapter: AlpacaAdapter = Depends(alpaca)
+) -> Dict[str, Any]:
+    payload = dict(order)
+    payload.setdefault("client_order_id", deterministic_client_id(payload))
+    try:
+        created = adapter.place_order(payload)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return AlpacaAdapter.normalize_order(created)
+
+
+@router.delete("/orders/{order_id}")
+def cancel_order(
+    order_id: str, adapter: AlpacaAdapter = Depends(alpaca)
+) -> Dict[str, bool]:
+    try:
+        adapter.cancel_order(order_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+def deterministic_client_id(payload: Dict[str, Any]) -> str:
+    body = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    digest = hashlib.sha256(body).hexdigest()
+    return f"gt-{digest[:20]}"
+
+
+__all__ = [
+    "router",
+    "deterministic_client_id",
+]

@@ -1,149 +1,136 @@
-import json
-import types
-
 import pytest
-from alpaca.common.exceptions import APIError
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+import os
 
-from app.execution.alpaca_adapter import AlpacaAdapter, AlpacaUnauthorized
+from app.execution.alpaca_adapter import AlpacaAdapter
+from app.execution.router import AlpacaRouter, MockRouter, build_router
+from backend.routers import broker
+from core.settings import Settings
 
 
 @pytest.fixture(autouse=True)
-def alpaca_env(monkeypatch):
-    monkeypatch.setenv("ALPACA_API_KEY_ID", "TESTKEY1234")
-    monkeypatch.setenv("ALPACA_API_SECRET_KEY", "SECRET")
-    monkeypatch.delenv("APCA_API_BASE_URL", raising=False)
+def alpaca_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPACA_KEY_ID", "test-key")
+    monkeypatch.setenv("ALPACA_API_KEY_ID", "test-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("ALPACA_API_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+    monkeypatch.setenv("PROFILE", "paper")
+    monkeypatch.setenv("BROKER", "alpaca")
+    monkeypatch.setenv("DRY_RUN", "false")
     yield
+    monkeypatch.delenv("ALPACA_KEY_ID", raising=False)
     monkeypatch.delenv("ALPACA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)
     monkeypatch.delenv("ALPACA_API_SECRET_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_BASE_URL", raising=False)
+    monkeypatch.delenv("PROFILE", raising=False)
+    monkeypatch.delenv("BROKER", raising=False)
+    monkeypatch.delenv("DRY_RUN", raising=False)
 
 
-class _FakeClient:
-    def __init__(self):
-        self._submit_behavior = []
-        self._submit_calls = 0
-        self._cancel_calls: list[str] = []
-        self._orders = []
-        self._cancel_side_effect: dict[str, Exception] = {}
+class FakeResponse:
+    def __init__(self, json_data, status_code: int = 200) -> None:
+        self._json = json_data
+        self.status_code = status_code
+        self.ok = 200 <= status_code < 300
+        self.headers = {"content-type": "application/json"}
 
-    def submit_order(self, order_data):
-        behavior = None
-        if self._submit_calls < len(self._submit_behavior):
-            behavior = self._submit_behavior[self._submit_calls]
-        self._submit_calls += 1
-        if isinstance(behavior, Exception):
-            raise behavior
-        if callable(behavior):
-            return behavior(order_data)
-        return behavior
+    def json(self):
+        return self._json
 
-    def get_orders(self):
-        return list(self._orders)
-
-    def cancel_order_by_id(self, order_id: str):
-        self._cancel_calls.append(order_id)
-        exc = self._cancel_side_effect.get(order_id)
-        if exc is not None:
-            raise exc
-
-    def close_all_positions(self, cancel_orders: bool = True):  # pragma: no cover - not exercised here
-        return []
-
-    def get_account(self):  # pragma: no cover - not used here
-        return {}
+    def raise_for_status(self) -> None:
+        if not self.ok:
+            raise RuntimeError(f"HTTP {self.status_code}")
 
 
-def _api_error(message: str, code: int | None = None) -> APIError:
-    payload = {"message": message, "code": code if code is not None else 0}
-    return APIError(json.dumps(payload))
+class FakeSession:
+    def __init__(self, json_payload) -> None:
+        self.json_payload = json_payload
+        self.last_post = None
+        self.headers = {}
+
+    def post(self, url, timeout=None, **kwargs):
+        self.last_post = (url, kwargs)
+        body = dict(kwargs.get("json", {}))
+        body.setdefault("id", "order-1")
+        return FakeResponse(body)
+
+    def get(self, url, timeout=None, **kwargs):
+        return FakeResponse(self.json_payload)
+
+    def delete(self, url, timeout=None, **kwargs):
+        return FakeResponse({}, status_code=204)
 
 
-def test_place_limit_bracket_unauthorized_raises(monkeypatch):
-    client = _FakeClient()
-    client._submit_behavior = [_api_error("unauthorized.")]
-    monkeypatch.setattr(
-        "app.execution.alpaca_adapter.TradingClient",
-        lambda *args, **kwargs: client,
-    )
+def test_place_order_hits_alpaca() -> None:
+    payload = {
+        "symbol": "AAPL",
+        "qty": 1,
+        "side": "buy",
+        "type": "market",
+        "client_order_id": "cid-1",
+    }
+    session = FakeSession(json_payload=[])
+    adapter = AlpacaAdapter(session=session)
 
-    adapter = AlpacaAdapter()
-    with pytest.raises(AlpacaUnauthorized):
-        adapter.place_limit_bracket("AAPL", "buy", 1, 10.0)
+    result = adapter.place_order(payload)
 
-    info = adapter.debug_info()
-    assert info["last_error"] == "unauthorized"
-    assert info["key_tail"] == "1234"
-
-
-def test_place_limit_bracket_duplicate_client_id_retry(monkeypatch):
-    calls: list[str] = []
-
-    class FakeClient(_FakeClient):
-        def submit_order(self, order_data):
-            calls.append(order_data.client_order_id)
-            if len(calls) == 1:
-                raise _api_error("duplicate", code=40010001)
-            return types.SimpleNamespace(
-                id="order-1",
-                client_order_id=order_data.client_order_id,
-                symbol="AAPL",
-                side="buy",
-                qty="1",
-                limit_price="10",
-                status="accepted",
-                submitted_at="2023-01-01T00:00:00Z",
-            )
-
-    monkeypatch.setattr(
-        "app.execution.alpaca_adapter.TradingClient",
-        lambda *args, **kwargs: FakeClient(),
-    )
-
-    adapter = AlpacaAdapter()
-    result = adapter.place_limit_bracket("AAPL", "buy", 1, 10.0)
-
-    assert len(calls) == 2
     assert result["id"] == "order-1"
-    assert result["client_order_id"] == calls[-1]
-    assert result["limit_price"] == 10.0
-    assert result["qty"] == 1.0
+    url, kwargs = session.last_post
+    assert url == "https://paper-api.alpaca.markets/v2/orders"
+    assert kwargs["json"]["client_order_id"] == "cid-1"
 
 
-def test_cancel_all_iterates_orders(monkeypatch):
-    client = _FakeClient()
-    client._orders = [
-        types.SimpleNamespace(id="1", status="accepted"),
-        types.SimpleNamespace(id="2", status="new"),
-        types.SimpleNamespace(id="3", status="filled"),
-    ]
-    client._cancel_side_effect = {"2": _api_error("fail")}
+def test_broker_orders_route_returns_normalised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(broker.router, prefix="/broker")
+    client = TestClient(app)
 
-    monkeypatch.setattr(
-        "app.execution.alpaca_adapter.TradingClient",
-        lambda *args, **kwargs: client,
-    )
+    class StubAdapter:
+        def list_orders(self, status: str = "all", limit: int = 50):
+            return [
+                {
+                    "id": "order-1",
+                    "client_order_id": "cid-1",
+                    "symbol": "AAPL",
+                    "qty": "1",
+                    "filled_qty": "0",
+                    "status": "accepted",
+                    "side": "buy",
+                    "type": "limit",
+                    "limit_price": "10",
+                    "submitted_at": "2023-01-01T00:00:00Z",
+                }
+            ]
 
-    adapter = AlpacaAdapter()
-    result = adapter.cancel_all()
+    app.dependency_overrides[broker.alpaca] = lambda: StubAdapter()
 
-    assert result == {"canceled": 1, "failed": 1}
-    assert client._cancel_calls == ["1", "2"]
+    response = client.get("/broker/orders")
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["status"] == "accepted"
+    assert body[0]["id"] == "order-1"
 
 
-def test_debug_info_tracks_last_error(monkeypatch):
-    client = _FakeClient()
-    client._submit_behavior = [_api_error("unauthorized.")]
+def test_build_router_prefers_alpaca(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert os.getenv("ALPACA_KEY_ID") == "test-key"
+    assert os.getenv("ALPACA_SECRET_KEY") == "test-secret"
+    monkeypatch.setenv("ALPACA_KEY_ID", "test-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "test-secret")
+    settings = Settings.from_env()
+    router = build_router(settings)
+    assert isinstance(router, AlpacaRouter)
 
-    monkeypatch.setattr(
-        "app.execution.alpaca_adapter.TradingClient",
-        lambda *args, **kwargs: client,
-    )
-
-    adapter = AlpacaAdapter()
-    with pytest.raises(AlpacaUnauthorized):
-        adapter.place_limit_bracket("AAPL", "buy", 1, 10.0)
-
-    info = adapter.debug_info()
-    assert info["last_error"] == "unauthorized"
-    assert info["key_tail"] == "1234"
-    assert info["paper"] is True
-    assert "base_url" in info
+    monkeypatch.setenv("BROKER", "mock")
+    monkeypatch.setenv("PROFILE", "dev")
+    monkeypatch.delenv("ALPACA_KEY_ID", raising=False)
+    monkeypatch.delenv("ALPACA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_API_SECRET_KEY", raising=False)
+    mock_settings = Settings.from_env()
+    with pytest.raises(RuntimeError):
+        build_router(mock_settings)
