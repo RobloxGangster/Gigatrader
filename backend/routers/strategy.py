@@ -31,7 +31,7 @@ class StrategyConfigPatch(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-@router.get("/strategy/config")
+@router.get("/config")
 def strategy_config() -> Any:
     sr = get_strategy_registry()
     try:
@@ -40,7 +40,7 @@ def strategy_config() -> Any:
         raise HTTPException(status_code=500, detail=f"strategy_config: {exc}") from exc
 
 
-@router.post("/strategy/config")
+@router.post("/config")
 def strategy_config_update(patch: StrategyConfigPatch) -> Any:
     sr = get_strategy_registry()
     try:

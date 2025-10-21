@@ -21,7 +21,7 @@ class RiskPatch(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-@router.get("/risk/config")
+@router.get("/config")
 def risk_config() -> Any:
     rm = get_risk_manager()
     try:
@@ -30,7 +30,7 @@ def risk_config() -> Any:
         raise HTTPException(status_code=500, detail=f"risk_config: {exc}") from exc
 
 
-@router.post("/risk/config")
+@router.post("/config")
 def risk_config_update(patch: RiskPatch) -> Any:
     rm = get_risk_manager()
     try:

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-import requests
 import streamlit as st
+
+from ui.lib.api_client import ApiClient
 
 
 def _format_float(value: Any, *, precision: int = 2) -> str:
@@ -16,20 +17,19 @@ def _format_float(value: Any, *, precision: int = 2) -> str:
     except Exception:
         return str(value)
 
-
-def render(api_base: str = "http://127.0.0.1:8000") -> None:
+def render(api: ApiClient | None = None, *_: Any) -> None:
     st.header("Extended Trading Metrics")
     st.caption("Snapshots /metrics/extended for latency, rejects, and data health.")
 
-    st.button("Refresh metrics", type="primary", on_click=st.experimental_rerun)
+    st.button("Refresh metrics", type="primary", on_click=st.rerun)
+
+    api = api or ApiClient()
 
     try:
-        response = requests.get(f"{api_base}/metrics/extended", timeout=5)
-        response.raise_for_status()
+        data: Dict[str, Any] = api.metrics_extended()
     except Exception as exc:  # noqa: BLE001 - UI guard
         st.error(f"Failed to load metrics: {exc}")
         return
-    data: Dict[str, Any] = response.json()
 
     latency = data.get("order_latency_ms", {})
     rejects = data.get("order_rejects_total", {})

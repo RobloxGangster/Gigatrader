@@ -17,7 +17,7 @@ class OrchestratorStartPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-@router.get("/orchestrator/status")
+@router.get("/status")
 def orchestrator_status() -> dict:
     orch = get_orchestrator()
     try:
@@ -26,7 +26,7 @@ def orchestrator_status() -> dict:
         raise HTTPException(status_code=500, detail=f"orchestrator_status: {exc}") from exc
 
 
-@router.post("/orchestrator/start")
+@router.post("/start")
 def orchestrator_start(payload: OrchestratorStartPayload | None = None) -> dict:
     orch = get_orchestrator()
     try:
@@ -38,7 +38,7 @@ def orchestrator_start(payload: OrchestratorStartPayload | None = None) -> dict:
         raise HTTPException(status_code=500, detail=f"orchestrator_start: {exc}") from exc
 
 
-@router.post("/orchestrator/stop")
+@router.post("/stop")
 def orchestrator_stop() -> dict:
     orch = get_orchestrator()
     try:

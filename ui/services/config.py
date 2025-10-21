@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import os
 
+from ui.lib.api_client import discover_base_url, reset_discovery_cache
+
 
 def api_base_url() -> str:
-    """Return the backend API base URL.
+    """Return the discovered backend base URL."""
 
-    Defaults to the local backend but allows overriding via environment
-    variables. Trailing slashes are stripped so callers can safely join paths.
-    """
+    return discover_base_url()
 
-    return os.environ.get("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+
+def reset_api_base_url_cache() -> None:
+    """Clear the cached discovery base URL (testing helper)."""
+
+    reset_discovery_cache()
 
 
 def mock_mode() -> bool:

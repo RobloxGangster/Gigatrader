@@ -1,5 +1,8 @@
 
 from services.ml.registry import register_model, list_models, load_model, promote_alias
+import pytest
+
+sklearn = pytest.importorskip("sklearn.linear_model")
 from sklearn.linear_model import LogisticRegression
 import numpy as np, uuid, os
 

@@ -23,7 +23,7 @@ def _probe_env() -> str:
     return f"alpaca_env={len(present)}/{len(keys)}"
 
 
-@router.post("/diagnostics/run")
+@router.post("/run")
 def diagnostics_run() -> Dict[str, Any]:
     """Lightweight self-check endpoint."""
 

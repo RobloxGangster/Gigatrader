@@ -1,25 +1,10 @@
-"""Metrics endpoints surfaced in the Control Center."""
+"""Compatibility wrapper around the telemetry-related routers."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
-from .deps import get_metrics
+from .pnl import router as pnl_router
+from .telemetry import router as telemetry_router
 
 router = APIRouter()
-
-
-@router.get("/pnl/summary")
-def pnl_summary() -> dict:
-    metrics = get_metrics()
-    try:
-        return metrics.pnl_summary()
-    except Exception as exc:  # noqa: BLE001 - surfaced to client
-        raise HTTPException(status_code=500, detail=f"pnl_summary: {exc}") from exc
-
-
-@router.get("/telemetry/exposure")
-def exposure() -> dict:
-    metrics = get_metrics()
-    try:
-        return metrics.exposure()
-    except Exception as exc:  # noqa: BLE001 - surfaced to client
-        raise HTTPException(status_code=500, detail=f"exposure: {exc}") from exc
+router.include_router(pnl_router)
+router.include_router(telemetry_router)
