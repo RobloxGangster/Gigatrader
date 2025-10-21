@@ -3,14 +3,15 @@ from __future__ import annotations
 import os
 from collections import deque
 from pathlib import Path
-
 from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse, PlainTextResponse
 
 router = APIRouter()
 
 DEFAULT_LOG = os.getenv("APP_LOG_FILE", "logs/app.log")
+LOG_PATH = Path(DEFAULT_LOG)
 
 
 def _tail(path: Path, n: int) -> list[str]:
@@ -35,12 +36,24 @@ def logs_tail(lines: int = Query(200, ge=1, le=5000), file: str | None = None):
 
 
 @router.get("/recent")
-def recent_logs(limit: int = Query(200, ge=1, le=2000)) -> Dict[str, List[str]]:
+def recent_logs(limit: int = Query(300, ge=1, le=5000)) -> Dict[str, List[str]]:
     """Return the most recent log lines with a sensible default limit."""
 
     try:
-        path = Path(DEFAULT_LOG)
-        lines = _tail(path, limit)
+        lines = _tail(LOG_PATH, limit)
         return {"lines": lines}
     except Exception:
         return {"lines": []}
+
+
+@router.get("/download")
+def download_log() -> FileResponse | PlainTextResponse:
+    """Provide the raw log file for download."""
+
+    if LOG_PATH.exists():
+        return FileResponse(
+            str(LOG_PATH),
+            media_type="text/plain",
+            filename=LOG_PATH.name,
+        )
+    return PlainTextResponse("(no log file)", media_type="text/plain")

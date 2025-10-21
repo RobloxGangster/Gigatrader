@@ -2,4 +2,5 @@ pytest
 pytest-asyncio>=0.23
 pytest-cov
 ruff
+pyyaml>=6.0.1
 playwright>=1.46

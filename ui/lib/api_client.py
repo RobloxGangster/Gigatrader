@@ -148,32 +148,46 @@ class ApiClient:
             raise RuntimeError(f"API request failed ({code}): {url}")
         raise RuntimeError(f"API request failed: {path} via base={self.base}")
 
+    def _request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | None = None,
+    ) -> Any:
+        if "?" in path and params is not None:
+            raise ValueError("Provide either params or a query string, not both")
+        if "?" in path and params is None:
+            path, _, query = path.partition("?")
+            params = dict(urllib.parse.parse_qsl(query, keep_blank_values=True))
+        return self._json_request(method, path, params=params, payload=payload)
+
     # --- Convenience wrappers used by Streamlit pages ---
 
     def health(self) -> Dict[str, Any]:
-        return self._json_request("GET", "/health")
+        return self._request("/health")
 
     def status(self) -> Dict[str, Any]:
-        return self._json_request("GET", "/status")
+        return self._request("/status")
 
     def account(self) -> Dict[str, Any]:
-        return self._json_request("GET", "/broker/account")
+        return self._request("/broker/account")
 
     def positions(self) -> Any:
-        return self._json_request("GET", "/broker/positions")
+        return self._request("/broker/positions")
 
     def orders(self, status: str = "all", limit: int = 50) -> Any:
-        return self._json_request(
-            "GET",
+        return self._request(
             "/broker/orders",
             params={"status": status, "limit": limit},
         )
 
     def stream_status(self) -> Dict[str, Any]:
-        return self._json_request("GET", "/stream/status")
+        return self._request("/stream/status")
 
     def orchestrator_status(self) -> Dict[str, Any]:
-        return self._json_request("GET", "/orchestrator/status")
+        return self._request("/orchestrator/status")
 
     def orchestrator_start(self, preset: str | None = None, mode: str | None = None) -> Dict[str, Any]:
         payload: Dict[str, Any] = {}
@@ -181,63 +195,86 @@ class ApiClient:
             payload["preset"] = preset
         if mode:
             payload["mode"] = mode
-        return self._json_request("POST", "/orchestrator/start", payload=payload)
+        return self._request("/orchestrator/start", method="POST", payload=payload)
 
     def orchestrator_stop(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/orchestrator/stop")
+        return self._request("/orchestrator/stop", method="POST")
 
     def orchestrator_reconcile(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/orchestrator/reconcile")
+        return self._request("/orchestrator/reconcile", method="POST")
 
     def strategy_config(self) -> Dict[str, Any]:
-        return self._json_request("GET", "/strategy/config")
+        return self._request("/strategy/config")
 
     def strategy_update(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._json_request("POST", "/strategy/config", payload=payload)
+        return self._request("/strategy/config", method="POST", payload=payload)
 
     def risk_config(self) -> Dict[str, Any]:
-        return self._json_request("GET", "/risk/config")
+        return self._request("/risk/config")
 
     def risk_update(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._json_request("POST", "/risk/config", payload=payload)
+        return self._request("/risk/config", method="POST", payload=payload)
 
     def risk_reset_kill_switch(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/risk/killswitch/reset")
+        return self._request("/risk/killswitch/reset", method="POST")
 
     def stream_start(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/stream/start")
+        return self._request("/stream/start", method="POST")
 
     def stream_stop(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/stream/stop")
+        return self._request("/stream/stop", method="POST")
 
     def pnl_summary(self) -> Dict[str, Any]:
-        return self._json_request("GET", "/pnl/summary")
+        return self._request("/pnl/summary")
 
     def exposure(self) -> Dict[str, Any]:
-        return self._json_request("GET", "/telemetry/exposure")
+        return self._request("/telemetry/exposure")
 
     def recent_logs(self, limit: int = 200) -> Dict[str, Any]:
-        return self._json_request("GET", "/logs/recent", params={"limit": limit})
+        return self._request("/logs/recent", params={"limit": limit})
 
     def cancel_all_orders(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/orders/cancel_all")
+        return self._request("/orders/cancel_all", method="POST")
 
     def metrics_extended(self) -> Dict[str, Any]:
-        return self._json_request("GET", "/metrics/extended")
+        return self._request("/metrics/extended")
 
     def paper_start(self, preset: str | None = None) -> Dict[str, Any]:
         payload = {"preset": preset} if preset else None
-        return self._json_request("POST", "/paper/start", payload=payload or {})
+        return self._request("/paper/start", method="POST", payload=payload or {})
 
     def paper_stop(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/paper/stop")
+        return self._request("/paper/stop", method="POST")
 
     def paper_flatten(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/paper/flatten")
+        return self._request("/paper/flatten", method="POST")
 
     def live_start(self, preset: str | None = None) -> Dict[str, Any]:
         payload = {"preset": preset} if preset else None
-        return self._json_request("POST", "/live/start", payload=payload or {})
+        return self._request("/live/start", method="POST", payload=payload or {})
 
     def diagnostics_run(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/diagnostics/run")
+        return self._request("/diagnostics/run", method="POST")
+
+    def logs_download_bytes(self) -> bytes:
+        attempts = len(PREFIXES)
+        last_error: Exception | None = None
+        for _ in range(attempts):
+            url = f"{self.base}/logs/download"
+            try:
+                with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310
+                    return resp.read()
+            except urllib.error.HTTPError as exc:  # pragma: no cover - network branch
+                last_error = exc
+                if exc.code == 404:
+                    self._rotate_prefix()
+                    continue
+                raise RuntimeError(f"Log download failed ({exc.code}): {url}") from exc
+            except urllib.error.URLError as exc:  # pragma: no cover - network branch
+                last_error = exc
+                self._rotate_prefix()
+                continue
+            except Exception as exc:  # noqa: BLE001 - defensive guard
+                last_error = exc
+                raise RuntimeError(f"Log download failed: {exc}") from exc
+        raise RuntimeError("Log download failed") from last_error

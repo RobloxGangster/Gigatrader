@@ -13,7 +13,6 @@ from ui.lib.api_client import ApiClient
 from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
-from ui.utils.st_compat import safe_rerun
 
 _TESTING = "PYTEST_CURRENT_TEST" in os.environ
 REFRESH_INTERVAL_SEC = 5
@@ -76,6 +75,19 @@ def _trim_positions(raw: Iterable[Dict[str, Any]] | None) -> List[Dict[str, Any]
             }
         )
     return rows
+
+
+def _emit_config_warnings(section: str, payload: Dict[str, Any]) -> None:
+    warnings = payload.get("warnings") if isinstance(payload, dict) else None
+    if not isinstance(warnings, (list, tuple, set)):
+        return
+    seen: set[str] = set()
+    for message in warnings:
+        text = str(message or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        st.warning(f"{section} config warning: {text}")
 
 
 def _render_status_header(status: Dict[str, Any], stream: Dict[str, Any], orchestrator: Dict[str, Any]) -> None:
@@ -315,14 +327,14 @@ def _render_stream_controls(stream: Dict[str, Any], api: ApiClient) -> None:
         try:
             api.stream_start()
             st.toast("Stream start requested", icon="📡")
-            safe_rerun()
+            st.rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to start stream: {exc}")
     if cols[1].button("Stop Stream", disabled=not running, key="cc_stream_stop"):
         try:
             api.stream_stop()
             st.toast("Stream stop requested", icon="🛑")
-            safe_rerun()
+            st.rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to stop stream: {exc}")
 
@@ -476,19 +488,35 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
     if "__cc_auto_refresh_last__" not in st.session_state:
         st.session_state["__cc_auto_refresh_last__"] = time.time()
 
-    refresh_placeholder = st.empty()
-    with refresh_placeholder.container():
-        refresh_col, auto_col = st.columns([1, 1])
-        if refresh_col.button("Refresh", key="cc_manual_refresh"):
+    action_cols = st.columns([1, 1, 1])
+    with action_cols[0]:
+        if st.button("Refresh", key="cc_manual_refresh"):
             st.session_state["__cc_manual_refresh_ts__"] = time.time()
-            safe_rerun()
-        auto_enabled = auto_col.checkbox(
-            "Auto-refresh telemetry",
-            value=st.session_state.get("__cc_auto_refresh__", DEFAULT_AUTO_REFRESH),
-            key="cc_auto_refresh_toggle",
-            help="Refresh KPIs and tables every few seconds.",
-        )
-        st.session_state["__cc_auto_refresh__"] = auto_enabled
+            st.rerun()
+    with action_cols[1]:
+        if st.button("Start Orchestrator", key="cc_orchestrator_start_button"):
+            try:
+                api.orchestrator_start()
+            except Exception as exc:  # noqa: BLE001 - surface to UI
+                st.warning(f"Start failed: {exc}")
+            else:
+                st.rerun()
+    with action_cols[2]:
+        if st.button("Stop Orchestrator", key="cc_orchestrator_stop_button"):
+            try:
+                api.orchestrator_stop()
+            except Exception as exc:  # noqa: BLE001 - surface to UI
+                st.warning(f"Stop failed: {exc}")
+            else:
+                st.rerun()
+
+    auto_enabled = st.checkbox(
+        "Auto-refresh telemetry",
+        value=st.session_state.get("__cc_auto_refresh__", DEFAULT_AUTO_REFRESH),
+        key="cc_auto_refresh_toggle",
+        help="Refresh KPIs and tables every few seconds.",
+    )
+    st.session_state["__cc_auto_refresh__"] = auto_enabled
 
     data = _load_remote_state(api)
 
@@ -515,6 +543,10 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
     if data.get("logs_error"):
         st.warning(f"Log tail unavailable: {data['logs_error']}")
 
+    _emit_config_warnings("Orchestrator", data.get("orchestrator", {}))
+    _emit_config_warnings("Strategy", data.get("strategy", {}))
+    _emit_config_warnings("Risk", data.get("risk", {}))
+
     _render_status_header(data.get("status", {}), data.get("stream", {}), data.get("orchestrator", {}))
     _render_metrics(data.get("account", {}), data.get("pnl", {}), data.get("exposure", {}))
     _render_algorithm_controls(
@@ -539,4 +571,4 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
         if wait > 0:
             time.sleep(wait)
         st.session_state["__cc_auto_refresh_last__"] = time.time()
-        safe_rerun()
+        st.rerun()

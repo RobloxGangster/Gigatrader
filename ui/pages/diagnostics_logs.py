@@ -10,7 +10,6 @@ import zipfile
 import streamlit as st
 
 from ui.lib.api_client import ApiClient
-from ui.utils.st_compat import safe_rerun
 
 _MESSAGE_KEY = "diagnostics_logs_status"
 _REFRESH_TOGGLE = "_refresh_logs_toggle"
@@ -76,13 +75,24 @@ def render(*_: Any) -> None:
                     "ok": False,
                     "message": f"Diagnostics failed: {exc}",
                 }
-            safe_rerun()
+            st.rerun()
     with col2:
         if st.button("Refresh Logs", use_container_width=True):
             st.session_state[_REFRESH_TOGGLE] = not st.session_state.get(_REFRESH_TOGGLE, False)
-            safe_rerun()
+            st.rerun()
 
     with col3:
+        try:
+            log_bytes = api.logs_download_bytes()
+            st.download_button(
+                "Export log file",
+                data=log_bytes,
+                file_name="app.log",
+                mime="text/plain",
+                use_container_width=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - surface to UI
+            st.warning(f"Download not available: {exc}")
         if st.button("Create Repro Bundle", use_container_width=True):
             try:
                 bundle_path = _create_repro_bundle()
@@ -99,7 +109,7 @@ def render(*_: Any) -> None:
 
     st.caption("Recent application log tail")
     try:
-        data = api.recent_logs(limit=200)
+        data = api.recent_logs(limit=500)
         lines = data.get("lines", []) if isinstance(data, dict) else []
         if lines:
             st.code("\n".join(str(line) for line in lines))
