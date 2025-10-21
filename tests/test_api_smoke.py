@@ -15,7 +15,11 @@ app = getattr(app_module, "app")
 client = TestClient(app)
 
 def test_health_status():
-    assert client.get("/health").status_code == 200
+    health_resp = client.get("/health")
+    assert health_resp.status_code == 200
+    health = health_resp.json()
+    assert health["ok"] is True
+    assert "mode" in health and "orchestrator" in health
     r = client.get("/status")
     assert r.status_code == 200
     body = r.json()

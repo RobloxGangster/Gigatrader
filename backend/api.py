@@ -26,6 +26,7 @@ from backend.routers.deps import get_kill_switch, get_orchestrator, get_stream_m
 from backend.services import reconcile
 from backend.services.alpaca_client import get_trading_client
 from core.broker_config import is_mock
+from core.runtime_flags import get_runtime_flags
 from core.settings import get_settings
 
 load_dotenv()
@@ -78,8 +79,27 @@ def _register_compat_route(
 
 
 @app.get("/health")
-def health() -> Dict[str, str]:
-    return {"status": "ok"}
+def health() -> Dict[str, Any]:
+    flags = get_runtime_flags()
+    orchestrator = get_orchestrator()
+    orchestrator_status = orchestrator.status()
+    try:
+        stream_status = get_stream_manager().status()
+    except Exception as exc:  # pragma: no cover - defensive
+        stream_status = {"status": "error", "last_error": str(exc)}
+
+    broker_status = {
+        "source": "mock" if flags.mock_mode else "alpaca",
+        "paper": flags.paper_trading,
+    }
+
+    return {
+        "ok": True,
+        "mode": {"mock_mode": flags.mock_mode, "paper": flags.paper_trading},
+        "orchestrator": orchestrator_status,
+        "stream": stream_status,
+        "broker": broker_status,
+    }
 
 
 @app.get("/version")

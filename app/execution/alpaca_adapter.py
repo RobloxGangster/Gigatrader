@@ -86,10 +86,15 @@ class AlpacaAdapter:
             }
         )
         self._key_id_tail = (key_id or "")[-4:] or None
+        self._key_id = key_id or ""
+        self._secret_key = secret_key or ""
 
     # ------------------------------------------------------------------
     # Public Alpaca REST helpers
     # ------------------------------------------------------------------
+    def is_configured(self) -> bool:
+        return bool(self._key_id and self._secret_key)
+
     def get_account(self) -> Dict[str, Any]:
         return self._get("/v2/account")
 

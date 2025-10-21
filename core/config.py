@@ -23,8 +23,12 @@ from dataclasses import dataclass, field, asdict
 
 from pydantic import BaseModel, Field, field_validator
 
+from core.runtime_flags import get_runtime_flags
 
-MOCK_MODE = os.getenv("MOCK_MODE", "false").lower() in ("1", "true", "yes", "on")
+
+_FLAGS = get_runtime_flags()
+
+MOCK_MODE = _FLAGS.mock_mode
 
 
 
@@ -163,12 +167,13 @@ def load_config(path: Path) -> AppConfig:
 
 
 def get_alpaca_settings() -> AlpacaSettings:
-    key = os.getenv("ALPACA_API_KEY_ID") or os.getenv("APCA_API_KEY_ID")
-    secret = os.getenv("ALPACA_API_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY")
-    base_url = os.getenv("APCA_API_BASE_URL") or "https://paper-api.alpaca.markets"
-    base_url = base_url.rstrip("/") or "https://paper-api.alpaca.markets"
-    paper = "paper" in base_url.lower()
-    return AlpacaSettings(api_key=key, api_secret=secret, base_url=base_url, paper=paper)
+    flags = get_runtime_flags()
+    return AlpacaSettings(
+        api_key=flags.alpaca_key,
+        api_secret=flags.alpaca_secret,
+        base_url=flags.alpaca_base_url,
+        paper=flags.paper_trading,
+    )
 
 
 def get_order_defaults() -> OrderDefaults:
