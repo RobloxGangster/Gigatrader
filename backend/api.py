@@ -77,19 +77,9 @@ def _register_compat_route(
         )
 
 
-def _is_mock_mode() -> bool:
-    value = os.getenv("MOCK_MODE", "")
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 @app.get("/health")
-def health() -> Dict[str, Any]:
-    return {
-        "ok": True,
-        "status": "ok",
-        "mock_mode": _is_mock_mode(),
-        "version": os.getenv("APP_VERSION", "dev"),
-    }
+def health() -> Dict[str, str]:
+    return {"status": "ok"}
 
 
 @app.get("/version")

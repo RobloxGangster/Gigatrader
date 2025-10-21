@@ -209,39 +209,132 @@ print("MISSING=" + ",".join(missing))
   }
 }
 
+function Kill-PortBinding([int]$port) {
+  try {
+    $cmd = "netstat -ano | findstr :$port"
+    $lines = & cmd /c $cmd 2>$null
+  } catch {
+    $lines = @()
+  }
+  $entries = @($lines)
+  if (-not $entries -or $entries.Count -eq 0) { return }
+  $pids = @()
+  foreach ($entry in $entries) {
+    $line = $entry.ToString().Trim()
+    if (-not $line) { continue }
+    $tokens = $line -split '\s+'
+    if ($tokens.Length -ge 5) {
+      $local = $tokens[1]
+      if (-not $local.EndsWith(":$port")) { continue }
+      $pidToken = $tokens[-1]
+      if ($pidToken -match '^[0-9]+$') { $pids += [int]$pidToken }
+    }
+  }
+  $pids = $pids | Sort-Object -Unique
+  foreach ($pid in $pids) {
+    Log "[CLEANUP] taskkill /PID $pid /F"
+    try { & taskkill /PID $pid /F 2>&1 | Out-Null } catch {}
+  }
+  if ($pids.Count -gt 0) { Start-Sleep -Seconds 1 }
+}
+
+function Wait-BackendHealth {
+  param(
+    [System.Diagnostics.Process]$Process,
+    [string]$HealthUrl,
+    [int]$TimeoutSec,
+    [string]$HealthFile
+  )
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  $lastStatus = 0
+  $lastError = $null
+  $content = $null
+  while ((Get-Date) -lt $deadline) {
+    if ($Process -and $Process.HasExited) {
+      $lastError = "process exited with code $($Process.ExitCode)"
+      $lastStatus = 0
+      break
+    }
+    try {
+      $resp = Invoke-WebRequest -Uri $HealthUrl -UseBasicParsing -TimeoutSec 3
+      $lastStatus = $resp.StatusCode
+      $content = $resp.Content
+      if ($lastStatus -eq 200) {
+        if ($HealthFile) {
+          $body = if ($null -ne $content) { $content } else { "" }
+          Set-Content -Path $HealthFile -Value $body
+        }
+        return [pscustomobject]@{ Success = $true; Status = $lastStatus; Content = $content }
+      }
+    } catch {
+      $lastError = $_.Exception.Message
+      $lastStatus = 0
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  if ($HealthFile) {
+    $failure = "FAILED STATUS=$lastStatus"
+    if ($lastError) { $failure += " ERROR=$lastError" }
+    Set-Content -Path $HealthFile -Value $failure
+  }
+  return [pscustomobject]@{ Success = $false; Status = $lastStatus; Error = $lastError }
+}
+
+function Print-BackendLogs([string]$StdoutPath, [string]$StderrPath) {
+  foreach ($path in @($StdoutPath, $StderrPath)) {
+    $name = Split-Path -Leaf $path
+    if (Test-Path $path) {
+      Write-Host "----- $name -----"
+      Get-Content -LiteralPath $path -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+      Write-Host "----- end $name -----"
+    } else {
+      Write-Host "----- $name (missing) -----"
+    }
+  }
+}
+
 function Launch-Backend() {
   Log "[STEP] launch_backend"
-  if (-not (Test-PortFree $ApiPort)) { Log "[WARN] Port $ApiPort in use; cleaning…"; Cleanup-OldLaunchResidue }
-  if (-not (Test-PortFree $ApiPort)) { Fail 'port_in_use' 1 }
+  $healthUrl = "http://127.0.0.1:$ApiPort/health"
+  Log "[INFO] Resolved API: http://127.0.0.1:$ApiPort."
+  Kill-PortBinding $ApiPort
+  if (-not (Test-PortFree $ApiPort)) { Log "[WARN] Port $ApiPort still appears in use after cleanup."; Fail 'port_in_use' 1 }
 
-  Log "[INFO] Starting backend on :$ApiPort (uvicorn)…"
   $backendOut = Join-Path $RUNTIME 'backend.out.log'
   $backendErr = Join-Path $RUNTIME 'backend.err.log'
-  $args = "-m","uvicorn","backend.api:app","--host","127.0.0.1","--port","$ApiPort"
-  $p = Start-Process -FilePath $PYEXE `
-    -ArgumentList $args `
-    -RedirectStandardOutput $backendOut `
-    -RedirectStandardError $backendErr `
-    -WindowStyle Hidden `
-    -PassThru
-  Set-Content -Path (Join-Path $RUNTIME 'backend.pid') -Value $p.Id
-  Start-Sleep -Seconds 4
+  Remove-Item -LiteralPath $backendOut -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $backendErr -ErrorAction SilentlyContinue
 
-  try { $status = (Invoke-WebRequest -Uri "http://127.0.0.1:$ApiPort/health" -UseBasicParsing -TimeoutSec 5).StatusCode } catch { $status = 0 }
-  "$status" | Out-File (Join-Path $RUNTIME '_health.txt')
-  if ($status -ne 200) {
-    Log "[WARN] Health $status; fallback 'python -m backend.server'…"
-    try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+  $attempts = @(
+    @{ Label = 'python -m backend.server'; Args = @('-m','backend.server') },
+    @{ Label = 'uvicorn backend.api:app'; Args = @('-m','uvicorn','backend.api:app','--host','127.0.0.1','--port',"$ApiPort",'--log-level','info') }
+  )
+
+  foreach ($attempt in $attempts) {
+    Log "[INFO] Starting backend via $($attempt.Label)…"
+    $process = Start-Process -FilePath $PYEXE `
+      -ArgumentList $attempt.Args `
+      -RedirectStandardOutput $backendOut `
+      -RedirectStandardError $backendErr `
+      -WindowStyle Hidden `
+      -PassThru
+    Set-Content -Path (Join-Path $RUNTIME 'backend.pid') -Value $process.Id
+
+    $result = Wait-BackendHealth -Process $process -HealthUrl $healthUrl -TimeoutSec 60 -HealthFile (Join-Path $RUNTIME '_health.txt')
+    if ($result.Success) {
+      Log "[OK] Backend healthy ($($result.Status))."
+      return
+    }
+
+    Log "[WARN] Backend did not become healthy via $($attempt.Label); status=$($result.Status)."
+    try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
     Start-Sleep -Seconds 2
-    $args2 = "-m","backend.server"
-    $p2 = Start-Process -FilePath $PYEXE -ArgumentList $args2 -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr -PassThru
-    Set-Content -Path (Join-Path $RUNTIME 'backend.pid') -Value $p2.Id
-    Start-Sleep -Seconds 4
-    try { $status = (Invoke-WebRequest -Uri "http://127.0.0.1:$ApiPort/health" -UseBasicParsing -TimeoutSec 5).StatusCode } catch { $status = 0 }
-    "$status" | Out-File (Join-Path $RUNTIME '_health.txt')
-    if ($status -ne 200) { Fail 'backend_health' 1 }
+    Kill-PortBinding $ApiPort
   }
-  Log "[OK] Backend healthy (200)."
+
+  Log "[ERR] Backend health check failed; printing backend logs before exit."
+  Print-BackendLogs -StdoutPath $backendOut -StderrPath $backendErr
+  Fail 'backend_health' 1
 }
 
 function Launch-UI() {

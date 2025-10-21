@@ -96,6 +96,13 @@ set PYTHONPATH=%CD%
 python -m streamlit run ui\Home.py
 ```
 
+### Start Backend Manually
+```
+.\.venv\Scripts\python.exe -m backend.server
+# Health:
+curl http://127.0.0.1:8000/health   # -> {"status":"ok"}
+```
+
 ### Start/Stop runner (paper)
 ```bat
 curl -X POST "http://127.0.0.1:8000/paper/start?preset=balanced"
