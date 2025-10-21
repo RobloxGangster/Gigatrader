@@ -239,7 +239,8 @@ class ApiClient:
         return self.get("/broker/positions")
 
     def orders(self, status: str = "all", limit: int = 50):
-        return self.get(f"/broker/orders?status={status}&limit={int(limit)}")
+        params = {"status": status, "limit": int(limit)}
+        return self.get("/broker/orders", params=params)
 
     def stream_status(self) -> Dict[str, Any]:
         data = self.get("/stream/status")

@@ -1,691 +1,226 @@
+"""HTTP adapter for interacting with Alpaca's REST API."""
+
 from __future__ import annotations
 
-import datetime as _dt
 import logging
 import os
-import secrets
-import asyncio
-import inspect
-import random
-from contextlib import suppress
-from decimal import Decimal
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Set
+import time
+from typing import Any, Dict, Iterable, Mapping, Optional
 
-from alpaca.common.exceptions import APIError
-from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
-from alpaca.trading.requests import LimitOrderRequest, StopLossRequest, TakeProfitRequest
+import requests
 
-from core.broker_config import AlpacaConfig
+from services.ops.alerts import audit_log
 
-from app.oms.store import OmsStore
-from services.telemetry import metrics, record_order_latency
 
-__all__ = [
-    "AlpacaAdapter",
-    "AlpacaUnauthorized",
-    "AlpacaOrderError",
-]
+class AlpacaUnauthorized(Exception):
+    """Raised when Alpaca credentials are invalid."""
+
+
+class AlpacaOrderError(Exception):
+    """Raised when Alpaca rejects an order payload."""
 
 
 log = logging.getLogger(__name__)
 
 
-class AlpacaUnauthorized(Exception):
-    """Raised when Alpaca credentials are invalid or missing."""
-
-
-class AlpacaOrderError(Exception):
-    """Raised when the Alpaca API rejects an order submission."""
-
-
-def _maybe_float(value: Any) -> Any:
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return value
-    if isinstance(value, (int, float)):
-        return float(value)
-    return value
-
-
-def _submitted_at(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    if hasattr(value, "isoformat"):
-        try:
-            return value.isoformat()
-        except Exception:  # pragma: no cover - defensive
-            return str(value)
-    return str(value)
-
-
-def _extract_error_code(exc: APIError) -> tuple[Optional[int], str]:
-    code: Optional[int] = getattr(exc, "code", None)
-    message = getattr(exc, "message", "") or ""
-    if not code:
-        err = getattr(exc, "error", None)
-        if isinstance(err, dict):
-            code = err.get("code") or code
-            message = err.get("message") or message
-    if not message:
-        message = str(exc)
-    return code, message
-
-
-def _is_unauthorized(exc: APIError) -> bool:
-    status = getattr(exc, "status_code", None)
-    if status in {401, 403}:
-        return True
-    _, message = _extract_error_code(exc)
-    return "unauthorized" in message.lower()
+_STATUS_MAP = {
+    "accepted": "accepted",
+    "accepted_for_bidding": "accepted",
+    "calculated": "accepted",
+    "canceled": "canceled",
+    "done_for_day": "canceled",
+    "expired": "expired",
+    "filled": "filled",
+    "new": "new",
+    "open": "accepted",
+    "partially_filled": "partially_filled",
+    "pending_cancel": "accepted",
+    "pending_new": "accepted",
+    "pending_replace": "accepted",
+    "rejected": "rejected",
+    "replaced": "accepted",
+    "stopped": "rejected",
+    "suspended": "rejected",
+}
 
 
 class AlpacaAdapter:
-    """Thin wrapper over ``TradingClient`` with defensive error handling."""
+    """Minimal REST client used by the backend, orchestrator and UI."""
 
-    def __init__(self, cfg: AlpacaConfig | None = None, dry_run: bool = False) -> None:
-        self.cfg = cfg or AlpacaConfig()
-        self.dry_run = dry_run
-        self.client: Optional[TradingClient] = None
-        self._api_key: Optional[str] = None
-        self._api_secret: Optional[str] = None
-        self._base_url: Optional[str] = None
-        self._configured = False
-        self._last_error: Optional[str] = None
-        self._seen_client_ids: Set[str] = set()
-        key = self.cfg.key_id or os.getenv("ALPACA_API_KEY_ID") or os.getenv("APCA_API_KEY_ID")
-        secret = (
-            self.cfg.secret_key
+    def __init__(
+        self,
+        base_url: str | None = None,
+        key_id: str | None = None,
+        secret_key: str | None = None,
+        *,
+        timeout: float = 10.0,
+        session: Optional[requests.Session] = None,
+    ) -> None:
+        base_url = (
+            base_url
+            or os.getenv("ALPACA_BASE_URL")
+            or os.getenv("APCA_API_BASE_URL")
+            or "https://paper-api.alpaca.markets"
+        )
+        key_id = (
+            key_id
+            or os.getenv("ALPACA_KEY_ID")
+            or os.getenv("ALPACA_API_KEY_ID")
+            or os.getenv("APCA_API_KEY_ID")
+        )
+        secret_key = (
+            secret_key
+            or os.getenv("ALPACA_SECRET_KEY")
             or os.getenv("ALPACA_API_SECRET_KEY")
             or os.getenv("APCA_API_SECRET_KEY")
         )
-        base_env = (
-            self.cfg.base_url
-            or os.getenv("APCA_API_BASE_URL")
-            or os.getenv("ALPACA_API_BASE_URL")
-            or "https://paper-api.alpaca.markets"
+        self.base = (base_url or "https://paper-api.alpaca.markets").rstrip("/")
+        self.timeout = timeout
+        self.sess = session or requests.Session()
+        self.sess.headers.update(
+            {
+                "APCA-API-KEY-ID": key_id or "",
+                "APCA-API-SECRET-KEY": secret_key or "",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
         )
-        paper_flag = "paper" in base_env.lower()
-
-        self._api_key = key
-        self._api_secret = secret
-        self._base_url = base_env
-        self.key_tail = key[-4:] if key else None
-        self._debug: Dict[str, Any] = {
-            "base_url": base_env,
-            "paper": paper_flag,
-            "key_tail": self.key_tail,
-            "data_feed": self.cfg.data_feed,
-        }
-
-        if not key or not secret:
-            self._last_error = "missing_credentials"
-            return
-
-        os.environ["APCA_API_BASE_URL"] = base_env
-
-        try:
-            self.client = TradingClient(api_key=key, secret_key=secret, paper=paper_flag)
-            # Cheap auth probe to validate credentials early
-            self.client.get_account()
-            self._configured = True
-            self._last_error = None
-        except APIError as exc:  # pragma: no cover - requires live credentials
-            if _is_unauthorized(exc):
-                self._last_error = "unauthorized"
-            else:
-                self._last_error = str(exc)
-            log.warning(
-                "alpaca init failed",
-                extra={"comp": "alpaca_adapter", "op": "init", "err": str(exc)},
-            )
-            self.client = None
-            self._configured = False
-        except Exception as exc:  # pragma: no cover - SDK constructor guard
-            self._last_error = str(exc)
-            log.error(
-                "alpaca init failed",
-                extra={"comp": "alpaca_adapter", "op": "init", "err": str(exc)},
-            )
-            self.client = None
-            self._configured = False
+        self._key_id_tail = (key_id or "")[-4:] or None
 
     # ------------------------------------------------------------------
-    # public helpers
-    def is_configured(self) -> bool:
-        return bool(self._configured and self.client is not None)
+    # Public Alpaca REST helpers
+    # ------------------------------------------------------------------
+    def get_account(self) -> Dict[str, Any]:
+        return self._get("/v2/account")
 
-    def debug_info(self) -> Dict[str, Any]:
-        payload = dict(self._debug)
-        payload["configured"] = self.is_configured()
-        payload["last_error"] = self._last_error
-        return payload
+    def list_positions(self) -> list[dict]:
+        data = self._get("/v2/positions")
+        return list(data) if isinstance(data, Iterable) else []
+
+    def list_orders(self, *, status: str = "all", limit: int = 50) -> list[dict]:
+        payload = {"status": status, "limit": int(limit)}
+        data = self._get("/v2/orders", params=payload)
+        return list(data) if isinstance(data, Iterable) else []
+
+    def get_order(self, order_id: str) -> Dict[str, Any]:
+        return self._get(f"/v2/orders/{order_id}")
+
+    def place_order(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        if "client_order_id" not in payload:
+            raise ValueError("client_order_id is required")
+        return self._post("/v2/orders", json=dict(payload))
+
+    def cancel_order(self, order_id: str) -> bool:
+        self._delete(f"/v2/orders/{order_id}")
+        return True
 
     # ------------------------------------------------------------------
-    def _gen_client_id(self) -> str:
-        today = _dt.datetime.utcnow().strftime("%Y%m%d")
-        while True:
-            suffix = secrets.token_hex(4)
-            cid = f"gt-{today}-{suffix}"
-            if cid not in self._seen_client_ids:
-                self._seen_client_ids.add(cid)
-                return cid
-
-    def _ensure_client(self) -> TradingClient:
-        if not self.is_configured():
-            self._last_error = "not configured"
-            raise AlpacaUnauthorized("not configured")
-        assert self.client is not None  # for type checkers
-        return self.client
-
+    # Compatibility helpers for legacy callers
     # ------------------------------------------------------------------
-    def place_limit_bracket(
-        self,
-        symbol: str,
-        side: str,
-        qty: int,
-        limit_price: float,
-        take_profit: Optional[float] = None,
-        stop_loss: Optional[float] = None,
-        client_order_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        client = self._ensure_client()
-        side_enum = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
-        tif = TimeInForce.DAY
-
-        provided_client_id = client_order_id is not None
-        if client_order_id:
-            self._seen_client_ids.add(client_order_id)
-        else:
-            client_order_id = self._gen_client_id()
-
-        take_profit_req = None
-        stop_loss_req = None
-        if take_profit is not None:
-            take_profit_req = TakeProfitRequest(limit_price=str(take_profit))
-        if stop_loss is not None:
-            stop_loss_req = StopLossRequest(stop_price=str(stop_loss))
-
-        request = LimitOrderRequest(
-            symbol=symbol,
-            qty=str(int(qty)),
-            side=side_enum,
-            time_in_force=tif,
-            limit_price=str(limit_price),
-            order_class=OrderClass.BRACKET
-            if (take_profit_req or stop_loss_req)
-            else OrderClass.SIMPLE,
-            client_order_id=client_order_id,
-            take_profit=take_profit_req,
-            stop_loss=stop_loss_req,
-        )
-
-        log.info(
-            "alpaca submit",
-            extra={
-                "comp": "alpaca_adapter",
-                "op": "submit",
-                "symbol": symbol,
-                "side": side,
-                "qty": qty,
-                "limit": limit_price,
-            },
-        )
-
-        try:
-            with record_order_latency():
-                order = client.submit_order(order_data=request)
-        except APIError as exc:
-            if _is_unauthorized(exc):
-                self._last_error = "unauthorized"
-                log.warning(
-                    "alpaca unauthorized",
-                    extra={"comp": "alpaca_adapter", "op": "submit", "err": "unauthorized"},
-                )
-                raise AlpacaUnauthorized("unauthorized") from exc
-
-            code, message = _extract_error_code(exc)
-            if code == 40010001 or "client_order_id must be unique" in message.lower():
-                if not provided_client_id:
-                    new_cid = self._gen_client_id()
-                    self._seen_client_ids.add(new_cid)
-                    request.client_order_id = new_cid
-                    client_order_id = new_cid
-                    try:
-                        with record_order_latency():
-                            order = client.submit_order(order_data=request)
-                    except APIError as retry_exc:
-                        if _is_unauthorized(retry_exc):
-                            self._last_error = "unauthorized"
-                            raise AlpacaUnauthorized("unauthorized") from retry_exc
-                        self._last_error = "duplicate_client_order_id"
-                        raise AlpacaOrderError("duplicate_client_order_id") from retry_exc
-                else:
-                    self._last_error = "duplicate_client_order_id"
-                    raise AlpacaOrderError("duplicate_client_order_id") from exc
-            else:
-                self._last_error = message
-                log.error(
-                    "alpaca submit failed",
-                    extra={"comp": "alpaca_adapter", "op": "submit", "err": message},
-                )
-                raise AlpacaOrderError(message) from exc
-        except Exception as exc:  # pragma: no cover - defensive
-            self._last_error = str(exc)
-            log.error(
-                "alpaca submit error",
-                extra={"comp": "alpaca_adapter", "op": "submit", "err": str(exc)},
-            )
-            raise AlpacaOrderError(str(exc)) from exc
-
-        self._last_error = None
-        return self._normalize_order(order)
-
-    # ------------------------------------------------------------------
-    def cancel_all(self) -> Dict[str, int]:
-        client = self._ensure_client()
-        canceled = 0
-        failed = 0
-
-        try:
-            if hasattr(client, "cancel_orders"):
-                result = client.cancel_orders()
-                if isinstance(result, Iterable):
-                    canceled = len(list(result))
-                else:
-                    canceled = 0 if result is None else 1
-                log.info(
-                    "alpaca cancel_all bulk",
-                    extra={"comp": "alpaca_adapter", "op": "cancel", "count": canceled},
-                )
-                self._last_error = None
-                return {"canceled": int(canceled), "failed": int(failed)}
-        except APIError as exc:
-            if _is_unauthorized(exc):
-                self._last_error = "unauthorized"
-                log.warning(
-                    "alpaca cancel unauthorized",
-                    extra={"comp": "alpaca_adapter", "op": "cancel", "err": "unauthorized"},
-                )
-                raise AlpacaUnauthorized("unauthorized") from exc
-            self._last_error = str(exc)
-            log.error(
-                "alpaca cancel error",
-                extra={"comp": "alpaca_adapter", "op": "cancel", "err": str(exc)},
-            )
-            raise AlpacaOrderError(str(exc)) from exc
-
-        try:
-            orders = client.get_orders()
-            open_statuses = {"new", "accepted", "pending_new", "partially_filled", "open"}
-            for order in orders or []:
-                status = str(getattr(order, "status", "") or "").lower()
-                if status not in open_statuses:
-                    continue
-                order_id = getattr(order, "id", None)
-                try:
-                    if order_id is not None:
-                        client.cancel_order_by_id(str(order_id))
-                    else:  # pragma: no cover - fallback path
-                        client.cancel_order(order)
-                    canceled += 1
-                except APIError as exc:
-                    if _is_unauthorized(exc):
-                        self._last_error = "unauthorized"
-                        raise AlpacaUnauthorized("unauthorized") from exc
-                    failed += 1
-                    log.warning(
-                        "alpaca cancel failed",
-                        extra={
-                            "comp": "alpaca_adapter",
-                            "op": "cancel",
-                            "err": str(exc),
-                            "order_id": order_id,
-                        },
-                    )
-        except APIError as exc:
-            if _is_unauthorized(exc):
-                self._last_error = "unauthorized"
-                raise AlpacaUnauthorized("unauthorized") from exc
-            self._last_error = str(exc)
-            log.error(
-                "alpaca cancel fetch failed",
-                extra={"comp": "alpaca_adapter", "op": "cancel", "err": str(exc)},
-            )
-            raise AlpacaOrderError(str(exc)) from exc
-
-        self._last_error = None if failed == 0 else "partial"
-        return {"canceled": int(canceled), "failed": int(failed)}
-
-    def cancel_order(self, order_id: str) -> Dict[str, Any]:
-        client = self._ensure_client()
-        try:
-            client.cancel_order_by_id(str(order_id))
-        except APIError as exc:
-            if _is_unauthorized(exc):
-                self._last_error = "unauthorized"
-                raise AlpacaUnauthorized("unauthorized") from exc
-            self._last_error = str(exc)
-            log.error(
-                "alpaca cancel single failed",
-                extra={"comp": "alpaca_adapter", "op": "cancel", "err": str(exc), "order_id": order_id},
-            )
-            raise AlpacaOrderError(str(exc)) from exc
-
-        self._last_error = None
-        return {"id": str(order_id), "canceled": True}
-
-    def close_all_positions(self, cancel_orders: bool = True) -> Any:
-        client = self._ensure_client()
-        try:
-            result = client.close_all_positions(cancel_orders=cancel_orders)
-        except APIError as exc:
-            if _is_unauthorized(exc):
-                self._last_error = "unauthorized"
-                raise AlpacaUnauthorized("unauthorized") from exc
-            self._last_error = str(exc)
-            log.error(
-                "alpaca close positions failed",
-                extra={"comp": "alpaca_adapter", "op": "cancel", "err": str(exc)},
-            )
-            raise AlpacaOrderError(str(exc)) from exc
-        self._last_error = None
-        return result
-
-    # ------------------------------------------------------------------
-    def fetch_orders(self) -> List[Dict[str, Any]]:
-        client = self._ensure_client()
-        try:
-            orders = client.get_orders()
-        except APIError as exc:
-            if _is_unauthorized(exc):
-                self._last_error = "unauthorized"
-                log.warning(
-                    "alpaca fetch orders unauthorized",
-                    extra={"comp": "alpaca_adapter", "op": "reconcile", "err": "unauthorized"},
-                )
-                raise AlpacaUnauthorized("unauthorized") from exc
-            self._last_error = str(exc)
-            log.error(
-                "alpaca fetch orders failed",
-                extra={"comp": "alpaca_adapter", "op": "reconcile", "err": str(exc)},
-            )
-            raise AlpacaOrderError(str(exc)) from exc
-
-        normalized = [self._normalize_order(order) for order in orders or []]
-        self._last_error = None
-        return normalized
-
-    def fetch_positions(self) -> List[Dict[str, Any]]:
-        client = self._ensure_client()
-        try:
-            positions = client.get_all_positions()
-        except APIError as exc:
-            if _is_unauthorized(exc):
-                self._last_error = "unauthorized"
-                log.warning(
-                    "alpaca fetch positions unauthorized",
-                    extra={"comp": "alpaca_adapter", "op": "reconcile", "err": "unauthorized"},
-                )
-                raise AlpacaUnauthorized("unauthorized") from exc
-            self._last_error = str(exc)
-            log.error(
-                "alpaca fetch positions failed",
-                extra={"comp": "alpaca_adapter", "op": "reconcile", "err": str(exc)},
-            )
-            raise AlpacaOrderError(str(exc)) from exc
-
-        normalized = [self._normalize_position(pos) for pos in positions or []]
-        self._last_error = None
-        return normalized
-
     def fetch_account(self) -> Dict[str, Any]:
-        client = self._ensure_client()
-        try:
-            account = client.get_account()
-        except APIError as exc:
-            if _is_unauthorized(exc):
-                self._last_error = "unauthorized"
-                log.warning(
-                    "alpaca fetch account unauthorized",
-                    extra={"comp": "alpaca_adapter", "op": "reconcile", "err": "unauthorized"},
-                )
-                raise AlpacaUnauthorized("unauthorized") from exc
-            self._last_error = str(exc)
-            log.error(
-                "alpaca fetch account failed",
-                extra={"comp": "alpaca_adapter", "op": "reconcile", "err": str(exc)},
-            )
-            raise AlpacaOrderError(str(exc)) from exc
+        return self.get_account()
 
-        payload = {
-            "id": getattr(account, "id", None),
-            "status": getattr(account, "status", None),
-            "equity": _maybe_float(getattr(account, "equity", None)),
-            "cash": _maybe_float(getattr(account, "cash", None)),
-            "buying_power": _maybe_float(getattr(account, "buying_power", None)),
-            "portfolio_value": _maybe_float(getattr(account, "portfolio_value", None)),
-            "day_pnl": _maybe_float(
-                getattr(account, "day_pl", None) or getattr(account, "day_profit_loss", None)
-            ),
-            "pattern_day_trader": bool(getattr(account, "pattern_day_trader", False)),
-            "daytrade_count": int(getattr(account, "daytrade_count", 0) or 0),
-        }
-        self._last_error = None
-        return payload
+    def fetch_positions(self) -> list[dict]:
+        return self.list_positions()
 
-    # ------------------------------------------------------------------
-    def _normalize_order(self, order: Any) -> Dict[str, Any]:
-        if isinstance(order, dict):
-            payload = dict(order)
-        else:
-            payload = {
-                "id": getattr(order, "id", None),
-                "symbol": getattr(order, "symbol", None),
-                "side": getattr(order, "side", None),
-                "qty": getattr(order, "qty", None),
-                "limit_price": getattr(order, "limit_price", None),
-                "status": getattr(order, "status", None),
-                "submitted_at": getattr(order, "submitted_at", None),
-                "client_order_id": getattr(order, "client_order_id", None),
-                "avg_fill_price": getattr(order, "avg_fill_price", None),
-            }
-        payload["qty"] = _maybe_float(payload.get("qty"))
-        payload["limit_price"] = _maybe_float(payload.get("limit_price"))
-        payload["avg_fill_price"] = _maybe_float(payload.get("avg_fill_price"))
-        payload["submitted_at"] = _submitted_at(payload.get("submitted_at"))
-        return payload
+    def fetch_orders(self, *, status: str = "all", limit: int = 50) -> list[dict]:
+        return self.list_orders(status=status, limit=limit)
 
-    def _normalize_position(self, position: Any) -> Dict[str, Any]:
-        if isinstance(position, dict):
-            payload = dict(position)
-        else:
-            payload = {
-                "symbol": getattr(position, "symbol", None),
-                "qty": getattr(position, "qty", None),
-                "avg_entry_price": getattr(position, "avg_entry_price", None),
-                "market_value": getattr(position, "market_value", None),
-                "unrealized_pl": getattr(position, "unrealized_pl", None),
-                "side": getattr(position, "side", None),
-            }
-        for key in ("qty", "avg_entry_price", "market_value", "unrealized_pl"):
-            payload[key] = _maybe_float(payload.get(key))
-        return payload
-
-    # ------------------------------------------------------------------
     @staticmethod
     def map_order_state(status: str | None) -> str:
         if not status:
             return "new"
-        normalized = str(status).lower()
-        mapping = {
-            "new": "new",
-            "pending_new": "new",
-            "accepted": "accepted",
-            "acknowledged": "accepted",
-            "open": "accepted",
-            "partially_filled": "partially_filled",
-            "partial": "partially_filled",
-            "filled": "filled",
-            "canceled": "canceled",
-            "cancelled": "canceled",
-            "expired": "canceled",
-            "replaced": "accepted",
-            "rejected": "rejected",
-            "suspended": "error",
-            "stopped": "canceled",
-        }
-        if normalized in mapping:
-            return mapping[normalized]
-        if "reject" in normalized:
-            return "rejected"
-        if "cancel" in normalized or "close" in normalized:
-            return "canceled"
-        if "fill" in normalized:
-            return "filled"
-        if "error" in normalized:
-            return "error"
-        return "new"
+        return _STATUS_MAP.get(status.lower(), status.lower())
 
-    def _normalize_trade_update(self, update: Any) -> Dict[str, Any]:
-        payload: Dict[str, Any]
-        raw = update
-        if hasattr(update, "data"):
-            raw = getattr(update, "data")
-        if isinstance(raw, dict):
-            payload = dict(raw)
-        else:
-            payload = {}
-            for attr in ("event", "timestamp", "order", "execution"):
-                if hasattr(raw, attr):
-                    payload[attr] = getattr(raw, attr)
-
-        order_info = payload.get("order")
-        if order_info is None and hasattr(raw, "order"):
-            order_info = getattr(raw, "order")
-        normalized_order = self._normalize_order(order_info) if order_info is not None else {}
-
-        event = payload.get("event") or payload.get("type")
-        state = self.map_order_state(normalized_order.get("status"))
-        execution_info = payload.get("execution")
-        if execution_info and not isinstance(execution_info, dict):  # pragma: no cover - depends on SDK
-            execution_info = {
-                key: getattr(execution_info, key, None)
-                for key in ("qty", "price", "timestamp")
-            }
+    @staticmethod
+    def normalize_order(order: Mapping[str, Any]) -> Dict[str, Any]:
         return {
-            "event": event,
-            "state": state,
-            "client_order_id": normalized_order.get("client_order_id"),
-            "broker_order_id": normalized_order.get("id"),
-            "filled_qty": normalized_order.get("filled_qty") or normalized_order.get("qty"),
-            "avg_fill_price": normalized_order.get("avg_fill_price"),
-            "order": normalized_order,
-            "execution": execution_info,
-            "raw": payload,
+            "id": order.get("id"),
+            "client_order_id": order.get("client_order_id"),
+            "symbol": order.get("symbol"),
+            "qty": float(order.get("qty", 0) or order.get("quantity", 0) or 0),
+            "filled_qty": float(
+                order.get("filled_qty", 0) or order.get("filled_quantity", 0) or 0
+            ),
+            "status": AlpacaAdapter.map_order_state(order.get("status")),
+            "side": order.get("side"),
+            "type": order.get("type"),
+            "limit_price": _safe_float(order.get("limit_price") or order.get("limit")),
+            "stop_price": _safe_float(order.get("stop_price") or order.get("stop")),
+            "avg_fill_price": _safe_float(order.get("filled_avg_price")),
+            "submitted_at": order.get("submitted_at") or order.get("created_at"),
+            "updated_at": order.get("updated_at"),
         }
-
-    async def start_stream(
-        self,
-        on_update: Callable[[Dict[str, Any]], Awaitable[None] | None],
-        stop_event: asyncio.Event,
-    ) -> None:
-        if not self.is_configured():
-            raise AlpacaUnauthorized("not configured")
-        try:
-            from alpaca.trading.stream import TradingStream
-        except Exception as exc:  # pragma: no cover - import guard
-            log.warning("alpaca stream unavailable: %s", exc)
-            return
-
-        backoff = 1.0
-        first_attempt = True
-        while not stop_event.is_set():
-            try:
-                if first_attempt:
-                    first_attempt = False
-                else:
-                    metrics.inc_ws_reconnect()
-                stream = TradingStream(
-                    api_key=self._api_key,
-                    secret_key=self._api_secret,
-                    base_url=self._base_url,
-                )
-
-                async def _handler(data: Any) -> None:
-                    payload = self._normalize_trade_update(data)
-                    result = on_update(payload)
-                    if inspect.isawaitable(result):
-                        await result
-
-                stream.subscribe_trade_updates(_handler)
-
-                async def _watch_stop() -> None:
-                    await stop_event.wait()
-                    with suppress(Exception):
-                        await stream.close()
-
-                stopper = asyncio.create_task(_watch_stop())
-                await stream._run_forever()
-                stopper.cancel()
-                with suppress(Exception):
-                    await stream.close()
-                backoff = 1.0
-            except AlpacaUnauthorized:
-                raise
-            except Exception as exc:  # pragma: no cover - network path
-                log.warning(
-                    "alpaca stream error", extra={"comp": "alpaca_adapter", "err": str(exc)}
-                )
-                await asyncio.sleep(backoff + random.uniform(0, backoff / 2))
-                backoff = min(backoff * 2, 30.0)
 
     # ------------------------------------------------------------------
-    def fetch_and_merge_orders(
-        self,
-        store: OmsStore,
-        *,
-        target_client_order_id: str | None = None,
-    ) -> Dict[str, Any]:
-        orders = self.fetch_orders()
-        positions: List[Dict[str, Any]] = []
+    # Internal HTTP helpers with audit logging
+    # ------------------------------------------------------------------
+    def _get(self, path: str, **kwargs) -> Any:
+        url = f"{self.base}{path}"
+        response = self.sess.get(url, timeout=self.timeout, **kwargs)
+        self._audit("GET", url, kwargs, response)
         try:
-            positions = self.fetch_positions()
-        except AlpacaUnauthorized:
-            raise
-        except Exception:  # pragma: no cover - tolerates missing permissions
-            pass
-        store.replace_positions(positions)
-        matched: Optional[Dict[str, Any]] = None
-        for order in orders:
-            cid = str(order.get("client_order_id") or "")
-            state = self.map_order_state(order.get("status"))
-            store.upsert_order(
-                client_order_id=cid,
-                state=state,
-                broker_order_id=str(order.get("id") or "") or None,
-                symbol=order.get("symbol"),
-                side=order.get("side"),
-                qty=_maybe_float(order.get("qty")),
-                filled_qty=_maybe_float(order.get("filled_qty")),
-                limit_price=_maybe_float(order.get("limit_price")),
-                stop_price=_maybe_float(order.get("stop_price")),
-                take_profit=_maybe_float(order.get("take_profit")),
-                tif=order.get("time_in_force") or order.get("tif"),
-                raw=order,
-            )
-            if target_client_order_id and cid == target_client_order_id:
-                matched = order
-        snapshot = store.metrics_snapshot()
-        return {
-            "orders": orders,
-            "positions": positions,
-            "target_order": matched,
-            "metrics": snapshot,
+            response.raise_for_status()
+        except requests.HTTPError as exc:  # pragma: no cover - network failure path
+            raise _map_http_error(response, exc) from exc
+        return response.json()
+
+    def _post(self, path: str, **kwargs) -> Any:
+        url = f"{self.base}{path}"
+        response = self.sess.post(url, timeout=self.timeout, **kwargs)
+        self._audit("POST", url, kwargs, response)
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:  # pragma: no cover - network failure path
+            raise _map_http_error(response, exc) from exc
+        return response.json()
+
+    def _delete(self, path: str, **kwargs) -> Any:
+        url = f"{self.base}{path}"
+        response = self.sess.delete(url, timeout=self.timeout, **kwargs)
+        self._audit("DELETE", url, kwargs, response)
+        if response.status_code not in (200, 204):
+            try:
+                response.raise_for_status()
+            except requests.HTTPError as exc:  # pragma: no cover - network failure path
+                raise _map_http_error(response, exc) from exc
+        return True
+
+    def _audit(
+        self,
+        method: str,
+        url: str,
+        kwargs: Mapping[str, Any],
+        response: requests.Response,
+    ) -> None:
+        payload = {
+            "broker": "alpaca",
+            "method": method,
+            "url": url,
+            "status": response.status_code,
+            "ok": response.ok,
+            "key_tail": self._key_id_tail,
+            "ts": time.time(),
         }
+        try:
+            audit_log(payload)
+        except Exception:  # noqa: BLE001 - audit logging must never break requests
+            log.exception("failed to emit audit log")
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _map_http_error(response: requests.Response, exc: requests.HTTPError) -> Exception:
+    if response.status_code in {401, 403}:
+        return AlpacaUnauthorized(str(exc))
+    return AlpacaOrderError(str(exc))
+
+
+__all__ = ["AlpacaAdapter"]

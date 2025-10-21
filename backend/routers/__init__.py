@@ -11,4 +11,6 @@ __all__ = [
     "telemetry",
     "logs",
     "diagnostics",
+    "reconcile",
+    "audit",
 ]

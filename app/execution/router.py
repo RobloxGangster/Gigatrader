@@ -93,6 +93,7 @@ class OrderRouter:
         audit: AuditLog,
         metrics: Optional[Any] = None,
         mock_mode: bool = False,
+        adapter: Optional[AlpacaAdapter] = None,
     ) -> None:
         self.risk = risk
         self.state = state
@@ -100,7 +101,7 @@ class OrderRouter:
         self.audit = audit
         self.metrics = metrics
         self.mock_mode = mock_mode
-        self.broker = AlpacaAdapter()
+        self.broker = adapter or AlpacaAdapter()
 
     # ------------------------------------------------------------------
     def _metrics_inc(self, key: str, value: int = 1) -> None:
@@ -227,7 +228,9 @@ class OrderRouter:
             cid = _unique_cid()
 
         if qty <= 0:
-            log.warning("router.invalid_qty", extra={"symbol": symbol, "qty": intent.qty})
+            log.warning(
+                "router.invalid_qty", extra={"symbol": symbol, "qty": intent.qty}
+            )
             if not dry_run:
                 self.store.upsert_order(
                     client_order_id=cid,
@@ -261,7 +264,10 @@ class OrderRouter:
         policy_context.setdefault("limit_price", limit_price)
         if policy_context.get("stop_price") is None and sl_price is not None:
             policy_context["stop_price"] = sl_price
-        if policy_context.get("atr") is None and policy_context.get("stop_price") is not None:
+        if (
+            policy_context.get("atr") is None
+            and policy_context.get("stop_price") is not None
+        ):
             try:
                 stop_val = float(policy_context["stop_price"])
             except (TypeError, ValueError):
@@ -410,13 +416,21 @@ class OrderRouter:
             )
             self._metrics_inc("oms_rejects_total")
             metrics.inc_order_reject("duplicate_client_order_id")
-            return {"accepted": False, "reason": "duplicate_client_order_id", "client_order_id": cid}
+            return {
+                "accepted": False,
+                "reason": "duplicate_client_order_id",
+                "client_order_id": cid,
+            }
 
         if self.state.seen(intent_hash):
             existing_cid = self.state.client_id_for(intent_hash) or cid
             log.warning(
                 "router.duplicate_intent",
-                extra={"symbol": symbol, "side": intent.side, "client_order_id": existing_cid},
+                extra={
+                    "symbol": symbol,
+                    "side": intent.side,
+                    "client_order_id": existing_cid,
+                },
             )
             self._record_event(
                 "duplicate_intent",
@@ -425,7 +439,11 @@ class OrderRouter:
             )
             self._metrics_inc("oms_rejects_total")
             metrics.inc_order_reject("duplicate_intent")
-            return {"accepted": False, "reason": "duplicate_intent", "client_order_id": existing_cid}
+            return {
+                "accepted": False,
+                "reason": "duplicate_intent",
+                "client_order_id": existing_cid,
+            }
 
         intent_snapshot = {
             "symbol": symbol,
@@ -454,7 +472,12 @@ class OrderRouter:
         self._record_transition(
             cid,
             "new",
-            extras={"symbol": symbol, "side": intent.side, "qty": qty, "limit_price": limit_price},
+            extras={
+                "symbol": symbol,
+                "side": intent.side,
+                "qty": qty,
+                "limit_price": limit_price,
+            },
         )
         self._record_transition(
             cid,
@@ -501,7 +524,10 @@ class OrderRouter:
                     self._record_transition(
                         cid,
                         "rejected",
-                        extras={"reason": "duplicate_client_order_id", "symbol": symbol},
+                        extras={
+                            "reason": "duplicate_client_order_id",
+                            "symbol": symbol,
+                        },
                     )
                     metrics.inc_order_reject("duplicate_client_order_id")
                     return {
@@ -540,7 +566,11 @@ class OrderRouter:
                     extras={"reason": message, "symbol": symbol},
                 )
                 metrics.inc_order_reject(f"broker_error_{message or 'unknown'}")
-                return {"accepted": False, "reason": f"broker_error:{message}", "client_order_id": cid}
+                return {
+                    "accepted": False,
+                    "reason": f"broker_error:{message}",
+                    "client_order_id": cid,
+                }
 
         if order is None:
             self.state.forget(intent_hash)
@@ -550,7 +580,11 @@ class OrderRouter:
                 extras={"reason": "unknown_error", "symbol": symbol},
             )
             metrics.inc_order_reject("broker_error_unknown")
-            return {"accepted": False, "reason": "broker_error:unknown", "client_order_id": cid}
+            return {
+                "accepted": False,
+                "reason": "broker_error:unknown",
+                "client_order_id": cid,
+            }
 
         broker_order_id = order.get("id")
         state = self.broker.map_order_state(order.get("status"))
@@ -594,7 +628,11 @@ class OrderRouter:
 
         log.info(
             "router.submit.accepted",
-            extra={"client_order_id": cid, "provider_order_id": broker_order_id, "symbol": symbol},
+            extra={
+                "client_order_id": cid,
+                "provider_order_id": broker_order_id,
+                "symbol": symbol,
+            },
         )
         return {
             "accepted": state not in {"rejected", "error"},
@@ -712,3 +750,52 @@ class OrderRouter:
             "spread": spread_meta,
             "reason": leg_results[-1].get("reason"),
         }
+
+
+class AlpacaRouter:
+    """Thin wrapper around :class:`AlpacaAdapter` for dependency injection tests."""
+
+    def __init__(self, adapter: AlpacaAdapter) -> None:
+        self.adapter = adapter
+
+    def place_order(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        return self.adapter.place_order(payload)
+
+
+class MockRouter:
+    """Mock router used only when explicitly requested."""
+
+    def __init__(self) -> None:
+        self.orders: list[Mapping[str, Any]] = []
+
+    def place_order(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.orders.append(dict(payload))
+        return payload
+
+
+def build_router(settings, *, adapter_factory=AlpacaAdapter):
+    """Build an order router according to runtime settings."""
+
+    broker = settings.runtime.broker
+    profile = settings.runtime.profile
+    if profile in {"paper", "live"}:
+        if not settings.alpaca.key_id or not settings.alpaca.secret_key:
+            raise RuntimeError("Alpaca credentials required for paper/live profile")
+        adapter = adapter_factory(
+            base_url=settings.alpaca.base_url,
+            key_id=settings.alpaca.key_id,
+            secret_key=settings.alpaca.secret_key,
+        )
+        return AlpacaRouter(adapter)
+    if broker == "alpaca":
+        if not settings.alpaca.key_id or not settings.alpaca.secret_key:
+            raise RuntimeError("Alpaca credentials required for alpaca broker")
+        adapter = adapter_factory(
+            base_url=settings.alpaca.base_url,
+            key_id=settings.alpaca.key_id,
+            secret_key=settings.alpaca.secret_key,
+        )
+        return AlpacaRouter(adapter)
+    if broker == "mock":
+        return MockRouter()
+    raise RuntimeError("Invalid broker configuration")
