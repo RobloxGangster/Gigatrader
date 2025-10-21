@@ -8,6 +8,7 @@ websockets<14
 requests==2.32.3
 python-dotenv>=1.0
 streamlit==1.38.0
+playwright>=1.46
 
 # test deps
 pytest==8.4.1

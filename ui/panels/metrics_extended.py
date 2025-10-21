@@ -18,6 +18,7 @@ def _format_float(value: Any, *, precision: int = 2) -> str:
     except Exception:
         return str(value)
 
+
 def render(api: ApiClient | None = None, *_: Any) -> None:
     st.header("Extended Trading Metrics")
     st.caption("Snapshots /metrics/extended for latency, rejects, and data health.")
@@ -25,6 +26,7 @@ def render(api: ApiClient | None = None, *_: Any) -> None:
     st.button("Refresh metrics", type="primary", on_click=st.rerun)
 
     api = api or ApiClient()
+    st.caption(f"Resolved API: {api.base()}")
     if not require_backend(api):
         return
 
