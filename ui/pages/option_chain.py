@@ -1,8 +1,8 @@
+from __future__ import annotations
+
 """Option Chain & Greeks page."""
 
-from __future__ import annotations
 
-from __future__ import annotations
 
 import json
 

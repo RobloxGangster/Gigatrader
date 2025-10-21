@@ -4,3 +4,5 @@ pytest-cov
 ruff
 pyyaml>=6.0.1
 playwright>=1.46
+pytest-base-url>=2.1.0
+nest-asyncio>=1.5

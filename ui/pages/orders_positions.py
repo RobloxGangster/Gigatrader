@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 """Orders & Positions page."""
 
-from __future__ import annotations
 
 from typing import List
 

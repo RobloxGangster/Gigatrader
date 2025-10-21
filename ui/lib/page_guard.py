@@ -15,7 +15,8 @@ def require_backend(api: ApiClient) -> bool:
             "Backend is not reachable. "
             "Start FastAPI on http://127.0.0.1:8000 or set [api].base_url in .streamlit/secrets.toml."
         )
-        if api.explain_last_error():
-            st.caption(f"Last error: {api.explain_last_error()}")
+        err = api.explain_last_error()
+        if err:
+            st.caption(err)
         return False
     return True

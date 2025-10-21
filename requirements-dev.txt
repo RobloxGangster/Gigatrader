@@ -25,13 +25,15 @@ pytest-asyncio==0.26.0
     # via -r requirements-dev.in
 pytest-cov==5.0.0
     # via -r requirements-dev.in
+pytest-base-url>=2.1.0
+    # via -r requirements-dev.in
 ruff==0.14.0
     # via -r requirements-dev.in
 
 playwright>=1.46
-pytest-base-url>=2.1.0
 pytest-playwright>=0.7.1
 httpx
 requests
 python-dotenv
 pyyaml>=6.0.1
+nest-asyncio>=1.5

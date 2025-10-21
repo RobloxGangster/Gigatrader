@@ -9,6 +9,15 @@ import requests
 
 DEFAULT_BASES = ["http://127.0.0.1:8000", "http://localhost:8000"]
 DEFAULT_PREFIXES = ["", "/api", "/v1"]
+COMMON_FEATURE_PATHS = (
+    "/broker/account",
+    "/strategy/config",
+    "/risk/config",
+    "/pnl/summary",
+    "/telemetry/exposure",
+    "/stream/status",
+    "/logs/recent",
+)
 
 
 def _split_base(candidate: str) -> Tuple[str, str]:
@@ -101,6 +110,8 @@ class ApiClient:
 
     def _discover(self) -> None:
         self._last_err = None
+        last_error: Optional[str] = None
+
         for host, preferred_prefix in self._candidates:
             prefixes: List[str] = []
             if preferred_prefix in DEFAULT_PREFIXES:
@@ -110,21 +121,78 @@ class ApiClient:
                     prefixes.append(prefix)
 
             for prefix in prefixes:
-                url = f"{host}{prefix}/health"
+                url = f"{host}{prefix}/health" if prefix else f"{host}/health"
                 try:
                     response = self.session.get(url, timeout=self.timeout)
                     if response.ok and "application/json" in response.headers.get("content-type", ""):
                         payload = response.json()
                         if isinstance(payload, dict) and payload.get("ok") is True:
                             self._discovered = (host, prefix.rstrip("/"))
+                            self._last_err = None
                             return
                 except Exception as exc:  # noqa: BLE001 - defensive network guard
-                    self._last_err = f"{url}: {type(exc).__name__}: {exc}"
+                    last_error = f"{url}: {type(exc).__name__}: {exc}"
                     continue
 
+        # OpenAPI-based discovery fallback
+        for host, preferred_prefix in self._candidates:
+            openapi_paths: List[str] = []
+            if preferred_prefix:
+                openapi_paths.append(f"{preferred_prefix}/openapi.json")
+            for prefix in DEFAULT_PREFIXES:
+                candidate = f"{prefix}/openapi.json" if prefix else "/openapi.json"
+                if candidate not in openapi_paths:
+                    openapi_paths.append(candidate)
+
+            for path in openapi_paths:
+                url = f"{host}{path}" if path.startswith("/") else f"{host}/{path}"
+                try:
+                    response = self.session.get(url, timeout=self.timeout)
+                except Exception as exc:  # noqa: BLE001 - defensive network guard
+                    last_error = f"{url}: {type(exc).__name__}: {exc}"
+                    continue
+
+                if not response.ok or "application/json" not in response.headers.get("content-type", ""):
+                    last_error = f"{url}: HTTP {response.status_code}"
+                    continue
+
+                try:
+                    spec = response.json()
+                except Exception as exc:  # noqa: BLE001 - JSON parsing guard
+                    last_error = f"{url}: {type(exc).__name__}: {exc}"
+                    continue
+
+                paths = spec.get("paths", {}) if isinstance(spec, dict) else {}
+                prefix = self._infer_prefix_from_paths(paths)
+                if prefix is not None:
+                    self._discovered = (host, prefix.rstrip("/"))
+                    self._last_err = None
+                    return
+
         self._discovered = None
-        if not self._last_err:
+        if last_error:
+            self._last_err = last_error
+        elif not self._last_err:
             self._last_err = "No healthy backend discovered"
+
+    def _infer_prefix_from_paths(self, paths: Dict[str, Any]) -> Optional[str]:
+        if not isinstance(paths, dict):
+            return None
+
+        candidates: List[str] = []
+        for full_path in paths.keys():
+            if not isinstance(full_path, str):
+                continue
+            for feature_path in COMMON_FEATURE_PATHS:
+                if full_path.endswith(feature_path):
+                    prefix = full_path[: -len(feature_path)]
+                    candidates.append(prefix)
+
+        for preferred in ("", "/api", "/v1"):
+            if preferred in candidates:
+                return preferred
+
+        return candidates[0] if candidates else None
 
     # ---- Core HTTP helpers -------------------------------------------------
 

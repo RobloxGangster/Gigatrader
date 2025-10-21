@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 """Research insights page."""
 
-from __future__ import annotations
 
 import pandas as pd
 import streamlit as st

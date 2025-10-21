@@ -479,14 +479,16 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
     return data
 
 
-def render(_: BrokerAPI, state: AppSessionState) -> None:
+def render(_: BrokerAPI, state: AppSessionState, api_client: ApiClient | None = None) -> None:
     st.title("Control Center")
     st.markdown('<div data-testid="page-control-center"></div>', unsafe_allow_html=True)
     st.markdown('<div data-testid="control-center-root"></div>', unsafe_allow_html=True)
 
-    api = ApiClient()
+    api = api_client or ApiClient()
     if not require_backend(api):
-        st.stop()
+        return
+
+    st.sidebar.caption(f"Resolved API: {api.base_url}")
 
     if "__cc_auto_refresh_last__" not in st.session_state:
         st.session_state["__cc_auto_refresh_last__"] = time.time()
