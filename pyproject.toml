@@ -28,10 +28,14 @@ include = ["app*", "core*", "services*", "cli*", "execution*", "risk*", "strateg
 
 [tool.ruff]
 line-length = 100
-extend-exclude = ["artifacts", "build", "dist", "ui", "tools", "notebooks", "docs/agents"]
+extend-exclude = ["artifacts", "build", "dist", "tools", "notebooks", "docs/agents"]
+select = ["F", "E", "W"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B"]
+select = ["E", "F", "I", "B", "W"]
+
+# F404 = Future feature not defined / mis-placed (ruff flags bad __future__ usage)
+# Ruff maps the check; enabling "F" is enough, but keep this comment for clarity.
 
 [tool.ruff.format]
 quote-style = "double"
