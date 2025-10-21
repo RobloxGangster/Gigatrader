@@ -1525,12 +1525,10 @@ def sentiment(symbol: str, hours_back: int = 24, limit: int = 50):
         return payload
 
 # ---------- Entrypoint ----------
+def run(host: str = "127.0.0.1", port: int = 8000) -> None:
+    uvicorn.run("backend.api:app", host=host, port=port, reload=False, log_level="info")
+
+
 if __name__ == "__main__":
-    try:
-        port = int(os.environ.get("SERVICE_PORT", "8000"))
-    except Exception:
-        port = 8000
-    if port <= 0 or port > 65535:
-        port = 8000
-    uvicorn.run(app, host="127.0.0.1", port=port)
+    run()
 

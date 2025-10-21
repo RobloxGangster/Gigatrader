@@ -166,3 +166,6 @@ watchdog==6.0.0
     # via streamlit
 websockets==15.0.1
     # via alpaca-py
+uvicorn[standard]==0.37.0
+pyyaml==6.0.3
+python-multipart==0.0.9
