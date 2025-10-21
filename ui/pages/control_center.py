@@ -1,50 +1,29 @@
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Dict, Iterable, List, Tuple
 
-import requests
 import streamlit as st
 
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
 from ui.services.backend import BrokerAPI
-from ui.services.config import api_base_url
+from ui.lib.api_client import ApiClient
 from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
 from ui.utils.st_compat import safe_rerun
 
-API_BASE_URL = api_base_url()
+_TESTING = "PYTEST_CURRENT_TEST" in os.environ
 REFRESH_INTERVAL_SEC = 5
+DEFAULT_AUTO_REFRESH = not _TESTING
 DEFAULT_PRESETS: Tuple[str, ...] = ("safe", "balanced", "high_risk")
 STRATEGY_LABELS: Dict[str, str] = {
     "intraday_momo": "Intraday Momentum",
     "intraday_revert": "Intraday Mean Reversion",
     "swing_breakout": "Swing Breakout",
 }
-
-
-def _url(path: str) -> str:
-    return f"{API_BASE_URL}/{path.lstrip('/')}"
-
-
-def _get(path: str, params: Dict[str, Any] | None = None) -> Any:
-    resp = requests.get(_url(path), params=params, timeout=6)
-    resp.raise_for_status()
-    if resp.headers.get("content-type", "").startswith("application/json"):
-        return resp.json()
-    return resp.text
-
-
-def _post(path: str, payload: Dict[str, Any] | None = None) -> Any:
-    resp = requests.post(_url(path), json=payload or {}, timeout=8)
-    resp.raise_for_status()
-    if resp.content and resp.headers.get("content-type", "").startswith("application/json"):
-        return resp.json()
-    return {}
-
-
 def _fmt_money(value: Any, digits: int = 2) -> str:
     try:
         return fmt_currency(to_float(value), digits=digits)
@@ -158,6 +137,7 @@ def _render_algorithm_controls(
     strategy_cfg: Dict[str, Any],
     orchestrator: Dict[str, Any],
     account: Dict[str, Any],
+    api: ApiClient,
 ) -> None:
     st.subheader("Algorithm Controls")
     mock_mode = bool(account.get("mock_mode"))
@@ -171,7 +151,7 @@ def _render_algorithm_controls(
         preset = st.selectbox("Run Preset", DEFAULT_PRESETS, index=preset_index, key="cc_run_preset")
         start_col, stop_col, reconcile_col = st.columns(3)
         start_clicked = start_col.form_submit_button("Start Trading")
-        stop_clicked = stop_col.form_submit_button("Stop Trading")
+        stop_clicked = stop_col.form_submit_button("Stop")
         st.caption("Start/stop orchestrator and enable live routing." if not mock_mode else "Mock mode prevents live orders.")
 
         strategy_flags = strategy_cfg.get("strategies") or {}
@@ -239,19 +219,19 @@ def _render_algorithm_controls(
 
         if start_clicked:
             try:
-                result = _post("/orchestrator/start", {"preset": preset})
+                result = api.orchestrator_start(preset=preset)
                 st.toast(f"Trading started ({result.get('run_id', 'paper')})", icon="✅")
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Failed to start trading: {exc}")
         if stop_clicked:
             try:
-                _post("/orchestrator/stop")
+                api.orchestrator_stop()
                 st.toast("Trading stopped", icon="🛑")
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Failed to stop trading: {exc}")
         if reconcile_clicked:
             try:
-                _post("/orchestrator/reconcile")
+                api.orchestrator_reconcile()
                 st.success("Reconcile triggered")
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Reconcile failed: {exc}")
@@ -267,13 +247,13 @@ def _render_algorithm_controls(
                 "dry_run": bool(dry_run_toggle),
             }
             try:
-                _post("/strategy/config", payload)
+                api.strategy_update(payload)
                 st.success("Strategy settings updated")
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Failed to update strategy settings: {exc}")
 
 
-def _render_risk_controls(risk_cfg: Dict[str, Any]) -> None:
+def _render_risk_controls(risk_cfg: Dict[str, Any], api: ApiClient) -> None:
     st.subheader("Risk Controls")
     with st.form("risk_controls"):
         daily_loss = st.number_input(
@@ -319,13 +299,13 @@ def _render_risk_controls(risk_cfg: Dict[str, Any]) -> None:
                 "bracket_enabled": bracket_enabled,
             }
             try:
-                _post("/risk/config", payload)
+                api.risk_update(payload)
                 st.success("Risk controls updated")
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Failed to update risk controls: {exc}")
 
 
-def _render_stream_controls(stream: Dict[str, Any]) -> None:
+def _render_stream_controls(stream: Dict[str, Any], api: ApiClient) -> None:
     st.subheader("Stream Controls / Status")
     running = bool(stream.get("running"))
     status_label = "Running" if running else "Stopped"
@@ -333,44 +313,44 @@ def _render_stream_controls(stream: Dict[str, Any]) -> None:
     cols = st.columns(2)
     if cols[0].button("Start Stream", disabled=running, key="cc_stream_start"):
         try:
-            _post("/stream/start")
+            api.stream_start()
             st.toast("Stream start requested", icon="📡")
             safe_rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to start stream: {exc}")
     if cols[1].button("Stop Stream", disabled=not running, key="cc_stream_stop"):
         try:
-            _post("/stream/stop")
+            api.stream_stop()
             st.toast("Stream stop requested", icon="🛑")
             safe_rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to stop stream: {exc}")
 
 
-def _render_runbook(orchestrator: Dict[str, Any]) -> None:
+def _render_runbook(orchestrator: Dict[str, Any], api: ApiClient) -> None:
     st.subheader("Runbook / Actions")
     cols = st.columns(4)
     if cols[0].button("Reset Kill Switch", key="cc_reset_kill"):
         try:
-            _post("/killswitch/reset")
+            api.risk_reset_kill_switch()
             st.success("Kill switch reset")
         except Exception as exc:  # noqa: BLE001
             st.error(f"Kill switch reset failed: {exc}")
     if cols[1].button("Cancel All", key="cc_cancel_all"):
         try:
-            result = _post("/orders/cancel_all")
+            result = api.cancel_all_orders()
             st.success(f"Canceled {result.get('canceled', 0)} orders")
         except Exception as exc:  # noqa: BLE001
             st.error(f"Cancel all failed: {exc}")
     if cols[2].button("Sync & Reconcile", key="cc_sync"):
         try:
-            _post("/orchestrator/reconcile")
+            api.orchestrator_reconcile()
             st.success("Reconcile triggered")
         except Exception as exc:  # noqa: BLE001
             st.error(f"Reconcile failed: {exc}")
     if cols[3].button("Run Diagnostics", key="cc_health"):
         try:
-            result = _get("/health")
+            result = api.health()
             st.info(f"Health: {result}")
         except Exception as exc:  # noqa: BLE001
             st.error(f"Diagnostics failed: {exc}")
@@ -408,70 +388,72 @@ def _render_logs(log_lines: List[str], pacing: Dict[str, Any]) -> None:
     pacing_col.metric("Backoff Events", pacing.get("backoff_events", 0))
 
 
-def _load_remote_state() -> Dict[str, Any]:
+def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
     data: Dict[str, Any] = {}
     try:
-        data["status"] = _get("/status")
+        data["status"] = api.status()
     except Exception as exc:  # noqa: BLE001
         data["status_error"] = str(exc)
         data["status"] = {}
 
     try:
-        data["account"] = _get("/broker/account")
+        data["account"] = api.account()
     except Exception as exc:  # noqa: BLE001
         data["account_error"] = str(exc)
         data["account"] = {}
 
     try:
-        data["positions"] = _get("/broker/positions")
+        positions = api.positions()
+        data["positions"] = positions if isinstance(positions, list) else []
     except Exception as exc:  # noqa: BLE001
         data["positions_error"] = str(exc)
         data["positions"] = []
 
     try:
-        data["orders"] = _get("/broker/orders", params={"status": "all", "limit": 50})
+        orders = api.orders(status="all", limit=50)
+        data["orders"] = orders if isinstance(orders, list) else []
     except Exception as exc:  # noqa: BLE001
         data["orders_error"] = str(exc)
         data["orders"] = []
 
     try:
-        data["stream"] = _get("/stream/status")
+        data["stream"] = api.stream_status()
     except Exception as exc:  # noqa: BLE001
         data["stream_error"] = str(exc)
         data["stream"] = {"running": False, "source": "mock"}
 
     try:
-        data["orchestrator"] = _get("/orchestrator/status")
+        data["orchestrator"] = api.orchestrator_status()
     except Exception as exc:  # noqa: BLE001
         data["orchestrator_error"] = str(exc)
         data["orchestrator"] = {}
 
     try:
-        data["strategy"] = _get("/strategy/config")
+        data["strategy"] = api.strategy_config()
     except Exception as exc:  # noqa: BLE001
         data["strategy_error"] = str(exc)
         data["strategy"] = {}
 
     try:
-        data["risk"] = _get("/risk/config")
+        data["risk"] = api.risk_config()
     except Exception as exc:  # noqa: BLE001
         data["risk_error"] = str(exc)
         data["risk"] = {}
 
     try:
-        data["pnl"] = _get("/pnl/summary")
+        data["pnl"] = api.pnl_summary()
     except Exception as exc:  # noqa: BLE001
         data["pnl_error"] = str(exc)
         data["pnl"] = {}
 
     try:
-        data["exposure"] = _get("/telemetry/exposure")
+        data["exposure"] = api.exposure()
     except Exception as exc:  # noqa: BLE001
         data["exposure_error"] = str(exc)
         data["exposure"] = {}
 
     try:
-        logs_payload = _get("/logs/tail", params={"lines": 200})
+        logs_payload = api.recent_logs(limit=200)
         if isinstance(logs_payload, dict):
             data["logs"] = logs_payload.get("lines", [])
         else:
@@ -489,6 +471,8 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
     st.markdown('<div data-testid="page-control-center"></div>', unsafe_allow_html=True)
     st.markdown('<div data-testid="control-center-root"></div>', unsafe_allow_html=True)
 
+    api = ApiClient()
+
     if "__cc_auto_refresh_last__" not in st.session_state:
         st.session_state["__cc_auto_refresh_last__"] = time.time()
 
@@ -500,13 +484,13 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
             safe_rerun()
         auto_enabled = auto_col.checkbox(
             "Auto-refresh telemetry",
-            value=st.session_state.get("__cc_auto_refresh__", True),
+            value=st.session_state.get("__cc_auto_refresh__", DEFAULT_AUTO_REFRESH),
             key="cc_auto_refresh_toggle",
             help="Refresh KPIs and tables every few seconds.",
         )
         st.session_state["__cc_auto_refresh__"] = auto_enabled
 
-    data = _load_remote_state()
+    data = _load_remote_state(api)
 
     update_session_state(last_trace_id=data.get("orchestrator", {}).get("last_tick_ts"))
 
@@ -537,10 +521,11 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
         strategy_cfg=data.get("strategy", {}),
         orchestrator=data.get("orchestrator", {}),
         account=data.get("account", {}),
+        api=api,
     )
-    _render_risk_controls(data.get("risk", {}))
-    _render_stream_controls(data.get("stream", {}))
-    _render_runbook(data.get("orchestrator", {}))
+    _render_risk_controls(data.get("risk", {}), api)
+    _render_stream_controls(data.get("stream", {}), api)
+    _render_runbook(data.get("orchestrator", {}), api)
 
     positions = _trim_positions(data.get("positions"))
     orders = _trim_orders(data.get("orders"))

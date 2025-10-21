@@ -45,7 +45,7 @@ def _status_payload(status: Dict[str, object], *, running: bool | None = None) -
     return payload
 
 
-@router.get("/stream/status")
+@router.get("/status")
 def stream_status() -> dict:
     sm = get_stream_manager()
     try:
@@ -54,7 +54,7 @@ def stream_status() -> dict:
         raise HTTPException(status_code=500, detail=f"stream_status: {exc}") from exc
 
 
-@router.post("/stream/start")
+@router.post("/start")
 def stream_start() -> dict:
     sm = get_stream_manager()
     try:
@@ -68,7 +68,7 @@ def stream_start() -> dict:
         raise HTTPException(status_code=500, detail=f"stream_start: {exc}") from exc
 
 
-@router.post("/stream/stop")
+@router.post("/stop")
 def stream_stop() -> dict:
     sm = get_stream_manager()
     try:

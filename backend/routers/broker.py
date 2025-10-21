@@ -70,7 +70,7 @@ def _alpaca_env_present() -> bool:
     return all(os.getenv(name) for name in required)
 
 
-@router.get("/broker/account")
+@router.get("/account")
 def broker_account() -> dict:
     if not _alpaca_env_present():
         return _MOCK_ACCOUNT.copy()
@@ -83,7 +83,7 @@ def broker_account() -> dict:
         raise HTTPException(status_code=502, detail=f"broker_account: {exc}") from exc
 
 
-@router.get("/broker/positions")
+@router.get("/positions")
 def broker_positions() -> list[dict]:
     if not _alpaca_env_present():
         return list(_MOCK_POSITIONS)
@@ -96,7 +96,7 @@ def broker_positions() -> list[dict]:
         raise HTTPException(status_code=502, detail=f"broker_positions: {exc}") from exc
 
 
-@router.get("/broker/orders")
+@router.get("/orders")
 def broker_orders(
     status: str = Query("all"),
     limit: int = Query(50, ge=1, le=500),

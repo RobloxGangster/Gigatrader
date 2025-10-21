@@ -4,6 +4,8 @@ import os
 from collections import deque
 from pathlib import Path
 
+from typing import Dict, List
+
 from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter()
@@ -21,7 +23,7 @@ def _tail(path: Path, n: int) -> list[str]:
     return list(dq)
 
 
-@router.get("/logs/tail")
+@router.get("/tail")
 def logs_tail(lines: int = Query(200, ge=1, le=5000), file: str | None = None):
     """Return the last N lines of the primary log (or a specified file)."""
 
@@ -30,3 +32,15 @@ def logs_tail(lines: int = Query(200, ge=1, le=5000), file: str | None = None):
         return {"file": str(path), "lines": _tail(path, lines)}
     except Exception as exc:  # pragma: no cover - defensive guard
         raise HTTPException(500, f"logs_tail: {exc}") from exc
+
+
+@router.get("/recent")
+def recent_logs(limit: int = Query(200, ge=1, le=2000)) -> Dict[str, List[str]]:
+    """Return the most recent log lines with a sensible default limit."""
+
+    try:
+        path = Path(DEFAULT_LOG)
+        lines = _tail(path, limit)
+        return {"lines": lines}
+    except Exception:
+        return {"lines": []}

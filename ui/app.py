@@ -189,7 +189,7 @@ def main() -> None:
     with st.sidebar:
         st.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
         choice = st.selectbox(
-            "Navigate",
+            "Navigation",
             labels,
             index=current_index,
             key="nav_select",

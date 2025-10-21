@@ -6,6 +6,9 @@ except Exception:
     from backend.server import app  # fallback
 
 from services.ml.registry import register_model
+import pytest
+
+sklearn = pytest.importorskip("sklearn.linear_model")
 from sklearn.linear_model import LogisticRegression
 import numpy as np
 

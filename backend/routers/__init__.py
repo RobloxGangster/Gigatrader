@@ -7,6 +7,8 @@ __all__ = [
     "risk",
     "orchestrator",
     "metrics",
+    "pnl",
+    "telemetry",
     "logs",
     "diagnostics",
 ]

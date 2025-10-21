@@ -2,7 +2,7 @@ import asyncio
 import os
 import time
 from datetime import datetime, timezone
-from typing import Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -11,13 +11,14 @@ from pydantic import BaseModel
 
 from backend.routers import (
     broker,
-    diagnostics as diagnostics_router,
-    logs as logs_router,
-    metrics,
+    diagnostics,
+    logs,
     orchestrator,
+    pnl,
     risk,
     strategy,
     stream,
+    telemetry,
 )
 from backend.routers.deps import get_kill_switch, get_orchestrator, get_stream_manager
 from backend.services import reconcile
@@ -36,14 +37,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(broker.router)
-app.include_router(stream.router)
-app.include_router(strategy.router)
-app.include_router(risk.router)
-app.include_router(orchestrator.router)
-app.include_router(metrics.router)
-app.include_router(logs_router.router)
-app.include_router(diagnostics_router.router)
+PRIMARY_ROUTERS: list[tuple[str, Any, list[str]]] = [
+    ("/broker", broker.router, ["broker"]),
+    ("/stream", stream.router, ["stream"]),
+    ("/strategy", strategy.router, ["strategy"]),
+    ("/risk", risk.router, ["risk"]),
+    ("/orchestrator", orchestrator.router, ["orchestrator"]),
+    ("/pnl", pnl.router, ["pnl"]),
+    ("/telemetry", telemetry.router, ["telemetry"]),
+    ("/logs", logs.router, ["logs"]),
+    ("/diagnostics", diagnostics.router, ["diagnostics"]),
+]
+
+for prefix, router, tags in PRIMARY_ROUTERS:
+    app.include_router(router, prefix=prefix, tags=tags)
+
+for alias in ("/api", "/v1"):
+    for prefix, router, tags in PRIMARY_ROUTERS:
+        compat_tag = [f"{tags[0]}-compat"] if tags else None
+        app.include_router(router, prefix=f"{alias}{prefix}", tags=compat_tag)
+
+
+def _register_compat_route(
+    path: str,
+    endpoint: Callable[..., Any],
+    methods: Sequence[str],
+    *,
+    tag: str | None = None,
+) -> None:
+    compat_tags = [f"{tag}-compat"] if tag else None
+    for alias in ("/api", "/v1"):
+        app.add_api_route(f"{alias}{path}", endpoint, methods=list(methods), tags=compat_tags)
+
+
+def _is_mock_mode() -> bool:
+    value = os.getenv("MOCK_MODE", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+@app.get("/health")
+def health() -> Dict[str, Any]:
+    return {
+        "status": "ok",
+        "mock_mode": _is_mock_mode(),
+        "version": os.getenv("APP_VERSION", "dev"),
+    }
+
+
+@app.get("/version")
+def version() -> Dict[str, str]:
+    return {"version": os.getenv("APP_VERSION", "dev")}
+
+
+_register_compat_route("/health", health, ["GET"], tag="health")
+_register_compat_route("/version", version, ["GET"], tag="version")
 
 from backend.routes import backtests_compat  # noqa: E402
 from backend.routes import options as options_routes  # noqa: E402
@@ -54,7 +101,6 @@ from backend.routes import ml as ml_routes  # noqa: E402
 from backend.routes import ml_calibration as ml_calibration_routes  # noqa: E402
 from backend.routes import alpaca_live as alpaca_live_routes  # noqa: E402
 from backend.routes import broker as broker_routes  # noqa: E402
-from backend.routes import health as health_routes  # noqa: E402
 
 app.include_router(ml_routes.router)
 app.include_router(ml_calibration_routes.router)
@@ -65,7 +111,6 @@ app.include_router(logs_routes.router)
 app.include_router(pacing_routes.router)
 app.include_router(alpaca_live_routes.router)
 app.include_router(broker_routes.router)
-app.include_router(health_routes.router)
 
 
 @app.on_event("startup")
@@ -113,6 +158,9 @@ def status():
     }
 
 
+_register_compat_route("/status", status, ["GET"], tag="status")
+
+
 @app.post("/orchestrator/reconcile")
 def orchestrator_reconcile() -> Dict[str, Any]:
     global _last_reconcile
@@ -132,10 +180,16 @@ def orchestrator_reconcile() -> Dict[str, Any]:
     return {"ok": True, "snapshot": snapshot, "last_reconcile": _format_ts(_last_reconcile)}
 
 
+_register_compat_route("/orchestrator/reconcile", orchestrator_reconcile, ["POST"], tag="orchestrator")
+
+
 @app.post("/paper/start")
 def paper_start(req: StartReq | None = None):
     preset = req.preset if req else None
     return get_orchestrator().start_sync(mode="paper", preset=preset)
+
+
+_register_compat_route("/paper/start", paper_start, ["POST"], tag="paper")
 
 
 @app.post("/paper/stop")
@@ -143,10 +197,16 @@ def paper_stop():
     return get_orchestrator().stop_sync()
 
 
+_register_compat_route("/paper/stop", paper_stop, ["POST"], tag="paper")
+
+
 @app.post("/paper/flatten")
 def flatten_and_halt():
     get_kill_switch().engage_sync()
     return {"ok": True, "halted": True}
+
+
+_register_compat_route("/paper/flatten", flatten_and_halt, ["POST"], tag="paper")
 
 
 @app.post("/orders/cancel_all")
@@ -168,12 +228,18 @@ def cancel_all_orders() -> Dict[str, Any]:
     return {"canceled": count}
 
 
+_register_compat_route("/orders/cancel_all", cancel_all_orders, ["POST"], tag="orders")
+
+
 @app.post("/live/start")
 def live_start(req: StartReq | None = None):
     if os.getenv("LIVE_TRADING","false").lower() not in ("1","true","yes"):
         raise HTTPException(403,"LIVE_TRADING env not enabled")
     preset = req.preset if req else None
     return get_orchestrator().start_sync(mode="live", preset=preset)
+
+
+_register_compat_route("/live/start", live_start, ["POST"], tag="live")
 
 
 if __name__ == "__main__":

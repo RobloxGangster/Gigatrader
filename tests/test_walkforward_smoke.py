@@ -5,6 +5,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import pytest
+
+sklearn = pytest.importorskip("sklearn.ensemble")
+
 from services.ml.walkforward import WFConfig, train_walk_forward
 
 
