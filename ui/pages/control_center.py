@@ -1,29 +1,21 @@
 from __future__ import annotations
 
-import os
 import time
 from typing import Any, Dict, Iterable, List, Tuple
 
 import requests
 import streamlit as st
 
-
-def _safe_rerun() -> None:
-    """Streamlit rerun that works on both old and new versions."""
-    try:
-        st.rerun()  # Streamlit >= 1.32
-    except AttributeError:
-        # Fallback for older Streamlit versions
-        st.experimental_rerun()  # type: ignore[attr-defined]
-
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
 from ui.services.backend import BrokerAPI
+from ui.services.config import api_base_url
 from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
+from ui.utils.st_compat import safe_rerun
 
-API = os.getenv("API_URL", "http://127.0.0.1:8000")
+API_BASE_URL = api_base_url()
 REFRESH_INTERVAL_SEC = 5
 DEFAULT_PRESETS: Tuple[str, ...] = ("safe", "balanced", "high_risk")
 STRATEGY_LABELS: Dict[str, str] = {
@@ -33,8 +25,12 @@ STRATEGY_LABELS: Dict[str, str] = {
 }
 
 
-def _get(path: str, **params: Any) -> Any:
-    resp = requests.get(f"{API}{path}", params=params or None, timeout=6)
+def _url(path: str) -> str:
+    return f"{API_BASE_URL}/{path.lstrip('/')}"
+
+
+def _get(path: str, params: Dict[str, Any] | None = None) -> Any:
+    resp = requests.get(_url(path), params=params, timeout=6)
     resp.raise_for_status()
     if resp.headers.get("content-type", "").startswith("application/json"):
         return resp.json()
@@ -42,7 +38,7 @@ def _get(path: str, **params: Any) -> Any:
 
 
 def _post(path: str, payload: Dict[str, Any] | None = None) -> Any:
-    resp = requests.post(f"{API}{path}", json=payload or {}, timeout=8)
+    resp = requests.post(_url(path), json=payload or {}, timeout=8)
     resp.raise_for_status()
     if resp.content and resp.headers.get("content-type", "").startswith("application/json"):
         return resp.json()
@@ -110,11 +106,13 @@ def _render_status_header(status: Dict[str, Any], stream: Dict[str, Any], orches
     cols[2].metric("Run State", "Running" if status.get("running") else "Stopped")
     cols[3].metric("Kill Switch", "Engaged" if orchestrator.get("kill_switch") else "Standby")
 
-    status_pill(
-        "Stream",
-        stream.get("status", "offline").title(),
-        variant="positive" if stream.get("status") == "online" else "warning",
-    )
+    running = bool(stream.get("running"))
+    stream_label = "Running" if running else "Stopped"
+    status_pill("Stream", stream_label, variant="positive" if running else "warning")
+    if stream.get("source"):
+        st.caption(f"Feed source: {stream['source']}")
+    if stream.get("last_heartbeat"):
+        st.caption(f"Last stream heartbeat: {stream['last_heartbeat']}")
     if stream.get("last_error"):
         st.caption(f"Stream error: {stream['last_error']}")
 
@@ -133,14 +131,26 @@ def _render_metrics(account: Dict[str, Any], pnl: Dict[str, Any], exposure: Dict
     top[2].metric("Buying Power", _fmt_money(account.get("buying_power")))
 
     pnl_cols = st.columns(3)
-    pnl_cols[0].metric("Realized PnL", _fmt_signed(pnl.get("realized_today")))
+    pnl_cols[0].metric("Realized PnL", _fmt_signed(pnl.get("realized")))
     pnl_cols[1].metric("Unrealized PnL", _fmt_signed(pnl.get("unrealized")))
-    pnl_cols[2].metric("Total PnL", _fmt_signed(pnl.get("total")))
+    pnl_cols[2].metric("Total PnL", _fmt_signed(pnl.get("cumulative") or pnl.get("day_pl")))
 
     exposure_cols = st.columns(3)
     exposure_cols[0].metric("Net Exposure", _fmt_money(exposure.get("net")))
     exposure_cols[1].metric("Gross Exposure", _fmt_money(exposure.get("gross")))
-    exposure_cols[2].metric("Long / Short", f"{_fmt_money(exposure.get('long_exposure'))} · {_fmt_money(exposure.get('short_exposure'))}")
+    symbols = exposure.get("by_symbol") if isinstance(exposure.get("by_symbol"), list) else []
+    long_total = 0.0
+    short_total = 0.0
+    for row in symbols:
+        try:
+            notional = float(row.get("notional", 0.0))
+        except Exception:  # noqa: BLE001 - defensive conversion
+            notional = 0.0
+        if notional >= 0:
+            long_total += notional
+        else:
+            short_total += notional
+    exposure_cols[2].metric("Long / Short", f"{_fmt_money(long_total)} · {_fmt_money(short_total)}")
 
 
 def _render_algorithm_controls(
@@ -317,19 +327,22 @@ def _render_risk_controls(risk_cfg: Dict[str, Any]) -> None:
 
 def _render_stream_controls(stream: Dict[str, Any]) -> None:
     st.subheader("Stream Controls / Status")
-    status = stream.get("status", "offline")
-    st.caption(f"Stream status: **{status}**")
+    running = bool(stream.get("running"))
+    status_label = "Running" if running else "Stopped"
+    st.caption(f"Stream status: **{status_label}**")
     cols = st.columns(2)
-    if cols[0].button("Connect Stream", disabled=status == "online", key="cc_stream_start"):
+    if cols[0].button("Start Stream", disabled=running, key="cc_stream_start"):
         try:
             _post("/stream/start")
             st.toast("Stream start requested", icon="📡")
+            safe_rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to start stream: {exc}")
-    if cols[1].button("Disconnect Stream", key="cc_stream_stop"):
+    if cols[1].button("Stop Stream", disabled=not running, key="cc_stream_stop"):
         try:
             _post("/stream/stop")
             st.toast("Stream stop requested", icon="🛑")
+            safe_rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to stop stream: {exc}")
 
@@ -380,20 +393,12 @@ def _render_tables(positions: List[Dict[str, Any]], orders: List[Dict[str, Any]]
         st.caption("No recent orders.")
 
 
-def _render_logs(logs: List[Dict[str, Any]], pacing: Dict[str, Any]) -> None:
+def _render_logs(log_lines: List[str], pacing: Dict[str, Any]) -> None:
     st.subheader("Logs & Pacing")
     log_col, pacing_col = st.columns([3, 1])
-    if logs:
-        tail = logs[-50:]
-        table = [
-            {
-                "timestamp": entry.get("timestamp") or entry.get("ts"),
-                "level": entry.get("level"),
-                "message": entry.get("message") or entry.get("event") or entry.get("summary"),
-            }
-            for entry in tail
-        ]
-        log_col.dataframe(table, use_container_width=True)
+    if log_lines:
+        tail = log_lines[-200:]
+        log_col.code("\n".join(str(line) for line in tail))
     else:
         log_col.caption("No recent log events.")
 
@@ -424,7 +429,7 @@ def _load_remote_state() -> Dict[str, Any]:
         data["positions"] = []
 
     try:
-        data["orders"] = _get("/broker/orders", status="all", limit=50)
+        data["orders"] = _get("/broker/orders", params={"status": "all", "limit": 50})
     except Exception as exc:  # noqa: BLE001
         data["orders_error"] = str(exc)
         data["orders"] = []
@@ -433,7 +438,7 @@ def _load_remote_state() -> Dict[str, Any]:
         data["stream"] = _get("/stream/status")
     except Exception as exc:  # noqa: BLE001
         data["stream_error"] = str(exc)
-        data["stream"] = {"status": "offline"}
+        data["stream"] = {"running": False, "source": "mock"}
 
     try:
         data["orchestrator"] = _get("/orchestrator/status")
@@ -466,16 +471,15 @@ def _load_remote_state() -> Dict[str, Any]:
         data["exposure"] = {}
 
     try:
-        data["logs"] = _get("/logs", tail=200)
+        logs_payload = _get("/logs/tail", params={"lines": 200})
+        if isinstance(logs_payload, dict):
+            data["logs"] = logs_payload.get("lines", [])
+        else:
+            data["logs"] = []
     except Exception as exc:  # noqa: BLE001
         data["logs_error"] = str(exc)
         data["logs"] = []
-
-    try:
-        data["pacing"] = _get("/pacing")
-    except Exception as exc:  # noqa: BLE001
-        data["pacing_error"] = str(exc)
-        data["pacing"] = {}
+    data.setdefault("pacing", {})
 
     return data
 
@@ -493,7 +497,7 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
         refresh_col, auto_col = st.columns([1, 1])
         if refresh_col.button("Refresh", key="cc_manual_refresh"):
             st.session_state["__cc_manual_refresh_ts__"] = time.time()
-            _safe_rerun()
+            safe_rerun()
         auto_enabled = auto_col.checkbox(
             "Auto-refresh telemetry",
             value=st.session_state.get("__cc_auto_refresh__", True),
@@ -524,6 +528,8 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
         st.warning(f"PnL summary unavailable: {data['pnl_error']}")
     if data.get("exposure_error"):
         st.warning(f"Exposure telemetry unavailable: {data['exposure_error']}")
+    if data.get("logs_error"):
+        st.warning(f"Log tail unavailable: {data['logs_error']}")
 
     _render_status_header(data.get("status", {}), data.get("stream", {}), data.get("orchestrator", {}))
     _render_metrics(data.get("account", {}), data.get("pnl", {}), data.get("exposure", {}))
@@ -548,4 +554,4 @@ def render(_: BrokerAPI, state: AppSessionState) -> None:
         if wait > 0:
             time.sleep(wait)
         st.session_state["__cc_auto_refresh_last__"] = time.time()
-        _safe_rerun()
+        safe_rerun()

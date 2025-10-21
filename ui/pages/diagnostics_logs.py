@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+from __future__ import annotations
+
+from typing import Any, Dict
 
 import requests
 import streamlit as st
 
 from ui.services.config import api_base_url
-from ui.utils.compat import rerun as st_rerun
+from ui.utils.st_compat import safe_rerun
 
 _MESSAGE_KEY = "diagnostics_logs_status"
 _REFRESH_TOGGLE = "_refresh_logs_toggle"
@@ -53,11 +56,11 @@ def render(*_: Any) -> None:
                     "ok": False,
                     "message": f"Diagnostics failed: {exc}",
                 }
-            st_rerun()
+            safe_rerun()
     with col2:
         if st.button("Refresh Logs", use_container_width=True):
             st.session_state[_REFRESH_TOGGLE] = not st.session_state.get(_REFRESH_TOGGLE, False)
-            st_rerun()
+            safe_rerun()
 
     status = st.session_state.get(_MESSAGE_KEY)
     if isinstance(status, dict) and status.get("message"):

@@ -194,10 +194,10 @@ class MetricsService:
     def pnl_summary(self) -> Dict[str, float]:
         if is_mock():
             return {
-                "realized_today": 0.0,
+                "day_pl": 0.0,
+                "realized": 0.0,
                 "unrealized": 0.0,
-                "total": 0.0,
-                "day_pl_pct": 0.0,
+                "cumulative": 0.0,
             }
         acct = reconcile.pull_account()
         realized = float(acct.get("daytrade_pl") or acct.get("day_pl") or 0.0)
@@ -207,37 +207,33 @@ class MetricsService:
             or 0.0
         )
         equity = float(acct.get("equity") or 0.0)
-        last_equity = float(acct.get("last_equity") or (equity or 1.0))
-        day_pl_pct = 0.0
-        if last_equity:
-            day_pl_pct = (equity - last_equity) / float(last_equity)
+        last_equity = float(acct.get("last_equity") or equity)
+        day_pl = realized + unrealized
+        cumulative = float(acct.get("cumulative_pl") or (equity - last_equity + day_pl))
         return {
-            "realized_today": realized,
+            "day_pl": day_pl,
+            "realized": realized,
             "unrealized": unrealized,
-            "total": realized + unrealized,
-            "day_pl_pct": day_pl_pct,
+            "cumulative": cumulative,
         }
 
-    def exposure(self) -> Dict[str, float]:
+    def exposure(self) -> Dict[str, Any]:
         if is_mock():
-            return {"gross": 0.0, "net": 0.0, "long_exposure": 0.0, "short_exposure": 0.0}
-        positions = reconcile.pull_positions()
-        long_exposure = 0.0
-        short_exposure = 0.0
+            return {"net": 0.0, "gross": 0.0, "by_symbol": []}
+        try:
+            positions = reconcile.pull_positions()
+        except Exception:
+            return {"net": 0.0, "gross": 0.0, "by_symbol": []}
+        by_symbol: List[Dict[str, Any]] = []
+        net = 0.0
+        gross = 0.0
         for pos in positions:
+            symbol = pos.get("symbol") or pos.get("asset_symbol") or "?"
             market_value = float(pos.get("market_value") or 0.0)
-            if market_value >= 0:
-                long_exposure += market_value
-            else:
-                short_exposure += market_value
-        gross = long_exposure + abs(short_exposure)
-        net = long_exposure + short_exposure
-        return {
-            "gross": gross,
-            "net": net,
-            "long_exposure": long_exposure,
-            "short_exposure": short_exposure,
-        }
+            by_symbol.append({"symbol": symbol, "notional": market_value})
+            net += market_value
+            gross += abs(market_value)
+        return {"net": net, "gross": gross, "by_symbol": by_symbol}
 
 
 class OrchestratorService:
