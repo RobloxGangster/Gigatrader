@@ -24,6 +24,8 @@ STRATEGY_LABELS: Dict[str, str] = {
     "intraday_revert": "Intraday Mean Reversion",
     "swing_breakout": "Swing Breakout",
 }
+
+
 def _fmt_money(value: Any, digits: int = 2) -> str:
     try:
         return fmt_currency(to_float(value), digits=digits)
@@ -43,6 +45,55 @@ def _fmt_pct(value: Any, digits: int = 2) -> str:
         return fmt_pct(to_float(value), digits=digits)
     except Exception:  # noqa: BLE001
         return "—"
+
+
+def _render_connection_badge(
+    account: Dict[str, Any],
+    status: Dict[str, Any],
+    error: str | None,
+) -> None:
+    if error:
+        st.markdown(
+            "<div style='padding:6px 10px;background:#f2f4f8;border:1px solid #c1c7cd;"
+            "border-radius:8px;display:inline-block;font-weight:500;color:#2d3846'>"
+            "API STATUS UNKNOWN — account data not yet available."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    if not account:
+        st.markdown(
+            "<div style='padding:6px 10px;background:#f2f4f8;border:1px solid #c1c7cd;"
+            "border-radius:8px;display:inline-block;font-weight:500;color:#2d3846'>"
+            "Awaiting broker account data…"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    paper_flag = status.get("paper")
+    if paper_flag is None:
+        paper_flag = account.get("paper")
+    if paper_flag is None:
+        paper_flag = True
+
+    if bool(paper_flag):
+        st.markdown(
+            "<div style='padding:6px 10px;background:#e6fff3;border:1px solid #9de2bf;"
+            "border-radius:8px;display:inline-block;font-weight:600;color:#0f5132'>"
+            "✅ PAPER MODE — connected to Alpaca paper."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            "<div style='padding:6px 10px;background:#ffe7cc;border:1px solid #ffbc6b;"
+            "border-radius:8px;display:inline-block;font-weight:600;color:#7c3d00'>"
+            "⚠️ LIVE MODE — confirm risk controls before trading."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def _trim_orders(raw: Iterable[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
@@ -91,7 +142,9 @@ def _emit_config_warnings(section: str, payload: Dict[str, Any]) -> None:
         st.warning(f"{section} config warning: {text}")
 
 
-def _render_status_header(status: Dict[str, Any], stream: Dict[str, Any], orchestrator: Dict[str, Any]) -> None:
+def _render_status_header(
+    status: Dict[str, Any], stream: Dict[str, Any], orchestrator: Dict[str, Any]
+) -> None:
     cols = st.columns(4)
     cols[0].metric("Profile", status.get("profile", "paper"))
     cols[1].metric("Mode", "Paper" if status.get("paper", True) else "Live")
@@ -161,11 +214,17 @@ def _render_algorithm_controls(
         preset_index = 1
 
     with st.form("algorithm_controls"):
-        preset = st.selectbox("Run Preset", DEFAULT_PRESETS, index=preset_index, key="cc_run_preset")
+        preset = st.selectbox(
+            "Run Preset", DEFAULT_PRESETS, index=preset_index, key="cc_run_preset"
+        )
         start_col, stop_col, reconcile_col = st.columns(3)
         start_clicked = start_col.form_submit_button("Start Trading")
         stop_clicked = stop_col.form_submit_button("Stop")
-        st.caption("Start/stop orchestrator and enable live routing." if not mock_mode else "Mock mode prevents live orders.")
+        st.caption(
+            "Start/stop orchestrator and enable live routing."
+            if not mock_mode
+            else "Mock mode prevents live orders."
+        )
 
         strategy_flags = strategy_cfg.get("strategies") or {}
         toggles: Dict[str, bool] = {}
@@ -254,7 +313,9 @@ def _render_algorithm_controls(
                 "strategies": toggles,
                 "confidence_threshold": confidence,
                 "expected_value_threshold": expected_value,
-                "universe": [sym.strip().upper() for sym in universe_input.split(",") if sym.strip()],
+                "universe": [
+                    sym.strip().upper() for sym in universe_input.split(",") if sym.strip()
+                ],
                 "cooldown_sec": cooldown_value,
                 "pacing_per_minute": pacing_limit,
                 "dry_run": bool(dry_run_toggle),
@@ -485,10 +546,11 @@ def render(_: BrokerAPI, state: AppSessionState, api_client: ApiClient | None = 
     st.markdown('<div data-testid="control-center-root"></div>', unsafe_allow_html=True)
 
     api = api_client or ApiClient()
+    resolved_base = api.base()
+    st.caption(f"Resolved API: {resolved_base}")
+    st.sidebar.caption(f"Resolved API: {resolved_base}")
     if not require_backend(api):
         return
-
-    st.sidebar.caption(f"Resolved API: {api.base_url}")
 
     if "__cc_auto_refresh_last__" not in st.session_state:
         st.session_state["__cc_auto_refresh_last__"] = time.time()
@@ -525,6 +587,12 @@ def render(_: BrokerAPI, state: AppSessionState, api_client: ApiClient | None = 
 
     data = _load_remote_state(api)
 
+    _render_connection_badge(
+        data.get("account", {}),
+        data.get("status", {}),
+        data.get("account_error"),
+    )
+
     update_session_state(last_trace_id=data.get("orchestrator", {}).get("last_tick_ts"))
 
     if data.get("status_error"):
@@ -552,7 +620,9 @@ def render(_: BrokerAPI, state: AppSessionState, api_client: ApiClient | None = 
     _emit_config_warnings("Strategy", data.get("strategy", {}))
     _emit_config_warnings("Risk", data.get("risk", {}))
 
-    _render_status_header(data.get("status", {}), data.get("stream", {}), data.get("orchestrator", {}))
+    _render_status_header(
+        data.get("status", {}), data.get("stream", {}), data.get("orchestrator", {})
+    )
     _render_metrics(data.get("account", {}), data.get("pnl", {}), data.get("exposure", {}))
     _render_algorithm_controls(
         strategy_cfg=data.get("strategy", {}),

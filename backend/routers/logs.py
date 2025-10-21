@@ -5,7 +5,7 @@ from collections import deque
 from pathlib import Path
 from typing import Dict, List
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse, PlainTextResponse
 
 router = APIRouter()
@@ -46,8 +46,8 @@ def recent_logs(limit: int = Query(300, ge=1, le=5000)) -> Dict[str, List[str]]:
         return {"lines": []}
 
 
-@router.get("/download")
-def download_log() -> FileResponse | PlainTextResponse:
+@router.get("/download", response_model=None)
+def download_log() -> Response:
     """Provide the raw log file for download."""
 
     if LOG_PATH.exists():

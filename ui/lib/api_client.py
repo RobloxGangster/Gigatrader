@@ -2,238 +2,227 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-DEFAULT_BASES = ["http://127.0.0.1:8000", "http://localhost:8000"]
-DEFAULT_PREFIXES = ["", "/api", "/v1"]
-COMMON_FEATURE_PATHS = (
-    "/broker/account",
-    "/strategy/config",
-    "/risk/config",
-    "/pnl/summary",
-    "/telemetry/exposure",
-    "/stream/status",
-    "/logs/recent",
-)
+_DEFAULT_BASES = [
+    os.getenv("API_BASE_URL") or "",
+    os.getenv("GIGAT_API_URL") or "",
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+]
+_DEFAULT_PREFIXES = ["", "/api", "/v1"]
 
 
-def _split_base(candidate: str) -> Tuple[str, str]:
-    """Return ``(host, prefix)`` for a candidate base URL."""
+def _norm(value: str | None) -> str:
+    """Return a normalised base string without trailing slashes."""
 
-    value = str(candidate or "").strip()
-    if not value:
-        return "", ""
-    trimmed = value.rstrip("/")
-    for prefix in DEFAULT_PREFIXES[1:]:
-        if trimmed.endswith(prefix):
-            host = trimmed[: -len(prefix)] or ""
-            return host.rstrip("/"), prefix
-    return trimmed, ""
+    return re.sub(r"/+$", "", str(value or "").strip())
 
 
 class ApiClient:
     """HTTP client that discovers the backend base URL and retries on failures."""
 
-    def __init__(self, base: Optional[str] = None, timeout: float = 4.0):
+    def __init__(
+        self,
+        base: Optional[str] = None,
+        bases: Optional[List[str]] = None,
+        timeout: float = 10.0,
+    ) -> None:
         self.timeout = timeout
         self.session = requests.Session()
-        # Avoid leaking proxy settings to localhost calls.
         self.session.trust_env = False
+
+        self._bases = self._build_base_candidates(base=base, bases=bases)
         self._discovered: Optional[Tuple[str, str]] = None
         self._last_err: Optional[str] = None
+        self._reachable = False
 
-        bases: List[Tuple[str, str]] = []
+    # ------------------------------------------------------------------
+    # Base discovery helpers
+    # ------------------------------------------------------------------
+    def _build_base_candidates(
+        self, *, base: Optional[str], bases: Optional[List[str]]
+    ) -> List[str]:
+        candidates: List[str] = []
 
-        # 1) Streamlit secrets (best effort)
-        try:
+        # 1) Streamlit secrets (highest precedence)
+        try:  # pragma: no cover - optional runtime dependency
             import streamlit as st  # type: ignore
 
-            base_from_secrets = st.secrets.get("api", {}).get("base_url")  # type: ignore[attr-defined]
-            if base_from_secrets:
-                bases.append(_split_base(base_from_secrets))
+            secret_base = st.secrets.get("api", {}).get("base_url")  # type: ignore[attr-defined]
+            if secret_base:
+                candidates.append(str(secret_base))
         except Exception:
             pass
 
-        # 2) Environment variables
-        for env_key in ("API_BASE_URL", "GIGAT_API_URL"):
-            base_from_env = os.getenv(env_key)
-            if base_from_env:
-                bases.append(_split_base(base_from_env))
-
-        # 3) Explicit argument
+        # 2) Explicitly supplied bases / base argument
+        if bases:
+            candidates.extend(bases)
         if base:
-            bases.append(_split_base(base))
+            candidates.append(base)
 
-        # 4) Fallback defaults
-        bases.extend(_split_base(candidate) for candidate in DEFAULT_BASES)
+        # 3) Environment variables
+        for env_key in ("API_BASE_URL", "GIGAT_API_URL"):
+            env_value = os.getenv(env_key)
+            if env_value:
+                candidates.append(env_value)
 
-        # Deduplicate while preserving order and drop empty hosts
-        deduped: List[Tuple[str, str]] = []
-        for host, prefix in bases:
-            if not host:
+        # 4) Defaults
+        candidates.extend(_DEFAULT_BASES)
+
+        deduped: List[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            normalised = _norm(candidate)
+            if not normalised or normalised in seen:
                 continue
-            entry = (host.rstrip("/"), prefix.rstrip("/"))
-            if entry not in deduped:
-                deduped.append(entry)
+            seen.add(normalised)
+            deduped.append(normalised)
 
         if not deduped:
-            deduped.append(_split_base(DEFAULT_BASES[0]))
+            deduped.append(_norm("http://127.0.0.1:8000"))
+        return deduped
 
-        self._candidates = deduped
-        self._discover()
+    def base(self) -> str:
+        """Return the resolved base URL, including prefix if known."""
 
-    # ---- Discovery helpers -------------------------------------------------
+        resolved = self.base_url
+        return resolved.rstrip("/") if resolved else resolved
 
     @property
     def base_url(self) -> str:
-        """Return the currently discovered base URL or the first candidate."""
-
+        self._ensure_discovered()
         if self._discovered:
-            host, prefix = self._discovered
-            return f"{host}{prefix}" if prefix else host
-        host, prefix = self._candidates[0]
-        return f"{host}{prefix}" if prefix else host
+            base, prefix = self._discovered
+            return f"{base}{prefix}" if prefix else base
+        return self._bases[0]
 
     @property
     def default_base_url(self) -> str:
-        host, prefix = self._candidates[0]
-        return f"{host}{prefix}" if prefix else host
+        return self._bases[0]
 
     def explain_last_error(self) -> Optional[str]:
         return self._last_err
 
     def is_reachable(self) -> bool:
-        return self._discovered is not None
+        self._ensure_discovered()
+        return self._reachable
 
-    def _discover(self) -> None:
-        self._last_err = None
-        last_error: Optional[str] = None
-
-        for host, preferred_prefix in self._candidates:
-            prefixes: List[str] = []
-            if preferred_prefix in DEFAULT_PREFIXES:
-                prefixes.append(preferred_prefix)
-            for prefix in DEFAULT_PREFIXES:
-                if prefix not in prefixes:
-                    prefixes.append(prefix)
-
-            for prefix in prefixes:
-                url = f"{host}{prefix}/health" if prefix else f"{host}/health"
+    def _first_ok(self, path: str) -> Optional[Tuple[str, str, requests.Response]]:
+        errors: List[str] = []
+        for base in self._bases:
+            for prefix in _DEFAULT_PREFIXES:
+                url = f"{base}{prefix}{path}"
                 try:
                     response = self.session.get(url, timeout=self.timeout)
-                    if response.ok and "application/json" in response.headers.get("content-type", ""):
-                        payload = response.json()
-                        if isinstance(payload, dict) and payload.get("ok") is True:
-                            self._discovered = (host, prefix.rstrip("/"))
-                            self._last_err = None
-                            return
-                except Exception as exc:  # noqa: BLE001 - defensive network guard
-                    last_error = f"{url}: {type(exc).__name__}: {exc}"
+                except Exception as exc:  # noqa: BLE001 - defensive guard
+                    errors.append(f"{url}: {type(exc).__name__}: {exc}")
                     continue
+                if response.ok:
+                    self._reachable = True
+                    return (_norm(base), _norm(prefix), response)
+                errors.append(f"{url}: HTTP {response.status_code}")
+        if errors:
+            self._last_err = errors[-1]
+        return None
 
-        # OpenAPI-based discovery fallback
-        for host, preferred_prefix in self._candidates:
-            openapi_paths: List[str] = []
-            if preferred_prefix:
-                openapi_paths.append(f"{preferred_prefix}/openapi.json")
-            for prefix in DEFAULT_PREFIXES:
-                candidate = f"{prefix}/openapi.json" if prefix else "/openapi.json"
-                if candidate not in openapi_paths:
-                    openapi_paths.append(candidate)
-
-            for path in openapi_paths:
-                url = f"{host}{path}" if path.startswith("/") else f"{host}/{path}"
-                try:
-                    response = self.session.get(url, timeout=self.timeout)
-                except Exception as exc:  # noqa: BLE001 - defensive network guard
-                    last_error = f"{url}: {type(exc).__name__}: {exc}"
-                    continue
-
-                if not response.ok or "application/json" not in response.headers.get("content-type", ""):
-                    last_error = f"{url}: HTTP {response.status_code}"
-                    continue
-
-                try:
-                    spec = response.json()
-                except Exception as exc:  # noqa: BLE001 - JSON parsing guard
-                    last_error = f"{url}: {type(exc).__name__}: {exc}"
-                    continue
-
-                paths = spec.get("paths", {}) if isinstance(spec, dict) else {}
-                prefix = self._infer_prefix_from_paths(paths)
-                if prefix is not None:
-                    self._discovered = (host, prefix.rstrip("/"))
-                    self._last_err = None
-                    return
-
-        self._discovered = None
-        if last_error:
-            self._last_err = last_error
-        elif not self._last_err:
+    def _ensure_discovered(self) -> None:
+        if self._discovered is not None:
+            return
+        probe = self._first_ok("/health")
+        if probe:
+            base, prefix, _ = probe
+            self._discovered = (base, prefix)
+            self._last_err = None
+            return
+        self._reachable = False
+        if self._bases:
+            self._discovered = (_norm(self._bases[0]), "")
+        if not self._last_err:
             self._last_err = "No healthy backend discovered"
 
-    def _infer_prefix_from_paths(self, paths: Dict[str, Any]) -> Optional[str]:
-        if not isinstance(paths, dict):
-            return None
-
-        candidates: List[str] = []
-        for full_path in paths.keys():
-            if not isinstance(full_path, str):
-                continue
-            for feature_path in COMMON_FEATURE_PATHS:
-                if full_path.endswith(feature_path):
-                    prefix = full_path[: -len(feature_path)]
-                    candidates.append(prefix)
-
-        for preferred in ("", "/api", "/v1"):
-            if preferred in candidates:
-                return preferred
-
-        return candidates[0] if candidates else None
-
-    # ---- Core HTTP helpers -------------------------------------------------
-
-    def get(self, path: str):
-        return self._request("GET", path)
-
-    def post(self, path: str, json: Optional[Dict[str, Any]] = None):
-        return self._request("POST", path, json=json)
-
-    def _request(self, method: str, path: str, **kwargs):
+    # ------------------------------------------------------------------
+    # Core HTTP helpers
+    # ------------------------------------------------------------------
+    def request(self, method: str, path: str, **kwargs) -> requests.Response:
         if not path.startswith("/"):
             path = "/" + path.lstrip("/")
 
-        if self._discovered is None:
-            self._discover()
-            if self._discovered is None:
-                raise RuntimeError(f"Backend unreachable: {self._last_err}")
+        self._ensure_discovered()
+        base, prefix = self._discovered or (_norm(self._bases[0]), "")
+        url = f"{base}{prefix}{path}"
 
-        base, prefix = self._discovered
-        url = f"{base}{prefix}{path}" if prefix else f"{base}{path}"
+        timeout = kwargs.pop("timeout", self.timeout)
         try:
-            response = self.session.request(method, url, timeout=self.timeout, **kwargs)
-            if response.status_code in (404, 405, 421, 307, 308):
-                self._discover()
-                if self._discovered is None:
-                    raise RuntimeError(f"Backend lost: {self._last_err}")
-                base, prefix = self._discovered
-                url = f"{base}{prefix}{path}" if prefix else f"{base}{path}"
-                response = self.session.request(method, url, timeout=self.timeout, **kwargs)
-
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "")
-            if "application/json" in content_type:
-                return response.json()
-            return response.content
-        except Exception as exc:  # noqa: BLE001 - surface error details
+            response = self.session.request(method, url, timeout=timeout, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - propagate with context
             self._last_err = f"{url}: {type(exc).__name__}: {exc}"
             raise
 
-    # ---- Convenience endpoints --------------------------------------------
+        if response.status_code == 404:
+            alternate = self._first_ok(path)
+            if alternate:
+                base2, prefix2, response2 = alternate
+                self._discovered = (base2, prefix2)
+                self._reachable = True
+                self._last_err = None
+                return response2
 
+        try:
+            response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 - surface HTTP errors
+            self._last_err = f"{url}: {type(exc).__name__}: {exc}"
+            raise
+
+        self._reachable = True
+        self._last_err = None
+        return response
+
+    def _decode(self, response: requests.Response) -> Any:
+        content_type = response.headers.get("content-type", "")
+        if "json" in content_type:
+            try:
+                return response.json()
+            except ValueError:
+                return json.loads(response.text or "{}")
+        return response.content
+
+    def _request(self, method: str, path: str, **kwargs) -> Any:
+        response = self.request(method, path, **kwargs)
+        payload = self._decode(response)
+        return payload
+
+    def get(self, path: str, **kwargs) -> Any:
+        return self._request("GET", path, **kwargs)
+
+    def post(self, path: str, **kwargs) -> Any:
+        return self._request("POST", path, **kwargs)
+
+    def get_json(self, path: str, **kwargs) -> Dict[str, Any]:
+        response = self.request("GET", path, **kwargs)
+        payload = self._decode(response)
+        if isinstance(payload, (bytes, bytearray)):
+            try:
+                return json.loads(payload.decode("utf-8"))
+            except Exception:
+                return {}
+        if isinstance(payload, str):
+            try:
+                return json.loads(payload)
+            except Exception:
+                return {}
+        if isinstance(payload, dict):
+            return payload
+        return {}
+
+    # ------------------------------------------------------------------
+    # Convenience endpoints
+    # ------------------------------------------------------------------
     def health(self) -> Dict[str, Any]:
         data = self.get("/health")
         return data if isinstance(data, dict) else {"ok": True}
@@ -260,7 +249,9 @@ class ApiClient:
         data = self.get("/orchestrator/status")
         return data if isinstance(data, dict) else {}
 
-    def orchestrator_start(self, preset: Optional[str] = None, mode: Optional[str] = None) -> Dict[str, Any]:
+    def orchestrator_start(
+        self, preset: Optional[str] = None, mode: Optional[str] = None
+    ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {}
         if preset:
             payload["preset"] = preset
@@ -373,10 +364,11 @@ def discover_base_url() -> str:
             return _DISCOVERY_CACHE
 
     client = ApiClient()
-    if client.is_reachable():
-        _DISCOVERY_CACHE = client.base_url.rstrip("/")
-    else:
-        _DISCOVERY_CACHE = client.default_base_url.rstrip("/")
+    try:
+        base = client.base()
+    except Exception:
+        base = client.default_base_url
+    _DISCOVERY_CACHE = base.rstrip("/")
     return _DISCOVERY_CACHE
 
 

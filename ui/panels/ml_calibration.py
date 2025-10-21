@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Any, List, Tuple
 
 import pandas as pd
-import requests
 import streamlit as st
+
+from ui.lib.api_client import ApiClient
 
 try:  # pragma: no cover - optional dependency guard
     import plotly.graph_objects as go  # type: ignore
@@ -19,6 +20,18 @@ def _parse_symbols(raw: str) -> List[str]:
         if chunk:
             values.append(chunk)
     return values
+
+
+def _resolve_client(
+    maybe_client: Any,
+    *,
+    api_base: str | None = None,
+    api_client: ApiClient | None = None,
+) -> ApiClient:
+    if isinstance(maybe_client, ApiClient):
+        return maybe_client
+    bases = [api_base] if api_base else None
+    return api_client or ApiClient(bases=bases)
 
 
 def _build_reliability_chart(payload: dict):
@@ -66,9 +79,17 @@ def _build_reliability_chart(payload: dict):
     return fig
 
 
-def render(api_base: str = "http://127.0.0.1:8000") -> None:
+def render(
+    api: Any | None = None,
+    *_: Any,
+    api_base: str | None = None,
+    api_client: ApiClient | None = None,
+) -> None:
     st.header("ML Calibration")
     st.caption("Visualise reliability for a registered production model.")
+
+    client = _resolve_client(api, api_base=api_base, api_client=api_client)
+    st.caption(f"Resolved API: {client.base()}")
 
     model_name = st.text_input("Model name", value="toy_api")
     alias = st.text_input("Alias", value="production")
@@ -83,7 +104,7 @@ def render(api_base: str = "http://127.0.0.1:8000") -> None:
     symbols_raw = st.text_input("Symbols (comma separated)", value="AAPL,MSFT")
 
     if st.button("Load calibration"):
-        params: List[tuple[str, str]] = [
+        params: List[Tuple[str, str]] = [
             ("model", model_name),
             ("alias", alias),
             ("start", start),
@@ -96,16 +117,20 @@ def render(api_base: str = "http://127.0.0.1:8000") -> None:
 
         try:
             with st.spinner("Fetching calibration data..."):
-                response = requests.get(f"{api_base.rstrip('/')}/ml/calibration", params=params, timeout=10)
+                response = client.request(
+                    "GET",
+                    "/ml/calibration",
+                    params=params,
+                )
         except Exception as exc:  # pragma: no cover - UI safety
             st.error(f"Request failed: {exc}")
             return
 
-        if response.status_code != 200:
-            st.error(f"{response.status_code}: {response.text}")
+        try:
+            payload = response.json()
+        except Exception:
+            st.error(f"Unexpected response: {response.text}")
             return
-
-        payload = response.json()
 
         st.success("Calibration data loaded")
         st.metric("Brier score", f"{payload.get('brier_score', float('nan')):.4f}")
