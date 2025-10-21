@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import time
 from typing import Any, Dict, Iterable, Mapping, Optional
 
@@ -55,26 +56,37 @@ class AlpacaAdapter:
         *,
         timeout: float = 10.0,
         session: Optional[requests.Session] = None,
+        max_attempts: int = 4,
+        backoff_base: float = 0.5,
+        backoff_cap: float = 8.0,
     ) -> None:
-        base_url = (
-            base_url
-            or os.getenv("ALPACA_BASE_URL")
-            or os.getenv("APCA_API_BASE_URL")
-            or "https://paper-api.alpaca.markets"
-        )
+        paper_base = os.getenv("ALPACA_PAPER_BASE", "https://paper-api.alpaca.markets")
+        live_base = os.getenv("ALPACA_LIVE_BASE", "https://api.alpaca.markets")
+        env_base = os.getenv("ALPACA_BASE_URL") or os.getenv("APCA_API_BASE_URL")
+        resolved_base = base_url or env_base or paper_base
+        resolved_base = resolved_base.rstrip("/") or paper_base.rstrip("/")
+
         key_id = (
             key_id
+            or os.getenv("ALPACA_API_KEY")
             or os.getenv("ALPACA_KEY_ID")
             or os.getenv("ALPACA_API_KEY_ID")
             or os.getenv("APCA_API_KEY_ID")
         )
         secret_key = (
             secret_key
+            or os.getenv("ALPACA_API_SECRET")
             or os.getenv("ALPACA_SECRET_KEY")
             or os.getenv("ALPACA_API_SECRET_KEY")
             or os.getenv("APCA_API_SECRET_KEY")
         )
-        self.base = (base_url or "https://paper-api.alpaca.markets").rstrip("/")
+
+        # Keep the live endpoint when explicitly requested, otherwise default to paper.
+        resolved_mode = os.getenv("BROKER_MODE", "paper").strip().lower()
+        if resolved_mode == "live" and base_url is None and env_base is None:
+            resolved_base = live_base.rstrip("/")
+
+        self.base = resolved_base
         self.timeout = timeout
         self.sess = session or requests.Session()
         self.sess.headers.update(
@@ -88,6 +100,9 @@ class AlpacaAdapter:
         self._key_id_tail = (key_id or "")[-4:] or None
         self._key_id = key_id or ""
         self._secret_key = secret_key or ""
+        self._max_attempts = max(1, int(max_attempts))
+        self._backoff_base = max(0.1, float(backoff_base))
+        self._backoff_cap = max(self._backoff_base, float(backoff_cap))
 
     # ------------------------------------------------------------------
     # Public Alpaca REST helpers
@@ -113,7 +128,11 @@ class AlpacaAdapter:
     def place_order(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         if "client_order_id" not in payload:
             raise ValueError("client_order_id is required")
-        return self._post("/v2/orders", json=dict(payload))
+        return self._post(
+            "/v2/orders",
+            json=dict(payload),
+            idempotency_key=str(payload["client_order_id"]),
+        )
 
     def cancel_order(self, order_id: str) -> bool:
         self._delete(f"/v2/orders/{order_id}")
@@ -160,20 +179,51 @@ class AlpacaAdapter:
     # ------------------------------------------------------------------
     # Internal HTTP helpers with audit logging
     # ------------------------------------------------------------------
-    def _get(self, path: str, **kwargs) -> Any:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: Optional[Mapping[str, str]] = None,
+        retry: bool = True,
+        **kwargs: Any,
+    ) -> requests.Response:
         url = f"{self.base}{path}"
-        response = self.sess.get(url, timeout=self.timeout, **kwargs)
-        self._audit("GET", url, kwargs, response)
+        attempt = 0
+        backoff = self._backoff_base
+        merged_headers = dict(headers or {})
+        while True:
+            response = self.sess.request(
+                method,
+                url,
+                timeout=self.timeout,
+                headers=merged_headers or None,
+                **kwargs,
+            )
+            self._audit(method, url, kwargs, response)
+            if not retry:
+                return response
+            if response.status_code in {429, 500, 502, 503, 504} and attempt < self._max_attempts - 1:
+                sleep_for = backoff + random.uniform(0, backoff)
+                time.sleep(min(sleep_for, self._backoff_cap))
+                backoff = min(backoff * 2, self._backoff_cap)
+                attempt += 1
+                continue
+            return response
+
+    def _get(self, path: str, **kwargs) -> Any:
+        response = self._request("GET", path, **kwargs)
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:  # pragma: no cover - network failure path
             raise _map_http_error(response, exc) from exc
         return response.json()
 
-    def _post(self, path: str, **kwargs) -> Any:
-        url = f"{self.base}{path}"
-        response = self.sess.post(url, timeout=self.timeout, **kwargs)
-        self._audit("POST", url, kwargs, response)
+    def _post(
+        self, path: str, *, idempotency_key: str | None = None, **kwargs: Any
+    ) -> Any:
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+        response = self._request("POST", path, headers=headers, **kwargs)
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:  # pragma: no cover - network failure path
@@ -181,9 +231,7 @@ class AlpacaAdapter:
         return response.json()
 
     def _delete(self, path: str, **kwargs) -> Any:
-        url = f"{self.base}{path}"
-        response = self.sess.delete(url, timeout=self.timeout, **kwargs)
-        self._audit("DELETE", url, kwargs, response)
+        response = self._request("DELETE", path, **kwargs)
         if response.status_code not in (200, 204):
             try:
                 response.raise_for_status()

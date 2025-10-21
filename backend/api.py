@@ -31,11 +31,19 @@ from core.settings import get_settings
 
 load_dotenv()
 
+settings = get_settings()
+
 app = FastAPI(title="Gigatrader API")
+
+ui_origins = {
+    f"http://127.0.0.1:{settings.ui_port}",
+    f"http://localhost:{settings.ui_port}",
+}
+cors_origins = sorted(ui_origins | {settings.api_base})
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:8501", "http://localhost:8501"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -91,11 +99,17 @@ def health() -> Dict[str, Any]:
     broker_status = {
         "source": "mock" if flags.mock_mode else "alpaca",
         "paper": flags.paper_trading,
+        "mode": flags.broker_mode,
+        "base_url": flags.alpaca_base_url,
     }
 
     return {
         "ok": True,
-        "mode": {"mock_mode": flags.mock_mode, "paper": flags.paper_trading},
+        "mode": {
+            "mock_mode": flags.mock_mode,
+            "paper": flags.paper_trading,
+            "broker_mode": flags.broker_mode,
+        },
         "orchestrator": orchestrator_status,
         "stream": stream_status,
         "broker": broker_status,
@@ -164,18 +178,19 @@ def _format_ts(ts: Optional[float]) -> Optional[str]:
 
 @app.get("/status")
 def status():
-    settings = get_settings()
     snapshot = get_orchestrator().status()
     kill_switch = get_kill_switch()
     return {
         "running": snapshot.get("running"),
         "profile": snapshot.get("profile"),
-        "paper": os.getenv("TRADING_MODE", "paper") == "paper",
+        "paper": settings.runtime.broker_mode != "live",
         "broker": settings.runtime.broker,
+        "broker_mode": settings.runtime.broker_mode,
         "dry_run": settings.runtime.dry_run,
         "halted": kill_switch.engaged_sync(),
         "last_run_id": snapshot.get("last_run_id"),
         "last_tick_ts": snapshot.get("last_tick_ts"),
+        "ok": True,
     }
 
 

@@ -90,9 +90,28 @@ def _maybe_update_positions(request: Request, positions: List[Dict[str, Any]]) -
         logger.debug("execution state positions update failed: %s", exc)
 
 
+@router.get("/health", summary="Reconcile service health")
+def reconcile_health() -> Dict[str, bool]:
+    return {"ok": True}
+
+
 @router.get("/status", summary="Reconcile service status")
 def reconcile_status() -> Dict[str, bool]:
-    return {"ok": True}
+    return reconcile_health()
+
+
+@router.post("/run", summary="Trigger a reconciliation pass")
+def reconcile_run(request: Request) -> Dict[str, Any]:
+    try:
+        snapshot = pull_all_if_live()
+    except Exception as exc:  # pragma: no cover - network path
+        raise HTTPException(status_code=502, detail=f"reconcile failed: {exc}") from exc
+
+    orders = snapshot.get("orders", []) if isinstance(snapshot, dict) else []
+    positions = snapshot.get("positions", []) if isinstance(snapshot, dict) else []
+    _maybe_update_orders(request, orders)
+    _maybe_update_positions(request, positions)
+    return {"ok": True, "snapshot": snapshot}
 
 
 @router.post("/sync")
@@ -131,6 +150,11 @@ def audit_tail(
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("audit tail read failed: %s", exc)
         return []
+
+
+@router.get("/audit_tail")
+def audit_tail_compat(request: Request, n: int = Query(50, ge=0, le=500)):
+    return audit_tail(request, n)
 
 
 @router.post("/cancel-all")

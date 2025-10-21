@@ -59,9 +59,12 @@ class StubDataClient:  # pragma: no cover - placeholder
 
 FLAGS = RuntimeFlags(
     mock_mode=False,
+    broker_mode="paper",
     paper_trading=True,
     auto_restart=True,
     api_base_url="http://localhost",
+    api_port=8000,
+    ui_port=8501,
     alpaca_base_url="https://paper-api.alpaca.markets",
     alpaca_key=None,
     alpaca_secret=None,
