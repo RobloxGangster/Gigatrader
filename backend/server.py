@@ -43,6 +43,7 @@ from app.ml.models import load_from_registry, DEFAULT_MODEL_NAME
 from app.ml.trainer import latest_feature_row, train_intraday_classifier
 from app.ml.features import FEATURE_LIST
 from core.config import MOCK_MODE, TradeLoopConfig, get_signal_defaults, get_audit_config
+from core.runtime_flags import get_runtime_flags
 from app.execution.alpaca_adapter import AlpacaAdapter, AlpacaOrderError, AlpacaUnauthorized
 
 from app.execution.router import ExecIntent, OrderRouter
@@ -758,16 +759,24 @@ def start_background_runner(profile: str = "paper"):
 # ---------- Health & status ----------
 @app.get("/health")
 def health():
+    flags = get_runtime_flags()
     breaker_info = breakers.breaker_state()
     kill = _kill_switch_on()
-    ok = bool(not kill and not breaker_info.get("current"))
-    status = "ok" if ok else "degraded"
+    orchestrator_status = _trade_orchestrator.status()
+    broker_status = {
+        "source": "mock" if flags.mock_mode else "alpaca",
+        "paper": flags.paper_trading,
+    }
+    stream_status = {"status": "unknown"}
+    ok = not kill and not breaker_info.get("current")
     return {
-        "status": status,
-        "ok": ok,
+        "ok": bool(ok),
+        "mode": {"mock_mode": flags.mock_mode, "paper": flags.paper_trading},
+        "orchestrator": orchestrator_status,
+        "stream": stream_status,
+        "broker": broker_status,
         "kill_switch": kill,
         "breakers": breaker_info,
-        "mock_mode": MOCK_MODE,
     }
 
 @app.get("/status", response_model=StatusResp)

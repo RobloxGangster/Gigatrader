@@ -17,7 +17,8 @@ import threading
 from app.execution.router import ExecIntent, OrderRouter
 from app.risk import Proposal, RiskManager
 from app.signals.signal_engine import SignalBundle, SignalCandidate
-from core.config import MOCK_MODE, TradeLoopConfig
+from core.config import TradeLoopConfig
+from core.runtime_flags import RuntimeFlags, get_runtime_flags
 
 log = logging.getLogger(__name__)
 
@@ -223,6 +224,7 @@ class TradeOrchestrator:
         risk_manager: RiskManager,
         router: OrderRouter,
         config: TradeLoopConfig | None = None,
+        flags: RuntimeFlags | None = None,
     ) -> None:
         self.data_client = data_client
         self.signal_generator = signal_generator
@@ -231,6 +233,7 @@ class TradeOrchestrator:
         self.router = router
         self._base_config = config or TradeLoopConfig()
         self._config = self._base_config
+        self._flags = flags or get_runtime_flags()
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._state_lock = asyncio.Lock()
@@ -242,6 +245,8 @@ class TradeOrchestrator:
         self._last_universe: list[str] = list(self._config.universe)
         self._broker_disabled = False
         self._mock_routing = self._infer_mock_mode()
+        self._last_tick: float | None = None
+        self._last_backoff: float | None = None
 
     async def start(self, overrides: Mapping[str, Any] | None = None) -> TradeLoopConfig:
         """Start the trading loop, applying optional config overrides."""
@@ -283,6 +288,9 @@ class TradeOrchestrator:
         last_run_iso: str | None = None
         if self._last_run is not None:
             last_run_iso = datetime.fromtimestamp(self._last_run, timezone.utc).isoformat()
+        last_tick_iso: str | None = None
+        if self._last_tick is not None:
+            last_tick_iso = datetime.fromtimestamp(self._last_tick, timezone.utc).isoformat()
         return {
             "running": running,
             "profile": self._config.profile,
@@ -292,12 +300,18 @@ class TradeOrchestrator:
             "min_conf": float(self._config.min_conf),
             "min_ev": float(self._config.min_ev),
             "metrics": metrics,
+            "mode": {
+                "mock_mode": bool(self.router.mock_mode),
+                "paper": bool(self._flags.paper_trading),
+            },
             "broker": {
                 "mock_mode": self._mock_routing,
                 "disabled": self._broker_disabled,
             },
             "last_error": self._last_error,
             "last_run": last_run_iso,
+            "last_tick": last_tick_iso,
+            "backoff": self._last_backoff,
         }
 
     def resolved_config(self) -> dict[str, Any]:
@@ -307,10 +321,32 @@ class TradeOrchestrator:
         return list(self._last_decisions)
 
     async def _run_loop(self) -> None:
-        log.info("trade loop started", extra={"interval": self._config.interval_sec})
+        log.info(
+            "trade loop started",
+            extra={
+                "interval": self._config.interval_sec,
+                "mock_mode": self.router.mock_mode,
+            },
+        )
+        backoff = 1.0
         try:
             while not self._stop_event.is_set():
-                await self._cycle_once()
+                try:
+                    await self._cycle_once()
+                    self._last_backoff = None
+                    backoff = 1.0
+                except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
+                    raise
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    self._last_error = str(exc)
+                    log.exception("trade loop iteration failed", extra={"error": str(exc)})
+                    if not self._flags.auto_restart:
+                        break
+                    self._last_backoff = backoff
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 30.0)
+                    continue
+
                 wait_time = max(float(self._config.interval_sec), 0.0)
                 if wait_time <= 0:
                     await asyncio.sleep(0)
@@ -319,11 +355,6 @@ class TradeOrchestrator:
                     await asyncio.wait_for(self._stop_event.wait(), timeout=wait_time)
                 except asyncio.TimeoutError:
                     continue
-        except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
-            raise
-        except Exception as exc:  # pragma: no cover - defensive guard
-            log.exception("trade loop crashed", extra={"error": str(exc)})
-            self._last_error = str(exc)
         finally:
             log.info("trade loop stopped")
 
@@ -351,13 +382,14 @@ class TradeOrchestrator:
             )
             self._last_error = str(exc)
             await asyncio.sleep(0)
-            return
+            raise
 
         candidates = list(bundle.candidates)
         with self._metrics_lock:
             self._metrics["queued"] += len(candidates)
         self._last_universe = list(config.universe)
         self._last_run = started
+        self._last_tick = started
 
         ml_probs = self._probabilities([c.symbol for c in candidates])
 
@@ -395,6 +427,7 @@ class TradeOrchestrator:
         if not scored:
             for record in skipped:
                 self._record_decision(record)
+            self._last_error = None
             return
 
         scored.sort(key=lambda item: _score_tuple(item[3]))
@@ -419,6 +452,8 @@ class TradeOrchestrator:
 
         for candidate, expected_value, direction_prob, _ in selected:
             await self._execute_candidate(candidate, expected_value, direction_prob)
+
+        self._last_error = None
 
     async def _execute_candidate(
         self,
@@ -867,4 +902,4 @@ class TradeOrchestrator:
                 configured = bool(broker.is_configured())
             except Exception:  # noqa: BLE001
                 configured = False
-        return bool(MOCK_MODE or not configured or self._broker_disabled)
+        return bool(self.router.mock_mode or not configured or self._broker_disabled)

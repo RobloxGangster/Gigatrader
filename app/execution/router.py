@@ -17,6 +17,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence
 from app.risk import Proposal, RiskManager
 from app.state import ExecutionState
 from core.config import get_order_defaults
+from core.runtime_flags import get_runtime_flags
 
 from app.execution.audit import AuditLog
 from app.oms.store import OmsStore, TERMINAL_STATES
@@ -24,6 +25,7 @@ from services.policy.gates import should_trade
 from services.policy.sizing import size_position
 from services.telemetry import metrics
 
+from .adapters import make_broker_adapter
 from .alpaca_adapter import AlpacaAdapter, AlpacaOrderError, AlpacaUnauthorized
 
 log = logging.getLogger("router")
@@ -92,7 +94,7 @@ class OrderRouter:
         store: OmsStore,
         audit: AuditLog,
         metrics: Optional[Any] = None,
-        mock_mode: bool = False,
+        mock_mode: bool | None = None,
         adapter: Optional[AlpacaAdapter] = None,
     ) -> None:
         self.risk = risk
@@ -100,8 +102,11 @@ class OrderRouter:
         self.store = store
         self.audit = audit
         self.metrics = metrics
-        self.mock_mode = mock_mode
-        self.broker = adapter or AlpacaAdapter()
+        self._flags = get_runtime_flags()
+        if mock_mode is None:
+            mock_mode = self._flags.mock_mode
+        self.mock_mode = bool(mock_mode)
+        self.broker = adapter or make_broker_adapter(self._flags)
 
     # ------------------------------------------------------------------
     def _metrics_inc(self, key: str, value: int = 1) -> None:
