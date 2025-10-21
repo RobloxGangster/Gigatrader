@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from app.execution.alpaca_adapter import AlpacaAdapter, AlpacaUnauthorized
 from app.market.stream_manager import StreamManager
@@ -15,6 +16,34 @@ from core.broker_config import is_mock
 from core.kill_switch import KillSwitch
 
 from backend.services import reconcile
+
+
+logger = logging.getLogger(__name__)
+
+try:
+    from app.orchestrator.config import (
+        try_load_orchestrator_config as _try_load_orchestrator_config,
+        try_load_risk_config as _try_load_risk_config,
+        try_load_strategy_config as _try_load_strategy_config,
+    )
+except RuntimeError as exc:  # pragma: no cover - import guard
+    YAML_IMPORT_ERROR = str(exc)
+
+    def try_load_orchestrator_config() -> Dict[str, Any]:
+        raise RuntimeError(YAML_IMPORT_ERROR)
+
+    def try_load_strategy_config() -> Dict[str, Any]:
+        raise RuntimeError(YAML_IMPORT_ERROR)
+
+    def try_load_risk_config() -> Dict[str, Any]:
+        raise RuntimeError(YAML_IMPORT_ERROR)
+
+    logger.error("%s", YAML_IMPORT_ERROR)
+else:  # pragma: no cover - executed in production
+    YAML_IMPORT_ERROR = None
+    try_load_orchestrator_config = _try_load_orchestrator_config
+    try_load_strategy_config = _try_load_strategy_config
+    try_load_risk_config = _try_load_risk_config
 
 
 class BrokerService:
@@ -83,19 +112,81 @@ class StrategyConfigState:
     pacing_per_minute: int = 12
     dry_run: bool = False
 
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any] | None) -> "StrategyConfigState":
+        if not data:
+            return cls()
+        base = cls()
+        payload = asdict(base)
+
+        if "preset" in data and isinstance(data["preset"], str):
+            payload["preset"] = data["preset"]
+        if "enabled" in data:
+            payload["enabled"] = bool(data["enabled"])
+
+        strategies = data.get("strategies")
+        if isinstance(strategies, Mapping):
+            payload["strategies"] = {str(k): bool(v) for k, v in strategies.items()}
+
+        if "confidence_threshold" in data:
+            try:
+                payload["confidence_threshold"] = float(data["confidence_threshold"])
+            except Exception:
+                pass
+        if "expected_value_threshold" in data:
+            try:
+                payload["expected_value_threshold"] = float(data["expected_value_threshold"])
+            except Exception:
+                pass
+
+        universe = data.get("universe")
+        if isinstance(universe, str):
+            payload["universe"] = [sym.strip().upper() for sym in universe.split(",") if sym.strip()]
+        elif isinstance(universe, Mapping):
+            payload["universe"] = [str(sym).upper() for sym in universe.values() if str(sym).strip()]
+        elif isinstance(universe, (list, tuple, set)):
+            payload["universe"] = [str(sym).upper() for sym in universe if str(sym).strip()]
+
+        if "cooldown_sec" in data:
+            try:
+                payload["cooldown_sec"] = int(float(data["cooldown_sec"]))
+            except Exception:
+                pass
+        if "pacing_per_minute" in data:
+            try:
+                payload["pacing_per_minute"] = int(float(data["pacing_per_minute"]))
+            except Exception:
+                pass
+        if "dry_run" in data:
+            payload["dry_run"] = bool(data["dry_run"])
+
+        return cls(**payload)
+
 
 class StrategyRegistryService:
     """In-memory strategy registry mirroring the legacy API behaviour."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._config = StrategyConfigState()
+        self._warnings: List[str] = []
+        if YAML_IMPORT_ERROR:
+            self._warnings.append(YAML_IMPORT_ERROR)
+        config_payload: Dict[str, Any] = {}
+        try:
+            config_payload = try_load_strategy_config()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.exception("Strategy config load failed: %s", exc)
+            self._warnings.append(f"Strategy config unavailable: {exc}")
+            config_payload = {}
+        self._config = StrategyConfigState.from_mapping(config_payload)
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
             payload = asdict(self._config)
         payload.setdefault("preset", self._config.preset)
         payload["mock_mode"] = is_mock()
+        if self._warnings:
+            payload["warnings"] = list(self._warnings)
         return payload
 
     def apply_patch(self, patch: Dict[str, Any]) -> Dict[str, Any]:
@@ -153,20 +244,56 @@ class RiskConfigState:
     bracket_enabled: bool = True
     cooldown_sec: int = 0
 
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any] | None) -> "RiskConfigState":
+        if not data:
+            return cls()
+        base = cls()
+        payload = asdict(base)
+
+        def _assign(key: str, caster) -> None:
+            if key not in data:
+                return
+            try:
+                payload[key] = caster(data[key])
+            except Exception:
+                pass
+
+        _assign("daily_loss_limit", float)
+        _assign("max_positions", lambda v: int(float(v)))
+        _assign("per_symbol_notional", float)
+        _assign("portfolio_notional", float)
+        _assign("bracket_enabled", bool)
+        _assign("cooldown_sec", lambda v: int(float(v)))
+
+        return cls(**payload)
+
 
 class RiskConfigService:
     """Mutable risk configuration exposed via the REST API."""
 
     def __init__(self, kill_switch: KillSwitch) -> None:
         self._lock = threading.Lock()
-        self._config = RiskConfigState()
         self._kill_switch = kill_switch
+        self._warnings: List[str] = []
+        if YAML_IMPORT_ERROR:
+            self._warnings.append(YAML_IMPORT_ERROR)
+        config_payload: Dict[str, Any] = {}
+        try:
+            config_payload = try_load_risk_config()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.exception("Risk config load failed: %s", exc)
+            self._warnings.append(f"Risk config unavailable: {exc}")
+            config_payload = {}
+        self._config = RiskConfigState.from_mapping(config_payload)
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
             payload = asdict(self._config)
         payload["kill_switch"] = self._kill_switch.engaged_sync()
         payload["mock_mode"] = is_mock()
+        if self._warnings:
+            payload["warnings"] = list(self._warnings)
         return payload
 
     def apply_patch(self, patch: Dict[str, Any]) -> Dict[str, Any]:
@@ -244,13 +371,28 @@ class OrchestratorService:
         self._lock = threading.Lock()
         self._runner_thread: Optional[threading.Thread] = None
         self._running = False
-        self._profile = "paper"
+        self._warnings: List[str] = []
+        if YAML_IMPORT_ERROR:
+            self._warnings.append(YAML_IMPORT_ERROR)
+        config_payload: Dict[str, Any] = {}
+        try:
+            config_payload = try_load_orchestrator_config()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.exception("Orchestrator config load failed: %s", exc)
+            self._warnings.append(f"Orchestrator config unavailable: {exc}")
+            config_payload = {}
+        profile = str(config_payload.get("profile") or "paper")
+        self._profile = profile
         self._last_run_id: Optional[str] = None
         self._meta: Dict[str, Any] = {
             "last_error": None,
             "last_tick_ts": None,
             "routed_orders_24h": 0,
+            "last_start": None,
         }
+        if config_payload.get("last_start"):
+            self._meta["last_start"] = config_payload.get("last_start")
+        self._meta["warnings"] = list(self._warnings)
 
     def _format_ts(self, ts: Optional[float]) -> Optional[str]:
         if not ts:
@@ -294,7 +436,9 @@ class OrchestratorService:
             self._running = True
             self._meta["last_error"] = None
             self._last_run_id = f"{mode}-{int(time.time())}"
-            self._meta["last_tick_ts"] = time.time()
+            now = time.time()
+            self._meta["last_tick_ts"] = now
+            self._meta["last_start"] = self._format_ts(now)
             thread = threading.Thread(target=self._run_runner, daemon=True)
             self._runner_thread = thread
             thread.start()
@@ -324,6 +468,8 @@ class OrchestratorService:
                 "routed_orders_24h": int(self._meta.get("routed_orders_24h") or 0),
                 "kill_switch": self._kill_switch.engaged_sync(),
                 "last_run_id": self._last_run_id,
+                "last_start": self._meta.get("last_start"),
+                "warnings": list(self._warnings),
             }
         return snapshot
 

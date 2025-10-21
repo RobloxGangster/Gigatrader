@@ -34,3 +34,4 @@ pytest-playwright>=0.7.1
 httpx
 requests
 python-dotenv
+pyyaml>=6.0.1
