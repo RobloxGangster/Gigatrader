@@ -193,13 +193,24 @@ class AlpacaAdapter:
         backoff = self._backoff_base
         merged_headers = dict(headers or {})
         while True:
-            response = self.sess.request(
-                method,
-                url,
-                timeout=self.timeout,
-                headers=merged_headers or None,
-                **kwargs,
-            )
+            request_callable = getattr(self.sess, "request", None)
+            if callable(request_callable):
+                response = request_callable(
+                    method,
+                    url,
+                    timeout=self.timeout,
+                    headers=merged_headers or None,
+                    **kwargs,
+                )
+            else:
+                http_method = method.lower()
+                fallback = getattr(self.sess, http_method)
+                response = fallback(
+                    url,
+                    timeout=self.timeout,
+                    headers=merged_headers or None,
+                    **kwargs,
+                )
             self._audit(method, url, kwargs, response)
             if not retry:
                 return response

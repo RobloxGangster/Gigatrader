@@ -42,14 +42,18 @@ def pull_account() -> Dict[str, Any]:
 
 # no-op stubs if MOCK
 def pull_all_if_live() -> Dict[str, Any]:
-    if is_mock():
+    mock_env = os.getenv("MOCK_MODE", "").strip().lower()
+    if is_mock() or mock_env in {"1", "true", "yes", "on"}:
         return {"mode": "mock", "orders": [], "positions": [], "account": {}}
-    return {
-        "mode": "paper",
-        "orders": pull_orders(),
-        "positions": pull_positions(),
-        "account": pull_account(),
-    }
+    try:
+        return {
+            "mode": "paper",
+            "orders": pull_orders(),
+            "positions": pull_positions(),
+            "account": pull_account(),
+        }
+    except Exception as exc:  # pragma: no cover - defensive guard
+        return {"mode": "error", "error": str(exc), "orders": [], "positions": [], "account": {}}
 
 
 def _get_reconciler(request: Request) -> Any:
@@ -112,6 +116,16 @@ def reconcile_run(request: Request) -> Dict[str, Any]:
     _maybe_update_orders(request, orders)
     _maybe_update_positions(request, positions)
     return {"ok": True, "snapshot": snapshot}
+
+
+@router.post("/", summary="Trigger a reconciliation pass (root)")
+def reconcile_now(request: Request) -> Dict[str, Any]:
+    """Compatibility endpoint mirroring the historic root POST behaviour."""
+
+    if os.getenv("MOCK_MODE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        snapshot = pull_all_if_live()
+        return {"ok": True, "snapshot": snapshot}
+    return reconcile_run(request)
 
 
 @router.post("/sync")

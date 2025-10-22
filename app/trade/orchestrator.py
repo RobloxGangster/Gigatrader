@@ -317,7 +317,7 @@ class TradeOrchestrator:
             "min_ev": float(self._config.min_ev),
             "metrics": metrics,
             "mode": {
-                "mock_mode": bool(self.router.mock_mode),
+                "mock_mode": bool(getattr(self.router, "mock_mode", False)),
                 "paper": bool(self._flags.paper_trading),
             },
             "broker": {
@@ -378,7 +378,7 @@ class TradeOrchestrator:
             "trade loop started",
             extra={
                 "interval": self._config.interval_sec,
-                "mock_mode": self.router.mock_mode,
+                "mock_mode": bool(getattr(self.router, "mock_mode", False)),
             },
         )
         backoff = 1.0
@@ -971,4 +971,5 @@ class TradeOrchestrator:
                 configured = bool(broker.is_configured())
             except Exception:  # noqa: BLE001
                 configured = False
-        return bool(self.router.mock_mode or not configured or self._broker_disabled)
+        router_mock_mode = getattr(self.router, "mock_mode", None)
+        return bool((router_mock_mode if router_mock_mode is not None else False) or not configured or self._broker_disabled)

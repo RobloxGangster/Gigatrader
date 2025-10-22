@@ -41,6 +41,12 @@ class AlpacaConfig(BaseModel):
 
 
 def is_mock() -> bool:
+    env_value = os.getenv("MOCK_MODE")
+    if env_value is not None:
+        if env_value.strip().lower() in {"1", "true", "yes", "on"}:
+            return True
+        if env_value.strip().lower() in {"0", "false", "no", "off"}:
+            return False
     return _flags().broker_mode == "mock"
 
 
