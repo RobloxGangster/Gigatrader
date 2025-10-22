@@ -93,13 +93,15 @@ def qp_set(**kwargs: str) -> None:
 
 
 def _resolve_page_from_query() -> dict[str, object]:
-    slug_from_state = st.session_state.get(_SESSION_PAGE_KEY)
-    slug = str(slug_from_state or "").strip().lower()
+    slug_from_state = str(st.session_state.get(_SESSION_PAGE_KEY) or "").strip().lower()
+    qp = qp_get()
+    slug_from_query = str(qp.get("page") or "").strip().lower()
+
+    slug = slug_from_state
+    if slug_from_query and slug_from_query != slug_from_state:
+        slug = slug_from_query
     if not slug:
-        qp = qp_get()
-        slug = str(qp.get("page") or _DEFAULT_SLUG).strip().lower()
-    if not slug:
-        slug = _DEFAULT_SLUG
+        slug = slug_from_query or _DEFAULT_SLUG
     for page in PAGES:
         if page["slug"] == slug:
             st.session_state[_SESSION_PAGE_KEY] = page["slug"]
