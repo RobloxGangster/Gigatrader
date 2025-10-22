@@ -3,128 +3,92 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Callable
 
 import streamlit as st
 from dotenv import load_dotenv
 
 from ui.pages.backtest_reports import render as render_backtest_reports
 from ui.pages.control_center import render as render_control_center
+from ui.pages.diagnostics_logs import render as render_diagnostics_logs
 from ui.pages.option_chain import render as render_option_chain
 from ui.pages.research import render as render_research
 from ui.pages.strategy_tuning import render as render_strategy_tuning
-from ui.pages.diagnostics_logs import render as render_diagnostics_logs
-from ui.router import (
-    PAGES,
-    PageDef,
-    all_labels,
-    label_to_slug,
-    register_page,
-)
 from ui.services.backend import get_backend
 from ui.services.config import api_base_url, mock_mode
 from ui.state import AppSessionState, init_session_state
 from ui.utils.runtime import get_runtime_flags
 
-
-def _register_pages(api: object, state: AppSessionState) -> None:
-    """Populate the global page registry with Streamlit renderers."""
-
-    PAGES.clear()
-
-    register_page(
-        slug="control-center",
-        label="Control Center",
-        render=lambda: render_control_center(api, state),
-        headings=("Control Center",),
-    )
-    register_page(
-        slug="option-chain",
-        label="Option Chain",
-        render=lambda: render_option_chain(api, state),
-        headings=("Option Chain",),
-    )
-    register_page(
-        slug="research",
-        label="Research",
-        render=lambda: render_research(api, state),
-        headings=("Research",),
-    )
-    register_page(
-        slug="strategy-tuning",
-        label="Strategy Tuning",
-        render=lambda: render_strategy_tuning(api, state),
-        headings=("Strategy Tuning",),
-    )
-    register_page(
-        slug="backtest-reports",
-        label="Backtest Reports",
-        render=lambda: render_backtest_reports(api, state),
-        headings=("Backtest Reports",),
-    )
-    register_page(
-        slug="diagnostics",
-        label="Diagnostics / Logs",
-        render=lambda: render_diagnostics_logs(api, state),
-        headings=("Diagnostics / Logs", "Diagnostics", "Logs & Pacing", "Logs"),
-    )
-
-
-DEFAULT_SLUG = "control-center"
-
-
-def _page_from_query_or_default() -> PageDef:
-    """Resolve the current page from query params, falling back gracefully."""
-
-    slug: str = DEFAULT_SLUG
-    try:
-        qp = st.query_params  # type: ignore[attr-defined]
-        raw = qp.get("page")
-    except Exception:
-        legacy_qp = st.experimental_get_query_params()  # type: ignore[attr-defined]
-        raw = legacy_qp.get("page")
-    if isinstance(raw, list):
-        slug = raw[0] if raw else DEFAULT_SLUG
-    elif raw:
-        slug = raw
-    slug = str(slug or DEFAULT_SLUG).strip().lower()
-    page = PAGES.get(slug)
-    if page:
-        return page
-    fallback = next(iter(PAGES.values()), None)
-    if fallback is None:  # pragma: no cover - sanity guard
-        raise RuntimeError("No pages registered")
-    return fallback
-
-
-def _get_query_params_state() -> tuple[dict, object | None, bool]:
-    """Return current query params, backing object, and API availability flag."""
-
-    try:
-        qp_obj = st.query_params  # type: ignore[attr-defined]
-        return dict(qp_obj), qp_obj, True
-    except Exception:
-        qp_dict = st.experimental_get_query_params()  # type: ignore[attr-defined]
-        return qp_dict, None, False
-
-
-def _update_page_query_param(slug: str, qp_obj: object | None, has_new_api: bool) -> None:
-    """Update the ?page=<slug> query parameter without clobbering others."""
-
-    if has_new_api and qp_obj is not None:
-        try:
-            qp_obj["page"] = slug  # type: ignore[index]
-        except Exception:
-            pass
-        return
-
-    existing = st.experimental_get_query_params()  # type: ignore[attr-defined]
-    existing["page"] = slug
-    st.experimental_set_query_params(**existing)  # type: ignore[attr-defined]
-
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+_DEFAULT_SLUG = "control-center"
+_RENDER_CONTEXT: dict[str, object | None] = {"api": None, "state": None}
+
+
+def _require_context() -> tuple[object, AppSessionState]:
+    api = _RENDER_CONTEXT.get("api")
+    state = _RENDER_CONTEXT.get("state")
+    if api is None or not isinstance(state, AppSessionState):  # pragma: no cover - defensive
+        raise RuntimeError("Render context not initialized")
+    return api, state
+
+
+def _page_entry(
+    label: str,
+    slug: str,
+    render_fn: Callable[..., None],
+    *,
+    needs_context: bool = True,
+) -> dict[str, object]:
+    if needs_context:
+        def _render() -> None:
+            api, state = _require_context()
+            render_fn(api, state)
+    else:
+        def _render() -> None:
+            render_fn()
+
+    return {"label": label, "slug": slug, "render": _render}
+
+
+PAGES = [
+    _page_entry("Control Center", "control-center", render_control_center),
+    _page_entry("Option Chain", "option-chain", render_option_chain),
+    _page_entry("Research", "research", render_research),
+    _page_entry("Strategy Tuning", "strategy-tuning", render_strategy_tuning),
+    _page_entry("Backtest Reports", "backtest-reports", render_backtest_reports),
+    _page_entry("Diagnostics / Logs", "diagnostics", render_diagnostics_logs, needs_context=False),
+]
+
+
+def _resolve_page_from_query() -> dict[str, object]:
+    slug = _DEFAULT_SLUG
+    try:
+        qp = st.query_params
+        raw = qp.get("page")
+    except Exception:
+        qp = st.experimental_get_query_params()  # type: ignore[attr-defined]
+        raw = qp.get("page")
+    if isinstance(raw, list):
+        slug = raw[0] if raw else _DEFAULT_SLUG
+    elif raw:
+        slug = raw
+    slug = str(slug or _DEFAULT_SLUG).strip().lower()
+    for page in PAGES:
+        if page["slug"] == slug:
+            return page
+    return PAGES[0]
+
+
+def _set_page_query_param(slug: str) -> None:
+    try:
+        st.query_params["page"] = slug
+    except Exception:
+        existing = st.experimental_get_query_params()  # type: ignore[attr-defined]
+        existing["page"] = slug
+        st.experimental_set_query_params(**existing)  # type: ignore[attr-defined]
 
 
 def _hide_streamlit_sidebar_nav() -> None:
@@ -179,100 +143,54 @@ def main() -> None:
     flags = get_runtime_flags(api)
     st.session_state["__mock_mode__"] = flags.mock_mode
 
-    _register_pages(api, state)
+    _RENDER_CONTEXT["api"] = api
+    _RENDER_CONTEXT["state"] = state
 
-    if not PAGES:
-        raise RuntimeError("No pages registered")
+    current = _resolve_page_from_query()
 
-    _, qp_obj, has_new_api = _get_query_params_state()
-    current_page = _page_from_query_or_default()
-    current_slug = current_page.slug
+    labels = [page["label"] for page in PAGES]
+    slugs = [page["slug"] for page in PAGES]
 
-    labels = all_labels()
-    current_label = current_page.label
-
-    try:
-        current_index = labels.index(current_label)
-    except ValueError:
-        current_index = 0
-        if labels:
-            current_label = labels[current_index]
-            current_slug = label_to_slug(current_label)
-
-    st.markdown(
-        """
-        <style>
-        div[data-baseweb="menu"] { display: block !important; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    with st.sidebar:
-        st.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
+    with st.container():
         st.markdown('<div data-testid="nav-select"></div>', unsafe_allow_html=True)
-        choice = st.selectbox(
-            "Navigation",
-            labels,
-            index=current_index,
-            key="nav_select",
-            label_visibility="collapsed",
-            help="Jump to a page",
-        )
-
-        st.markdown(
-            """
-            <script>
-            (function() {
-              const doc = window.parent.document;
-              const navRoot = doc.querySelector('div[data-testid="nav-root"]');
-              if (!navRoot) { return; }
-              const selectButton = navRoot.parentElement?.querySelector('div[data-baseweb="select"] button');
-              if (selectButton) {
-                selectButton.setAttribute('data-testid', 'nav-select');
-                selectButton.setAttribute('aria-haspopup', 'listbox');
-              }
-            })();
-            </script>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    if choice != current_label:
-        try:
-            new_slug = label_to_slug(choice)
-        except KeyError:
-            new_slug = current_slug
-        if new_slug != current_slug:
-            _update_page_query_param(new_slug, qp_obj, has_new_api)
+        idx = slugs.index(current["slug"]) if current["slug"] in slugs else 0
+        choice = st.selectbox("Navigate", labels, index=idx, key="global-nav")
+        choice_index = labels.index(choice) if choice in labels else idx
+        new_slug = slugs[choice_index]
+        if new_slug != current["slug"]:
+            _set_page_query_param(new_slug)
             st.rerun()
 
-    current_page = PAGES[current_slug]
+    current = _resolve_page_from_query()
 
     st.markdown('<div data-testid="app-ready" style="display:none"></div>', unsafe_allow_html=True)
 
     _render_mode_badge(flags.mock_mode)
     st.write("")  # spacer
 
-    st.sidebar.title("Gigatrader")
-    if _is_mock_mode():
-        st.sidebar.info("Mock mode is enabled")
-    if not _is_mock_mode() and mock_mode():
-        st.sidebar.info("Mock mode enabled – using fixture backend.")
-    st.sidebar.caption(f"API: {api_base_url()}")
-    st.sidebar.caption(f"Profile: {state.profile}")
+    with st.sidebar:
+        st.title("Gigatrader")
+        if _is_mock_mode():
+            st.info("Mock mode is enabled")
+        if not _is_mock_mode() and mock_mode():
+            st.info("Mock mode enabled – using fixture backend.")
+        st.caption(f"API: {api_base_url()}")
+        st.caption(f"Profile: {state.profile}")
+        if _is_mock_mode():
+            if st.button("Start Paper"):
+                try:
+                    import requests
 
-    if _is_mock_mode():
-        if st.button("Start Paper"):
-            try:
-                import requests
+                    base = api_base_url().rstrip("/")
+                    requests.post(f"{base}/paper/start", timeout=1)
+                except Exception:
+                    pass
 
-                base = api_base_url().rstrip("/")
-                requests.post(f"{base}/paper/start", timeout=1)
-            except Exception:
-                pass
-
-    current_page.render()
+    render_fn = current.get("render")
+    if callable(render_fn):
+        render_fn()
+    else:  # pragma: no cover - defensive
+        raise RuntimeError("Invalid page renderer")
 
 
 if __name__ == "__main__":  # pragma: no cover - executed by Streamlit runtime
