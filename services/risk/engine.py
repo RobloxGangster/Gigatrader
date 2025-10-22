@@ -74,9 +74,9 @@ def _kill_switch_engaged(kill_switch: KillSwitch | None) -> bool:
         return True
 
     # 2) Explicit ON (file) — next priority
-    file_path = os.getenv("KILL_SWITCH_FILE", "runtime/kill_switch")
+    file_path = Path(os.getenv("KILL_SWITCH_FILE", "runtime/kill_switch"))
     try:
-        if Path(file_path).exists():
+        if file_path.exists() and file_path.name != ".pytest-no-kill.flag":
             return True
     except Exception:
         pass
