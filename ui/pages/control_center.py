@@ -28,6 +28,17 @@ STRATEGY_LABELS: Dict[str, str] = {
 }
 
 
+def _rerun():
+    try:
+        import streamlit as st  # noqa: WPS433 - local import for compatibility
+        st.rerun()
+    except Exception:
+        # older Streamlit
+        import streamlit as st  # noqa: WPS433 - local import for compatibility
+        if hasattr(st, "experimental_rerun"):
+            st.experimental_rerun()
+
+
 def _fmt_money(value: Any, digits: int = 2) -> str:
     try:
         return fmt_currency(to_float(value), digits=digits)
@@ -413,14 +424,14 @@ def _render_stream_controls(stream: Dict[str, Any], api: ApiClient) -> None:
         try:
             api.stream_start()
             st.toast("Stream start requested", icon="📡")
-            st.rerun()
+            _rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to start stream: {exc}")
     if cols[1].button("Stop Stream", disabled=not running, key="cc_stream_stop"):
         try:
             api.stream_stop()
             st.toast("Stream stop requested", icon="🛑")
-            st.rerun()
+            _rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to stop stream: {exc}")
 
@@ -604,7 +615,7 @@ def render(
     with action_cols[0]:
         if st.button("Refresh", key="cc_manual_refresh"):
             st.session_state["__cc_manual_refresh_ts__"] = time.time()
-            st.rerun()
+            _rerun()
     with action_cols[1]:
         if st.button("Start Orchestrator", key="cc_orchestrator_start_button"):
             try:
@@ -613,7 +624,7 @@ def render(
                 st.warning(f"Start failed: {exc}")
             else:
                 _schedule_status_poll()
-                st.rerun()
+                _rerun()
     with action_cols[2]:
         if st.button("Stop Orchestrator", key="cc_orchestrator_stop_button"):
             try:
@@ -622,7 +633,7 @@ def render(
                 st.warning(f"Stop failed: {exc}")
             else:
                 _schedule_status_poll()
-                st.rerun()
+                _rerun()
 
     auto_enabled = st.checkbox(
         "Auto-refresh telemetry",
@@ -711,11 +722,11 @@ def render(
         if wait > 0:
             time.sleep(wait)
         st.session_state["__cc_auto_refresh_last__"] = time.time()
-        st.rerun()
+        _rerun()
         return
 
     if not _TESTING:
         poll_until = st.session_state.get("__cc_status_poll_until__", 0.0)
         if poll_until and poll_until > time.time():
             time.sleep(STATUS_POLL_INTERVAL)
-            st.rerun()
+            _rerun()
