@@ -2,11 +2,25 @@ from __future__ import annotations
 
 import logging
 import os
+from enum import Enum
 from typing import Any, Dict, List, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from alpaca.trading.enums import QueryOrderStatus
+# ``QueryOrderStatus`` was removed in alpaca-py>=1.7.0 in favour of
+# passing literal strings to ``GetOrdersRequest``.  Older versions still
+# expose the enum, so we try to import it but gracefully fall back to a
+# light-weight local shim when it is missing.  This keeps the codebase
+# compatible across the dependency range covered by the project.
+try:  # pragma: no cover - executed when the import is available
+    from alpaca.trading.enums import QueryOrderStatus
+except ImportError:  # pragma: no cover - executed in newer alpaca-py
+    class QueryOrderStatus(str, Enum):
+        """Compatibility shim for newer ``alpaca-py`` releases."""
+
+        OPEN = "open"
+        CLOSED = "closed"
+        ALL = "all"
 from alpaca.trading.requests import GetOrdersRequest
 
 from core.broker_config import is_mock
