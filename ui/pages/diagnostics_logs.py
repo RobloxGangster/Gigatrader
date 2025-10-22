@@ -1,75 +1,147 @@
 from __future__ import annotations
-
+import io
 from datetime import datetime
-from pathlib import Path
-import zipfile
-from typing import Iterable
+from typing import Any, Iterable
 
+import pandas as pd
 import streamlit as st
 
+from ui.lib.api_client import get_json, get_text, build_url
 
-def render() -> None:
+LIMIT_DEFAULT = 200
+
+
+def render():
     st.header("Diagnostics / Logs")
-    st.caption("Quick view of backend health, pacing and recent logs.")
+    st.caption("Backend health, pacing, and recent logs. Exports available.")
 
-    cols = st.columns([1, 1, 1])
-    with cols[0]:
-        if st.button("Ping /health", type="primary"):
-            st.session_state["diag.last_action"] = (
-                f"Pinged health @ {datetime.utcnow().isoformat()}Z"
-            )
-    with cols[1]:
+    # Controls row
+    c1, c2, c3, c4 = st.columns([1,1,1,2])
+    with c1:
+        run = st.button("Run Diagnostics", type="primary", help="Fetch /health, /pacing and recent logs.")
+    with c2:
+        st.toggle("Auto-refresh logs", key="diag.autorefresh", help="Refresh the log tail every few seconds.")
+    with c3:
+        limit = st.number_input("Lines", min_value=50, max_value=5000, value=LIMIT_DEFAULT, step=50)
+    with c4:
+        st.text_input("Filter (contains)", key="diag.filter", placeholder="error, worker, order id …")
+
+    # Optional lightweight timed refresh that does NOT blow away state.
+    if st.session_state.get("diag.autorefresh"):
+        st.autorefresh(interval=5000, key="diag.autorefresh.tick")
+
+    # Health + Pacing expander
+    with st.expander("Health & Pacing", expanded=True):
+        cols = st.columns(2)
+        with cols[0]:
+            _draw_health()
+        with cols[1]:
+            _draw_pacing()
+
+    # Logs area
+    with st.expander("Recent Logs (tail)", expanded=True):
+        logs_text = _fetch_logs(limit) if run or st.session_state.get("diag.autorefresh") else None
+        if logs_text is None:
+            logs_text = _fetch_logs(limit)
+
+        filtered = _apply_filter(logs_text, st.session_state.get("diag.filter") or "")
+        st.code(filtered or "—", language="bash")
+
+        # Export buttons
+        raw_bytes = filtered.encode("utf-8")
         st.download_button(
-            "Export latest log",
-            data=_fake_log(),
-            file_name="gigatrader-latest.log",
+            label="Export logs",
+            data=raw_bytes,
+            file_name=f"gigatrader-logs-{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.log",
         )
-    with cols[2]:
-        st.toggle("Auto-refresh", key="diag.autorefresh")
 
-    if st.button("Create Repro Bundle", type="primary"):
-        bundle_path = _create_repro_bundle()
-        st.session_state["diag.last_action"] = f"Created {bundle_path.name}"
-        st.success(f"Repro bundle created: {bundle_path.name}")
+        # Also show a compact table if the backend returns json objects per line
+        df = _maybe_parse_structured_logs(filtered)
+        if df is not None and not df.empty:
+            st.dataframe(df, use_container_width=True, height=320)
 
-    st.write(st.session_state.get("diag.last_action", "—"))
+    st.caption(f"API base: {build_url('/')[:-1]}  •  Fetched @ {datetime.utcnow().isoformat()}Z")
 
 
-def _fake_log() -> str:
-    # keep a stub; real impl can call backend /logs
-    return "[info] diagnostics stub\n"
+def _draw_health():
+    try:
+        data = get_json("/health")
+        if isinstance(data, str):  # backend returned text
+            st.text(data.strip())
+        else:
+            st.metric("Status", data.get("status", "unknown"))
+            if errs := data.get("errors"):
+                st.error("\n".join(map(str, errs)))
+    except Exception as e:
+        st.warning(f"Health request failed: {e}\n[{build_url('/health')}]")
 
 
-def _create_repro_bundle() -> Path:
-    root = Path.cwd()
-    output_dir = root / "repros"
-    output_dir.mkdir(parents=True, exist_ok=True)
+def _draw_pacing():
+    try:
+        data = get_json("/pacing")
+        if isinstance(data, str):
+            st.text(data.strip())
+            return
+        # Render common pacing fields if present
+        rows: list[tuple[str, Any]] = []
+        for key in ("requests_remaining", "reset_in", "window", "limit", "last_request_at"):
+            if key in data:
+                rows.append((key, data[key]))
+        if rows:
+            df = pd.DataFrame(rows, columns=["Field", "Value"])
+            st.table(df)
+        else:
+            st.write(data)
+    except Exception as e:
+        st.warning(f"Pacing request failed: {e}\n[{build_url('/pacing')}]")
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    bundle_path = output_dir / f"repro_{timestamp}.zip"
-    sources = list(_bundle_sources(root))
 
-    with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for source in sources:
-            arcname = source.relative_to(root)
-            zf.write(source, arcname)
+def _fetch_logs(limit: int) -> str:
+    try:
+        # Accept either JSON or raw text. For robustness, ask text explicitly first.
+        txt = get_text("/logs/recent", params={"limit": int(limit)})
+        return txt if isinstance(txt, str) else str(txt)
+    except Exception:
+        # Some backends may serve json array of lines
+        try:
+            res = get_json("/logs/recent", params={"limit": int(limit)})
+            if isinstance(res, (list, tuple)):
+                return "\n".join(map(str, res))
+            return str(res)
+        except Exception as e2:
+            return f"[warn] failed to fetch logs: {e2}"
 
-    st.session_state["diag.last_bundle"] = str(bundle_path)
-    return bundle_path
+
+def _apply_filter(text: str, needle: str) -> str:
+    if not needle:
+        return text
+    lines = [ln for ln in text.splitlines() if needle.lower() in ln.lower()]
+    return "\n".join(lines)
 
 
-def _bundle_sources(root: Path) -> Iterable[Path]:
-    config_candidates = [
-        root / "config.yaml",
-        root / "config.example.yaml",
-        root / "RISK_PRESETS.md",
-    ]
-    for candidate in config_candidates:
-        if candidate.exists():
-            yield candidate
-
-    fixtures_dir = root / "fixtures"
-    if fixtures_dir.exists():
-        for path in fixtures_dir.rglob("*"):
-            if path.is_file():
-                yield path
+def _maybe_parse_structured_logs(text: str) -> pd.DataFrame | None:
+    """
+    If logs look like JSON per line, parse into a compact dataframe (level, msg, ts).
+    Gracefully degrade on any parse issues.
+    """
+    items: list[dict] = []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        if ln.startswith("{") and ln.endswith("}"):
+            try:
+                import json
+                obj = json.loads(ln)
+                row = {
+                    "ts": obj.get("ts") or obj.get("time") or obj.get("@timestamp") or "",
+                    "level": obj.get("level") or obj.get("lvl") or obj.get("severity") or "",
+                    "msg": obj.get("msg") or obj.get("message") or obj.get("event") or ln,
+                }
+                items.append(row)
+            except Exception:
+                # silently ignore non-JSON lines
+                pass
+    if not items:
+        return None
+    return pd.DataFrame(items)

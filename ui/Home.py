@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 from pathlib import Path
 import sys
 from typing import Any, Callable, Dict, List, Optional
@@ -74,6 +75,8 @@ new_label = st.selectbox(
     help="Jump between Gigatrader pages.",
 )
 new_slug = slugs[labels.index(new_label)]
+
+st.session_state.setdefault("api.base_url", os.getenv("API_BASE_URL") or "http://127.0.0.1:8000")
 
 # Update query params and rerun only if changed
 if new_slug != slug:
