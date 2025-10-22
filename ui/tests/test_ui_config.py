@@ -12,15 +12,13 @@ from ui.services import config
 def test_api_base_url_default(monkeypatch):
     monkeypatch.delenv("API_BASE_URL", raising=False)
     module = reload(config)
-    module.reset_api_base_url_cache()
-    assert module.api_base_url() == "http://127.0.0.1:8000"
+    assert module.force_redetect_api_base() == "http://127.0.0.1:8000"
 
 
 def test_api_base_url_override(monkeypatch):
     monkeypatch.setenv("API_BASE_URL", "https://example.com/api/")
     module = reload(config)
-    module.reset_api_base_url_cache()
-    assert module.api_base_url() == "https://example.com/api"
+    assert module.force_redetect_api_base() == "https://example.com/api/"
 
 
 def test_mock_mode_flag(monkeypatch):
