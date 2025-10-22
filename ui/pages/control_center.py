@@ -17,6 +17,8 @@ from ui.utils.num import to_float
 
 _TESTING = "PYTEST_CURRENT_TEST" in os.environ
 REFRESH_INTERVAL_SEC = 5
+STATUS_POLL_INTERVAL = 1.5
+STATUS_POLL_WINDOW = 10.0
 DEFAULT_AUTO_REFRESH = not _TESTING
 DEFAULT_PRESETS: Tuple[str, ...] = ("safe", "balanced", "high_risk")
 STRATEGY_LABELS: Dict[str, str] = {
@@ -99,6 +101,9 @@ def _render_connection_badge(
 def _trim_orders(raw: Iterable[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for order in raw or []:
+        status = str(order.get("status") or "").strip().lower()
+        if status != "filled":
+            continue
         rows.append(
             {
                 "symbol": order.get("symbol"),
@@ -308,12 +313,14 @@ def _render_algorithm_controls(
                 st.toast(
                     f"Trading started ({result.get('run_id', 'paper')})", icon="✅"
                 )
+                _schedule_status_poll()
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Failed to start trading: {exc}")
         if stop_clicked:
             try:
                 api.orchestrator_stop()
                 st.toast("Trading stopped", icon="🛑")
+                _schedule_status_poll()
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Failed to stop trading: {exc}")
         if reconcile_clicked:
@@ -484,8 +491,22 @@ def _render_logs(log_lines: List[str], pacing: Dict[str, Any]) -> None:
     pacing_col.metric("Backoff Events", pacing.get("backoff_events", 0))
 
 
+def _schedule_status_poll(window: float = STATUS_POLL_WINDOW) -> None:
+    if _TESTING:
+        return
+    try:
+        st.session_state["__cc_status_poll_until__"] = time.time() + float(window)
+    except Exception:
+        st.session_state["__cc_status_poll_until__"] = time.time() + STATUS_POLL_WINDOW
+
+
 def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
     data: Dict[str, Any] = {}
+    try:
+        data["health"] = api.health()
+    except Exception as exc:  # noqa: BLE001
+        data["health_error"] = str(exc)
+        data["health"] = {}
     try:
         data["status"] = api.status()
     except Exception as exc:  # noqa: BLE001
@@ -506,7 +527,7 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
         data["positions"] = []
 
     try:
-        orders = api.orders(status="all", limit=50)
+        orders = api.orders(status="closed", limit=50)
         data["orders"] = orders if isinstance(orders, list) else []
     except Exception as exc:  # noqa: BLE001
         data["orders_error"] = str(exc)
@@ -591,6 +612,7 @@ def render(
             except Exception as exc:  # noqa: BLE001 - surface to UI
                 st.warning(f"Start failed: {exc}")
             else:
+                _schedule_status_poll()
                 st.rerun()
     with action_cols[2]:
         if st.button("Stop Orchestrator", key="cc_orchestrator_stop_button"):
@@ -599,6 +621,7 @@ def render(
             except Exception as exc:  # noqa: BLE001 - surface to UI
                 st.warning(f"Stop failed: {exc}")
             else:
+                _schedule_status_poll()
                 st.rerun()
 
     auto_enabled = st.checkbox(
@@ -618,6 +641,10 @@ def render(
     st.caption(
         f"Runtime profile={profile_label} · broker={broker_label} · dry_run={dry_run_label}"
     )
+    if data.get("health_error"):
+        st.warning(f"Health check failed: {data['health_error']}")
+    elif data.get("health"):
+        st.caption("Backend health: OK")
 
     _render_connection_badge(
         data.get("account", {}),
@@ -673,11 +700,22 @@ def render(
     _render_tables(positions, orders, api.base())
     _render_logs(data.get("logs", []), data.get("pacing", {}))
 
+    now_ts = time.time()
+    poll_until = st.session_state.get("__cc_status_poll_until__", 0.0)
+    if poll_until and now_ts >= poll_until:
+        st.session_state.pop("__cc_status_poll_until__", None)
+
     if st.session_state.get("__cc_auto_refresh__"):
         last_tick = st.session_state.get("__cc_auto_refresh_last__", 0.0)
-        now = time.time()
-        wait = max(0.0, REFRESH_INTERVAL_SEC - (now - last_tick))
+        wait = max(0.0, REFRESH_INTERVAL_SEC - (now_ts - last_tick))
         if wait > 0:
             time.sleep(wait)
         st.session_state["__cc_auto_refresh_last__"] = time.time()
         st.rerun()
+        return
+
+    if not _TESTING:
+        poll_until = st.session_state.get("__cc_status_poll_until__", 0.0)
+        if poll_until and poll_until > time.time():
+            time.sleep(STATUS_POLL_INTERVAL)
+            st.rerun()
