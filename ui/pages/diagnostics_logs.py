@@ -11,6 +11,10 @@ import streamlit as st
 LOGS_DIR = Path("logs")
 DIAG_DIR = LOGS_DIR / "diagnostics"
 REPROS_DIR = Path("repros")
+
+MAX_LOG_FILES = 200
+MAX_LOG_BYTES = 20 * 1024 * 1024  # 20 MiB cap keeps initial render responsive
+_ZIP_WARNING_KEY = "__diagnostics_logs_warning__"
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 
 _RUN_STATE_KEY = "__diagnostics_run_complete__"
@@ -38,20 +42,56 @@ def _run_diagnostics() -> dict:
     return result
 
 
-def _make_zip() -> bytes:
+def _human_size(num_bytes: int) -> str:
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if num_bytes < 1024 or unit == "GiB":
+            return f"{num_bytes:.0f} {unit}"
+        num_bytes /= 1024
+    return f"{num_bytes:.0f} GiB"
+
+
+def _make_zip() -> tuple[bytes, str | None]:
     buf = io.BytesIO()
+    warning: str | None = None
+    added_logs = 0
+    added_bytes = 0
+    limited = False
+
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in (DIAG_DIR / "latest.json", DIAG_DIR / "latest.txt"):
             if path.exists():
                 zf.write(path, arcname=path.name)
         if LOGS_DIR.exists():
             for log_path in LOGS_DIR.rglob("*.log"):
+                if added_logs >= MAX_LOG_FILES or added_bytes >= MAX_LOG_BYTES:
+                    limited = True
+                    break
+                if not log_path.is_file():
+                    continue
+                try:
+                    size = log_path.stat().st_size
+                except OSError:
+                    continue
+                if size <= 0:
+                    continue
+                if size > MAX_LOG_BYTES:
+                    limited = True
+                    continue
                 try:
                     zf.write(log_path, arcname=str(log_path.relative_to(LOGS_DIR)))
+                    added_logs += 1
+                    added_bytes += size
                 except Exception:  # noqa: BLE001 - tolerate unreadable files
                     continue
+        if limited:
+            warning = (
+                "Log export limited to "
+                f"{added_logs} file{'s' if added_logs != 1 else ''} "
+                f"(~{_human_size(added_bytes)}). Older or larger files were skipped."
+            )
+
     buf.seek(0)
-    return buf.read()
+    return buf.read(), warning
 
 
 def _create_repro_bundle() -> Path | None:
@@ -97,25 +137,34 @@ def _create_repro_bundle() -> Path | None:
     return bundle_path
 
 
-def _ensure_state() -> str | None:
-    message: str | None = None
+def _ensure_state() -> list[str]:
+    messages: list[str] = []
     if _RUN_STATE_KEY not in st.session_state:
         st.session_state[_RUN_STATE_KEY] = False
     if _ZIP_STATE_KEY not in st.session_state:
         try:
-            st.session_state[_ZIP_STATE_KEY] = _make_zip()
+            payload, warning = _make_zip()
+            st.session_state[_ZIP_STATE_KEY] = payload
+            st.session_state[_ZIP_WARNING_KEY] = warning
+            if warning:
+                messages.append(warning)
         except Exception:  # noqa: BLE001 - defensive guard
             st.session_state[_ZIP_STATE_KEY] = b""
-            message = "Unable to bundle logs at startup"
+            st.session_state[_ZIP_WARNING_KEY] = None
+            messages.append("Unable to bundle logs at startup")
+    else:
+        warning = st.session_state.get(_ZIP_WARNING_KEY)
+        if warning:
+            messages.append(str(warning))
     if _REPRO_STATE_KEY not in st.session_state:
         st.session_state[_REPRO_STATE_KEY] = None
-    return message
+    return messages
 
 
 def render(_: object | None = None, __: object | None = None) -> None:
     st.title("Diagnostics / Logs")
 
-    warning_message = _ensure_state()
+    warning_messages = _ensure_state()
 
     col_run, col_export = st.columns(2)
     with col_run:
@@ -123,20 +172,29 @@ def render(_: object | None = None, __: object | None = None) -> None:
             _run_diagnostics()
             st.session_state[_RUN_STATE_KEY] = True
             try:
-                st.session_state[_ZIP_STATE_KEY] = _make_zip()
+                payload, warning = _make_zip()
+                st.session_state[_ZIP_STATE_KEY] = payload
+                st.session_state[_ZIP_WARNING_KEY] = warning
+                if warning:
+                    warning_messages.append(warning)
             except Exception:  # noqa: BLE001 - defensive guard
                 st.session_state[_ZIP_STATE_KEY] = b""
-                warning_message = warning_message or "Unable to bundle logs"
+                st.session_state[_ZIP_WARNING_KEY] = None
+                warning_messages.append("Unable to bundle logs")
     with col_export:
         logs_payload = st.session_state.get(_ZIP_STATE_KEY)
         if not logs_payload:
             try:
-                logs_payload = _make_zip()
+                logs_payload, warning = _make_zip()
                 st.session_state[_ZIP_STATE_KEY] = logs_payload
+                st.session_state[_ZIP_WARNING_KEY] = warning
+                if warning:
+                    warning_messages.append(warning)
             except Exception:  # noqa: BLE001 - defensive guard
                 logs_payload = b""
                 st.session_state[_ZIP_STATE_KEY] = logs_payload
-                warning_message = warning_message or "Unable to bundle logs"
+                st.session_state[_ZIP_WARNING_KEY] = None
+                warning_messages.append("Unable to bundle logs")
         st.download_button(
             "Export Logs",
             logs_payload,
@@ -145,8 +203,9 @@ def render(_: object | None = None, __: object | None = None) -> None:
             key="export-logs",
         )
 
-    if warning_message:
-        st.warning(f"{warning_message}. Check server logs for details.")
+    if warning_messages:
+        for msg in dict.fromkeys(warning_messages):
+            st.warning(f"{msg}. Check server logs for details.")
 
     if st.session_state.get(_RUN_STATE_KEY):
         st.success("Diagnostics complete")
