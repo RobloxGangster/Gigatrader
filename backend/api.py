@@ -1,6 +1,7 @@
 import asyncio
 import os
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence
@@ -35,7 +36,43 @@ load_dotenv()
 
 settings = get_settings()
 
-app = FastAPI(title="Gigatrader API")
+
+def _ensure_log_directories() -> None:
+    base_paths = [
+        Path("logs/backend"),
+        Path("logs/diagnostics"),
+        Path("logs/audit"),
+    ]
+    for path in base_paths:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except Exception:  # pragma: no cover - best effort filesystem guard
+            pass
+
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    _ensure_log_directories()
+    try:
+        loop = asyncio.get_event_loop()
+        get_stream_manager().start(loop)
+    except Exception:
+        pass
+
+    skip_reconcile = os.getenv("MOCK_MODE", "").lower() in ("1", "true", "yes", "on")
+    if not skip_reconcile:
+        try:
+            from backend.services.reconcile import pull_all_if_live
+
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, pull_all_if_live)
+        except Exception:
+            pass
+
+    yield
+
+
+app = FastAPI(title="Gigatrader API", lifespan=_lifespan)
 root_router = APIRouter()
 
 ui_origins = {
@@ -73,19 +110,6 @@ for alias in ("/api", "/v1"):
     for prefix, router, tags in PRIMARY_ROUTERS:
         compat_tag = [f"{tags[0]}-compat"] if tags else None
         app.include_router(router, prefix=f"{alias}{prefix}", tags=compat_tag)
-
-
-def _ensure_log_directories() -> None:
-    base_paths = [
-        Path("logs/backend"),
-        Path("logs/diagnostics"),
-        Path("logs/audit"),
-    ]
-    for path in base_paths:
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-        except Exception:  # pragma: no cover - best effort filesystem guard
-            pass
 
 
 def _register_compat_route(
@@ -192,25 +216,6 @@ app.include_router(logs_routes.router)
 app.include_router(pacing_routes.router)
 app.include_router(alpaca_live_routes.router)
 app.include_router(broker_routes.router)
-
-
-@app.on_event("startup")
-async def _startup_reconcile():
-    _ensure_log_directories()
-    try:
-        loop = asyncio.get_event_loop()
-        get_stream_manager().start(loop)
-    except Exception:
-        pass
-    if os.getenv("MOCK_MODE", "").lower() in ("1", "true", "yes", "on"):
-        return
-    try:
-        from backend.services.reconcile import pull_all_if_live
-
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, pull_all_if_live)
-    except Exception:
-        pass
 
 
 class StartReq(BaseModel):
