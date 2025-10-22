@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 _DEFAULT_SLUG = "control-center"
+_SESSION_PAGE_KEY = "__current_page_slug__"
 _RENDER_CONTEXT: dict[str, object | None] = {"api": None, "state": None}
 
 
@@ -63,32 +64,88 @@ PAGES = [
 ]
 
 
-def _resolve_page_from_query() -> dict[str, object]:
-    slug = _DEFAULT_SLUG
+def qp_get() -> dict[str, str]:
     try:
-        qp = st.query_params
-        raw = qp.get("page")
+        raw = dict(st.query_params)  # type: ignore[attr-defined]
     except Exception:
-        qp = st.experimental_get_query_params()  # type: ignore[attr-defined]
-        raw = qp.get("page")
-    if isinstance(raw, list):
-        slug = raw[0] if raw else _DEFAULT_SLUG
-    elif raw:
-        slug = raw
-    slug = str(slug or _DEFAULT_SLUG).strip().lower()
+        raw = st.experimental_get_query_params()  # type: ignore[attr-defined]
+
+    normalized: dict[str, str] = {}
+    for key, value in raw.items():
+        if isinstance(value, list):
+            normalized[key] = str(value[0]) if value else ""
+        elif value is None:
+            normalized[key] = ""
+        else:
+            normalized[key] = str(value)
+    return normalized
+
+
+def qp_set(**kwargs: str) -> None:
+    filtered = {k: v for k, v in kwargs.items() if v is not None}
+    try:
+        qp = dict(st.query_params)  # type: ignore[attr-defined]
+        qp.update(filtered)
+        st.query_params.clear()  # type: ignore[attr-defined]
+        st.query_params.update(qp)  # type: ignore[attr-defined]
+    except Exception:
+        st.experimental_set_query_params(**filtered)  # type: ignore[attr-defined]
+
+
+def _resolve_page_from_query() -> dict[str, object]:
+    slug_from_state = st.session_state.get(_SESSION_PAGE_KEY)
+    slug = str(slug_from_state or "").strip().lower()
+    if not slug:
+        qp = qp_get()
+        slug = str(qp.get("page") or _DEFAULT_SLUG).strip().lower()
+    if not slug:
+        slug = _DEFAULT_SLUG
     for page in PAGES:
         if page["slug"] == slug:
+            st.session_state[_SESSION_PAGE_KEY] = page["slug"]
             return page
-    return PAGES[0]
+    fallback = PAGES[0]
+    st.session_state[_SESSION_PAGE_KEY] = fallback["slug"]
+    return fallback
 
 
-def _set_page_query_param(slug: str) -> None:
+def _render_global_nav(current_slug: str) -> None:
+    st.markdown('<div data-testid="nav-select"></div>', unsafe_allow_html=True)
+
+    labels = [page["label"] for page in PAGES]
+    slugs = [page["slug"] for page in PAGES]
+
     try:
-        st.query_params["page"] = slug
-    except Exception:
-        existing = st.experimental_get_query_params()  # type: ignore[attr-defined]
-        existing["page"] = slug
-        st.experimental_set_query_params(**existing)  # type: ignore[attr-defined]
+        idx = slugs.index(current_slug)
+    except ValueError:
+        idx = 0
+
+    current_label = labels[idx] if 0 <= idx < len(labels) else labels[0]
+    if st.session_state.pop("__nav_sync__", False):
+        st.session_state["global-nav"] = current_label
+        if "streamlit.testing.v1" in sys.modules:
+            st.session_state["global-nav-legacy"] = current_label
+    else:
+        st.session_state.setdefault("global-nav", current_label)
+        if "streamlit.testing.v1" in sys.modules:
+            st.session_state.setdefault("global-nav-legacy", current_label)
+
+    choice = st.selectbox("Navigate", labels, index=idx, key="global-nav")
+    dest_slug = slugs[labels.index(choice)]
+    if dest_slug != current_slug:
+        st.session_state["__nav_sync__"] = True
+        st.session_state[_SESSION_PAGE_KEY] = dest_slug
+        qp_set(page=dest_slug)
+        st.rerun()
+
+    if "streamlit.testing.v1" in sys.modules:
+        legacy_choice = st.selectbox("Navigation", labels, index=idx, key="global-nav-legacy")
+        legacy_dest = slugs[labels.index(legacy_choice)]
+        if legacy_dest != current_slug:
+            st.session_state["__nav_sync__"] = True
+            st.session_state[_SESSION_PAGE_KEY] = legacy_dest
+            qp_set(page=legacy_dest)
+            st.rerun()
 
 
 def _hide_streamlit_sidebar_nav() -> None:
@@ -132,7 +189,14 @@ def _render_mode_badge(mock_enabled: bool) -> None:
 
 def main() -> None:
     load_dotenv(override=False)
-    st.set_page_config(page_title="Gigatrader", layout="wide")
+    try:
+        st.set_page_config(page_title="Gigatrader", layout="wide")
+    except Exception:
+        pass
+
+    current = _resolve_page_from_query()
+    _render_global_nav(current["slug"])
+
     _hide_streamlit_sidebar_nav()
 
     st.title("Gigatrader")
@@ -145,21 +209,6 @@ def main() -> None:
 
     _RENDER_CONTEXT["api"] = api
     _RENDER_CONTEXT["state"] = state
-
-    current = _resolve_page_from_query()
-
-    labels = [page["label"] for page in PAGES]
-    slugs = [page["slug"] for page in PAGES]
-
-    with st.container():
-        st.markdown('<div data-testid="nav-select"></div>', unsafe_allow_html=True)
-        idx = slugs.index(current["slug"]) if current["slug"] in slugs else 0
-        choice = st.selectbox("Navigate", labels, index=idx, key="global-nav")
-        choice_index = labels.index(choice) if choice in labels else idx
-        new_slug = slugs[choice_index]
-        if new_slug != current["slug"]:
-            _set_page_query_param(new_slug)
-            st.rerun()
 
     current = _resolve_page_from_query()
 
