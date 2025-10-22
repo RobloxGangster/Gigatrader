@@ -2,11 +2,13 @@ import asyncio
 import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from backend.routers import (
@@ -34,6 +36,7 @@ load_dotenv()
 settings = get_settings()
 
 app = FastAPI(title="Gigatrader API")
+root_router = APIRouter()
 
 ui_origins = {
     f"http://127.0.0.1:{settings.ui_port}",
@@ -72,6 +75,19 @@ for alias in ("/api", "/v1"):
         app.include_router(router, prefix=f"{alias}{prefix}", tags=compat_tag)
 
 
+def _ensure_log_directories() -> None:
+    base_paths = [
+        Path("logs/backend"),
+        Path("logs/diagnostics"),
+        Path("logs/audit"),
+    ]
+    for path in base_paths:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except Exception:  # pragma: no cover - best effort filesystem guard
+            pass
+
+
 def _register_compat_route(
     path: str,
     endpoint: Callable[..., Any],
@@ -86,34 +102,65 @@ def _register_compat_route(
         )
 
 
-@app.get("/health")
-def health() -> Dict[str, Any]:
-    flags = get_runtime_flags()
-    orchestrator = get_orchestrator()
-    orchestrator_status = orchestrator.status()
+@root_router.get("/health")
+def health() -> JSONResponse:
     try:
-        stream_status = get_stream_manager().status()
-    except Exception as exc:  # pragma: no cover - defensive
-        stream_status = {"status": "error", "last_error": str(exc)}
+        flags = get_runtime_flags()
+        orchestrator = get_orchestrator()
+        try:
+            orchestrator_snapshot = orchestrator.status()
+        except Exception as exc:  # pragma: no cover - defensive snapshot guard
+            orchestrator_snapshot = {"running": False, "last_error": str(exc)}
 
-    broker_status = {
-        "source": "mock" if flags.mock_mode else "alpaca",
-        "paper": flags.paper_trading,
-        "mode": flags.broker_mode,
-        "base_url": flags.alpaca_base_url,
-    }
+        try:
+            stream_status: Dict[str, Any] | bool = get_stream_manager().status()
+        except Exception as exc:  # pragma: no cover - defensive
+            stream_status = {"ok": False, "error": str(exc)}
 
-    return {
-        "ok": True,
-        "mode": {
-            "mock_mode": flags.mock_mode,
+        if isinstance(stream_status, dict):
+            stream_ok = stream_status.get("ok")
+            if stream_ok is None:
+                if "online" in stream_status:
+                    stream_ok = bool(stream_status.get("online"))
+                elif "state" in stream_status:
+                    stream_ok = str(stream_status.get("state")).lower() == "online"
+            stream_ok = True if stream_ok is None else bool(stream_ok)
+        else:
+            stream_ok = bool(stream_status)
+
+        broker_ok = True if flags.mock_mode else bool(flags.alpaca_key and flags.alpaca_secret)
+        broker_status = {
+            "source": "mock" if flags.mock_mode else "alpaca",
             "paper": flags.paper_trading,
-            "broker_mode": flags.broker_mode,
-        },
-        "orchestrator": orchestrator_status,
-        "stream": stream_status,
-        "broker": broker_status,
-    }
+            "mode": flags.broker_mode,
+            "base_url": flags.alpaca_base_url,
+            "ok": broker_ok,
+        }
+
+        orchestrator_running = bool(orchestrator_snapshot.get("running", True))
+        last_error = orchestrator_snapshot.get("last_error")
+        orchestrator_ok = orchestrator_running or last_error in (None, "")
+
+        status = "ok"
+        if not broker_ok or not stream_ok or not orchestrator_ok:
+            status = "degraded"
+
+        payload = {
+            "status": status,
+            "ok": status == "ok",
+            "mock_mode": flags.mock_mode,
+            "mode": {
+                "mock_mode": flags.mock_mode,
+                "paper": flags.paper_trading,
+                "broker_mode": flags.broker_mode,
+            },
+            "orchestrator": orchestrator_snapshot,
+            "stream": stream_status,
+            "broker": broker_status,
+        }
+        return JSONResponse(payload, status_code=200)
+    except Exception as exc:  # pragma: no cover - defensive
+        return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
 
 
 @app.get("/version")
@@ -123,6 +170,8 @@ def version() -> Dict[str, str]:
 
 _register_compat_route("/health", health, ["GET"], tag="health")
 _register_compat_route("/version", version, ["GET"], tag="version")
+
+app.include_router(root_router)
 
 from backend.routes import backtests_compat  # noqa: E402
 from backend.routes import options as options_routes  # noqa: E402
@@ -147,6 +196,7 @@ app.include_router(broker_routes.router)
 
 @app.on_event("startup")
 async def _startup_reconcile():
+    _ensure_log_directories()
     try:
         loop = asyncio.get_event_loop()
         get_stream_manager().start(loop)

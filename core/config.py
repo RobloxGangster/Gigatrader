@@ -28,7 +28,17 @@ from core.runtime_flags import BrokerMode, get_runtime_flags
 
 _FLAGS = get_runtime_flags()
 
-MOCK_MODE = _FLAGS.mock_mode
+MOCK_MODE: bool = _FLAGS.mock_mode
+EXECUTION_MODE: Literal["alpaca", "mock"] = "mock" if MOCK_MODE else "alpaca"
+API_PORT: int = int(_FLAGS.api_port or 8000)
+UI_PORT: int = int(_FLAGS.ui_port or 8501)
+API_BASE_URL: str = (_FLAGS.api_base_url or f"http://127.0.0.1:{API_PORT}").rstrip("/")
+
+
+def get_api_base_url() -> str:
+    """Return the canonical API base URL shared between services."""
+
+    return API_BASE_URL
 
 
 
