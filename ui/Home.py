@@ -1,31 +1,38 @@
 from __future__ import annotations
 
-import importlib
+# Must be first so absolute `ui.*` imports work regardless of launch dir.
+try:
+    from ui._bootstrap import ROOT  # noqa: F401
+except Exception:  # pragma: no cover - defensive bootstrap
+    import sys
+    from pathlib import Path
+
+    _ROOT = Path(__file__).resolve().parents[1]
+    _s = str(_ROOT)
+    if _s not in sys.path:
+        sys.path.insert(0, _s)
+
 import os
-from pathlib import Path
-import sys
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Optional
 
 import streamlit as st
 
+from ui.pages import control_center, diagnostics_logs, option_chain
 from ui.services.backend import BrokerAPI, get_backend
 from ui.state import AppSessionState, init_session_state
 
-# Ensure project root (parent of 'ui') is on sys.path so 'ui.*' imports work
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-st.set_page_config(page_title="Gigatrader", layout="wide")
-
-# --- Page registry: slug -> ("Label", module_path, render_fn)
-PAGES: dict[str, tuple[str, str, str]] = {
-    "control-center": ("Control Center", "ui.pages.control_center", "render"),
-    "diagnostics": ("Diagnostics / Logs", "ui.pages.diagnostics_logs", "render"),
-    "option-chain": ("Option Chain", "ui.pages.option_chain", "render"),
+PAGE_REGISTRY: dict[str, Callable[..., Any]] = {
+    "control-center": control_center.render,
+    "diagnostics": diagnostics_logs.render,
+    "option-chain": option_chain.render,
 }
 
-# Legacy aliases that should resolve to canonical slugs
+PAGE_LABELS: dict[str, str] = {
+    "control-center": "Control Center",
+    "diagnostics": "Diagnostics / Logs",
+    "option-chain": "Option Chain",
+}
+
 SLUG_ALIASES: dict[str, str] = {
     "diagnostics-logs": "diagnostics",
     "diagnostics_logs": "diagnostics",
@@ -33,70 +40,72 @@ SLUG_ALIASES: dict[str, str] = {
     "log": "diagnostics",
 }
 
-# Session defaults
-st.session_state.setdefault("nav.slug", "control-center")
-st.session_state.setdefault("telemetry.autorefresh", False)
+
+def _init_session_defaults() -> None:
+    st.session_state.setdefault("nav.slug", "control-center")
+    st.session_state.setdefault("telemetry.autorefresh", False)
+    st.session_state.setdefault(
+        "api.base_url", os.getenv("API_BASE_URL") or "http://127.0.0.1:8000"
+    )
 
 
-def _resolve_slug(raw: Any) -> str:
-    slug = (str(raw or "").strip().lower())
+def _resolve_slug(raw: str | None) -> str:
+    slug = (raw or "").strip().lower()
     slug = SLUG_ALIASES.get(slug, slug)
-    if slug not in PAGES:
+    if slug not in PAGE_REGISTRY:
         slug = "control-center"
     return slug
 
 
-# Read & normalize query param
-def _get_query_params() -> Dict[str, List[str]]:
+def _slug_from_query() -> str:
     try:
-        qp = st.query_params
-        return {k: list(v) for k, v in qp.items()}
-    except Exception:
-        raw = st.experimental_get_query_params()
-        return {k: (v if isinstance(v, list) else [v]) for k, v in raw.items()}
+        query = st.query_params
+        raw_value = query.get("page")
+    except Exception:  # pragma: no cover - Streamlit < 1.30 fallback
+        query = st.experimental_get_query_params()
+        raw_value = query.get("page")
+
+    if isinstance(raw_value, list):
+        value = raw_value[0] if raw_value else None
+    else:
+        value = raw_value
+
+    if not value:
+        value = str(st.session_state.get("nav.slug", ""))
+
+    return _resolve_slug(value)
 
 
-query_params = _get_query_params()
-slug_candidates = query_params.get("page", [st.session_state["nav.slug"]])
-slug = _resolve_slug(slug_candidates[0] if slug_candidates else "")
-st.session_state["nav.slug"] = slug
+def _select_page(current: str) -> str:
+    st.markdown("### Navigation ↪")
+    labels = [PAGE_LABELS[slug] for slug in PAGE_REGISTRY]
+    slugs = list(PAGE_REGISTRY)
+    current_slug = current if current in PAGE_REGISTRY else "control-center"
+    current_index = slugs.index(current_slug)
 
-# Top-of-page navigation
-st.markdown("### Navigation ↪")
-labels = [meta[0] for meta in PAGES.values()]
-slugs = list(PAGES.keys())
-current_index = slugs.index(slug)
+    label = st.selectbox(
+        "Navigate",
+        labels,
+        index=current_index,
+        key="nav.select",
+        help="Jump between Gigatrader pages.",
+    )
+    chosen = slugs[labels.index(label)]
 
-new_label = st.selectbox(
-    "Navigate",
-    labels,
-    index=current_index,
-    key="nav.select",
-    help="Jump between Gigatrader pages.",
-)
-new_slug = slugs[labels.index(new_label)]
+    if chosen != current_slug:
+        st.session_state["nav.slug"] = chosen
+        try:
+            st.query_params["page"] = chosen
+        except Exception:  # pragma: no cover - legacy fallback
+            st.experimental_set_query_params(page=chosen)
+        st.rerun()
 
-st.session_state.setdefault("api.base_url", os.getenv("API_BASE_URL") or "http://127.0.0.1:8000")
-
-# Update query params and rerun only if changed
-if new_slug != slug:
-    st.session_state["nav.slug"] = new_slug
-    try:
-        st.query_params.clear()
-        st.query_params.update(page=new_slug)
-    except Exception:
-        st.experimental_set_query_params(page=new_slug)
-    st.rerun()
-
-# Resolve and call the page's render() as a package import (keeps ui.* imports working)
-_, module_path, fn_name = PAGES[slug]
-module = importlib.import_module(module_path)
-render_fn: Callable[..., Any] = getattr(module, fn_name)
+    return chosen
 
 
 def _call_render(fn: Callable[..., Any]) -> Optional[Any]:
-    state = init_session_state()
-    api = get_backend()
+    state: AppSessionState = init_session_state()
+    api: BrokerAPI = get_backend()
 
     try:
         return fn(api, state)  # type: ignore[arg-type]
@@ -110,4 +119,16 @@ def _call_render(fn: Callable[..., Any]) -> Optional[Any]:
                 return fn()
 
 
-_call_render(render_fn)
+def main() -> None:
+    st.set_page_config(page_title="Gigatrader", layout="wide")
+    _init_session_defaults()
+
+    slug = _slug_from_query()
+    st.session_state["nav.slug"] = slug
+    slug = _select_page(slug)
+    renderer = PAGE_REGISTRY.get(slug, control_center.render)
+    _call_render(renderer)
+
+
+if __name__ == "__main__":
+    main()
