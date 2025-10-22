@@ -1,23 +1,8 @@
 from __future__ import annotations
 
-"""Page exports for Streamlit routing."""
-
-from . import (
-    backtest_reports,
-    control_center,
-    diagnostics_logs,
-    logs_pacing,
-    option_chain,
-    research,
-    strategy_tuning,
-)
-
-__all__ = [
-    "backtest_reports",
-    "control_center",
-    "diagnostics_logs",
-    "logs_pacing",
-    "option_chain",
-    "research",
-    "strategy_tuning",
-]
+from .control_center import render as render_control_center  # noqa: F401
+from .option_chain import render as render_option_chain      # noqa: F401
+try:
+    from .diagnostics_logs import render as render_diagnostics_logs  # noqa: F401
+except Exception:
+    pass

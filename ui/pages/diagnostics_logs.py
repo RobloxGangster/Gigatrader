@@ -162,7 +162,8 @@ def _ensure_state() -> list[str]:
 
 
 def render(_: object | None = None, __: object | None = None) -> None:
-    st.title("Diagnostics / Logs")
+    st.header("Diagnostics / Logs")
+    st.caption("System diagnostics and log export utilities.")
 
     warning_messages = _ensure_state()
 
