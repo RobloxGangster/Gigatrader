@@ -19,26 +19,12 @@ _TESTING = "PYTEST_CURRENT_TEST" in os.environ
 REFRESH_INTERVAL_SEC = 5
 STATUS_POLL_INTERVAL = 1.5
 STATUS_POLL_WINDOW = 10.0
-DEFAULT_AUTO_REFRESH = not _TESTING
 DEFAULT_PRESETS: Tuple[str, ...] = ("safe", "balanced", "high_risk")
 STRATEGY_LABELS: Dict[str, str] = {
     "intraday_momo": "Intraday Momentum",
     "intraday_revert": "Intraday Mean Reversion",
     "swing_breakout": "Swing Breakout",
 }
-
-
-def _rerun():
-    try:
-        import streamlit as st  # noqa: WPS433 - local import for compatibility
-        st.rerun()
-    except Exception:
-        # older Streamlit
-        import streamlit as st  # noqa: WPS433 - local import for compatibility
-        if hasattr(st, "experimental_rerun"):
-            st.experimental_rerun()
-
-
 def _fmt_money(value: Any, digits: int = 2) -> str:
     try:
         return fmt_currency(to_float(value), digits=digits)
@@ -424,14 +410,12 @@ def _render_stream_controls(stream: Dict[str, Any], api: ApiClient) -> None:
         try:
             api.stream_start()
             st.toast("Stream start requested", icon="📡")
-            _rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to start stream: {exc}")
     if cols[1].button("Stop Stream", disabled=not running, key="cc_stream_stop"):
         try:
             api.stream_stop()
             st.toast("Stream stop requested", icon="🛑")
-            _rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to stop stream: {exc}")
 
@@ -608,14 +592,10 @@ def render(
     if not require_backend(api):
         return
 
-    if "__cc_auto_refresh_last__" not in st.session_state:
-        st.session_state["__cc_auto_refresh_last__"] = time.time()
-
     action_cols = st.columns([1, 1, 1])
     with action_cols[0]:
         if st.button("Refresh", key="cc_manual_refresh"):
             st.session_state["__cc_manual_refresh_ts__"] = time.time()
-            _rerun()
     with action_cols[1]:
         if st.button("Start Orchestrator", key="cc_orchestrator_start_button"):
             try:
@@ -624,7 +604,6 @@ def render(
                 st.warning(f"Start failed: {exc}")
             else:
                 _schedule_status_poll()
-                _rerun()
     with action_cols[2]:
         if st.button("Stop Orchestrator", key="cc_orchestrator_stop_button"):
             try:
@@ -633,15 +612,13 @@ def render(
                 st.warning(f"Stop failed: {exc}")
             else:
                 _schedule_status_poll()
-                _rerun()
 
-    auto_enabled = st.checkbox(
+    st.session_state.setdefault("telemetry.autorefresh", False)
+    auto_enabled = st.toggle(
         "Auto-refresh telemetry",
-        value=st.session_state.get("__cc_auto_refresh__", DEFAULT_AUTO_REFRESH),
-        key="cc_auto_refresh_toggle",
+        key="telemetry.autorefresh",
         help="Refresh KPIs and tables every few seconds.",
     )
-    st.session_state["__cc_auto_refresh__"] = auto_enabled
 
     data = _load_remote_state(api)
 
@@ -716,17 +693,13 @@ def render(
     if poll_until and now_ts >= poll_until:
         st.session_state.pop("__cc_status_poll_until__", None)
 
-    if st.session_state.get("__cc_auto_refresh__"):
-        last_tick = st.session_state.get("__cc_auto_refresh_last__", 0.0)
-        wait = max(0.0, REFRESH_INTERVAL_SEC - (now_ts - last_tick))
-        if wait > 0:
-            time.sleep(wait)
-        st.session_state["__cc_auto_refresh_last__"] = time.time()
-        _rerun()
-        return
+    if auto_enabled:
+        st.autorefresh(interval=int(REFRESH_INTERVAL_SEC * 1000), key="telemetry.autorefresh.tick")
 
     if not _TESTING:
-        poll_until = st.session_state.get("__cc_status_poll_until__", 0.0)
-        if poll_until and poll_until > time.time():
-            time.sleep(STATUS_POLL_INTERVAL)
-            _rerun()
+        next_poll = st.session_state.get("__cc_status_poll_until__", 0.0)
+        if next_poll and next_poll > now_ts:
+            st.autorefresh(
+                interval=int(STATUS_POLL_INTERVAL * 1000),
+                key="telemetry.status.poll",
+            )

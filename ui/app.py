@@ -95,7 +95,7 @@ def _render_sidebar_nav(current_slug: str) -> None:
         idx = 0
     # Use sidebar selectbox: its menu popover is most reliable w/ Playwright
     choice = st.sidebar.selectbox(
-        "Navigate",
+        "Navigation",
         labels,
         index=idx,
         key="global-nav-select",
@@ -186,23 +186,23 @@ def main():
     _render_mode_badge(flags.mock_mode)
     st.write("")  # spacer
 
-    with st.sidebar:
-        st.title("Gigatrader")
-        if _is_mock_mode():
-            st.info("Mock mode is enabled")
-        if not _is_mock_mode() and mock_mode():
-            st.info("Mock mode enabled – using fixture backend.")
-        st.caption(f"API: {api_base_url()}")
-        st.caption(f"Profile: {state.profile}")
-        if _is_mock_mode():
-            if st.button("Start Paper"):
-                try:
-                    import requests
+    st.sidebar.title("Gigatrader")
+    if _is_mock_mode():
+        st.sidebar.info("Mock mode is enabled")
+        st.sidebar.write("Mock mode is enabled")
+    if not _is_mock_mode() and mock_mode():
+        st.sidebar.info("Mock mode enabled – using fixture backend.")
+    st.sidebar.caption(f"API: {api_base_url()}")
+    st.sidebar.caption(f"Profile: {state.profile}")
+    if _is_mock_mode():
+        if st.sidebar.button("Start Paper"):
+            try:
+                import requests
 
-                    base = api_base_url().rstrip("/")
-                    requests.post(f"{base}/paper/start", timeout=1)
-                except Exception:
-                    pass
+                base = api_base_url().rstrip("/")
+                requests.post(f"{base}/paper/start", timeout=1)
+            except Exception:
+                pass
     # Then the page content
     page = _resolve_page()
     render_fn = page.get("render")
@@ -210,3 +210,7 @@ def main():
         render_fn()
     else:  # pragma: no cover - defensive
         raise RuntimeError("Invalid page renderer")
+
+
+if __name__ == "__main__":
+    main()
