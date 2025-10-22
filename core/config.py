@@ -21,7 +21,7 @@ except ModuleNotFoundError:  # pragma: no cover - executed in minimal environmen
 
 from dataclasses import dataclass, field, asdict
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from core.runtime_flags import BrokerMode, get_runtime_flags
 
@@ -44,12 +44,24 @@ def get_api_base_url() -> str:
 
 
 class OrderDefaults(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="", extra="ignore", populate_by_name=True)
 
-    tif: str = Field(default="day", env="DEFAULT_TIF")
-    allow_brackets: bool = Field(default=True, env="ALLOW_BRACKETS")
-    default_tp_pct: float = Field(default=0.01, env="DEFAULT_TP_PCT")
-    default_sl_pct: float = Field(default=0.005, env="DEFAULT_SL_PCT")
+    tif: str = Field(
+        default="day",
+        validation_alias=AliasChoices("DEFAULT_TIF", "tif"),
+    )
+    allow_brackets: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("ALLOW_BRACKETS", "allow_brackets"),
+    )
+    default_tp_pct: float = Field(
+        default=0.01,
+        validation_alias=AliasChoices("DEFAULT_TP_PCT", "default_tp_pct"),
+    )
+    default_sl_pct: float = Field(
+        default=0.005,
+        validation_alias=AliasChoices("DEFAULT_SL_PCT", "default_sl_pct"),
+    )
 
 
 @dataclass(slots=True)

@@ -97,28 +97,46 @@ def _create_repro_bundle() -> Path | None:
     return bundle_path
 
 
-def _ensure_state() -> None:
+def _ensure_state() -> str | None:
+    message: str | None = None
     if _RUN_STATE_KEY not in st.session_state:
         st.session_state[_RUN_STATE_KEY] = False
     if _ZIP_STATE_KEY not in st.session_state:
-        st.session_state[_ZIP_STATE_KEY] = _make_zip()
+        try:
+            st.session_state[_ZIP_STATE_KEY] = _make_zip()
+        except Exception:  # noqa: BLE001 - defensive guard
+            st.session_state[_ZIP_STATE_KEY] = b""
+            message = "Unable to bundle logs at startup"
     if _REPRO_STATE_KEY not in st.session_state:
         st.session_state[_REPRO_STATE_KEY] = None
+    return message
 
 
 def render(_: object | None = None, __: object | None = None) -> None:
-    st.header("Diagnostics / Logs")
+    st.title("Diagnostics / Logs")
 
-    _ensure_state()
+    warning_message = _ensure_state()
 
     col_run, col_export = st.columns(2)
     with col_run:
         if st.button("Run Diagnostics", key="run-diag"):
             _run_diagnostics()
             st.session_state[_RUN_STATE_KEY] = True
-            st.session_state[_ZIP_STATE_KEY] = _make_zip()
+            try:
+                st.session_state[_ZIP_STATE_KEY] = _make_zip()
+            except Exception:  # noqa: BLE001 - defensive guard
+                st.session_state[_ZIP_STATE_KEY] = b""
+                warning_message = warning_message or "Unable to bundle logs"
     with col_export:
-        logs_payload = st.session_state.get(_ZIP_STATE_KEY) or _make_zip()
+        logs_payload = st.session_state.get(_ZIP_STATE_KEY)
+        if not logs_payload:
+            try:
+                logs_payload = _make_zip()
+                st.session_state[_ZIP_STATE_KEY] = logs_payload
+            except Exception:  # noqa: BLE001 - defensive guard
+                logs_payload = b""
+                st.session_state[_ZIP_STATE_KEY] = logs_payload
+                warning_message = warning_message or "Unable to bundle logs"
         st.download_button(
             "Export Logs",
             logs_payload,
@@ -126,6 +144,9 @@ def render(_: object | None = None, __: object | None = None) -> None:
             mime="application/zip",
             key="export-logs",
         )
+
+    if warning_message:
+        st.warning(f"{warning_message}. Check server logs for details.")
 
     if st.session_state.get(_RUN_STATE_KEY):
         st.success("Diagnostics complete")
