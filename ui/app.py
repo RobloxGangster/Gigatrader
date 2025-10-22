@@ -62,7 +62,7 @@ def _register_pages(api: object, state: AppSessionState) -> None:
         headings=("Backtest Reports",),
     )
     register_page(
-        slug="diagnostics-logs",
+        slug="diagnostics",
         label="Diagnostics / Logs",
         render=lambda: render_diagnostics(api, state),
         headings=("Diagnostics / Logs", "Diagnostics", "Logs & Pacing", "Logs"),
@@ -197,6 +197,24 @@ def main() -> None:
             help="Jump to a page",
         )
 
+        st.markdown(
+            """
+            <script>
+            (function() {
+              const doc = window.parent.document;
+              const navRoot = doc.querySelector('div[data-testid="nav-root"]');
+              if (!navRoot) { return; }
+              const selectButton = navRoot.parentElement?.querySelector('div[data-baseweb="select"] button');
+              if (selectButton) {
+                selectButton.setAttribute('data-testid', 'nav-select');
+                selectButton.setAttribute('aria-haspopup', 'listbox');
+              }
+            })();
+            </script>
+            """,
+            unsafe_allow_html=True,
+        )
+
     if choice != current_label:
         try:
             new_slug = label_to_slug(choice)
@@ -226,7 +244,7 @@ def main() -> None:
             try:
                 import requests
 
-                base = os.getenv("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+                base = api_base_url().rstrip("/")
                 requests.post(f"{base}/paper/start", timeout=1)
             except Exception:
                 pass

@@ -8,5 +8,3 @@ def safe_rerun() -> None:
 
     if hasattr(st, "rerun"):
         st.rerun()  # type: ignore[call-arg]
-    elif hasattr(st, "experimental_rerun"):
-        st.experimental_rerun()  # type: ignore[attr-defined]
