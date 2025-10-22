@@ -28,6 +28,8 @@ _BUNDLE_CANDIDATES = (
 _DIAG_STATE_KEY = "__diagnostics_bundle__"
 _LOG_EXPORT_STATE_KEY = "__log_export_bundle__"
 
+DIAGNOSTICS_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def _ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
@@ -244,6 +246,17 @@ def render(*_: object, api_client: ApiClient | None = None) -> None:
                 st.error(f"Failed to create bundle: {exc}")
             else:
                 st.success(f"Created bundle: {bundle_path}")
+
+    json_path = DIAGNOSTICS_DIR / "latest.json"
+    if json_path.exists():
+        st.download_button(
+            "Download Diagnostics JSON",
+            json_path.read_bytes(),
+            file_name="latest.json",
+            mime="application/json",
+            use_container_width=True,
+            key="download-diagnostics-json",
+        )
 
     diag_state = st.session_state.get(_DIAG_STATE_KEY)
     if isinstance(diag_state, dict) and diag_state.get("data"):

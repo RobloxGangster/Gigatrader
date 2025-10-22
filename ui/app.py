@@ -12,11 +12,11 @@ from ui.pages.control_center import render as render_control_center
 from ui.pages.option_chain import render as render_option_chain
 from ui.pages.research import render as render_research
 from ui.pages.strategy_tuning import render as render_strategy_tuning
-from ui.pages.diagnostics_logs import render as render_diagnostics
+from ui.pages.diagnostics_logs import render as render_diagnostics_logs
 from ui.router import (
     PAGES,
+    PageDef,
     all_labels,
-    get_page_from_query_params,
     label_to_slug,
     register_page,
 )
@@ -64,9 +64,36 @@ def _register_pages(api: object, state: AppSessionState) -> None:
     register_page(
         slug="diagnostics",
         label="Diagnostics / Logs",
-        render=lambda: render_diagnostics(api, state),
+        render=lambda: render_diagnostics_logs(api, state),
         headings=("Diagnostics / Logs", "Diagnostics", "Logs & Pacing", "Logs"),
     )
+
+
+DEFAULT_SLUG = "control-center"
+
+
+def _page_from_query_or_default() -> PageDef:
+    """Resolve the current page from query params, falling back gracefully."""
+
+    slug: str = DEFAULT_SLUG
+    try:
+        qp = st.query_params  # type: ignore[attr-defined]
+        raw = qp.get("page")
+    except Exception:
+        legacy_qp = st.experimental_get_query_params()  # type: ignore[attr-defined]
+        raw = legacy_qp.get("page")
+    if isinstance(raw, list):
+        slug = raw[0] if raw else DEFAULT_SLUG
+    elif raw:
+        slug = raw
+    slug = str(slug or DEFAULT_SLUG).strip().lower()
+    page = PAGES.get(slug)
+    if page:
+        return page
+    fallback = next(iter(PAGES.values()), None)
+    if fallback is None:  # pragma: no cover - sanity guard
+        raise RuntimeError("No pages registered")
+    return fallback
 
 
 def _get_query_params_state() -> tuple[dict, object | None, bool]:
@@ -157,25 +184,20 @@ def main() -> None:
     if not PAGES:
         raise RuntimeError("No pages registered")
 
-    qp_dict, qp_obj, has_new_api = _get_query_params_state()
-    current_slug = get_page_from_query_params(qp_dict, default_slug="control-center")
-    if current_slug not in PAGES:
-        current_slug = "control-center"
+    _, qp_obj, has_new_api = _get_query_params_state()
+    current_page = _page_from_query_or_default()
+    current_slug = current_page.slug
 
     labels = all_labels()
-    try:
-        current_label = PAGES[current_slug].label
-    except KeyError:
-        # Fallback to the first registered page if something goes wrong.
-        current_slug = next(iter(PAGES))
-        current_label = PAGES[current_slug].label
+    current_label = current_page.label
 
     try:
         current_index = labels.index(current_label)
     except ValueError:
         current_index = 0
-        current_slug = next(iter(PAGES))
-        current_label = labels[current_index]
+        if labels:
+            current_label = labels[current_index]
+            current_slug = label_to_slug(current_label)
 
     st.markdown(
         """
@@ -188,6 +210,7 @@ def main() -> None:
 
     with st.sidebar:
         st.markdown('<div data-testid="nav-root"></div>', unsafe_allow_html=True)
+        st.markdown('<div data-testid="nav-select"></div>', unsafe_allow_html=True)
         choice = st.selectbox(
             "Navigation",
             labels,
