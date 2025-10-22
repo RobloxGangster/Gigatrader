@@ -8,15 +8,19 @@ from ui.lib.api_client import discover_base_url, reset_discovery_cache
 
 
 def api_base_url() -> str:
-    """Return the discovered backend base URL."""
+    """
+    API base URL used by the UI. Prefer explicit env override,
+    otherwise use the discovered base (cached).
+    """
 
-    return discover_base_url()
+    return os.environ.get("API_BASE_URL") or discover_base_url()
 
 
-def reset_api_base_url_cache() -> None:
-    """Clear the cached discovery base URL (testing helper)."""
+def force_redetect_api_base() -> str:
+    """For diagnostics: clear cache and rediscover."""
 
     reset_discovery_cache()
+    return api_base_url()
 
 
 def mock_mode() -> bool:

@@ -1,17 +1,59 @@
 from __future__ import annotations
+
 import os
+from functools import lru_cache
+from typing import Iterable
+
 import requests
 import streamlit as st
 from urllib.parse import urljoin
 
 DEFAULT_API = "http://127.0.0.1:8000"
 
+DEFAULTS: tuple[str, ...] = (
+    os.environ.get("API_BASE_URL") or "",
+    os.environ.get("GIGATRADER_API") or "",
+    os.environ.get("GIGAT_API_URL") or "",
+    DEFAULT_API,
+    "http://127.0.0.1:18000",
+    "http://localhost:8000",
+)
+
+
+def _candidates() -> Iterable[str]:
+    for base in DEFAULTS:
+        if base:
+            yield base
+
+
+try:
+    from .api_client import discover_api_base_url as _existing_discover  # type: ignore
+except Exception:  # pragma: no cover - compatibility shim
+    _existing_discover = None  # type: ignore
+
+
+@lru_cache(maxsize=1)
+def discover_base_url() -> str:
+    """Return a usable API base URL, cached for performance."""
+    if callable(_existing_discover):
+        return _existing_discover()
+
+    for candidate in _candidates():
+        return candidate
+    return DEFAULT_API
+
+
+def reset_discovery_cache() -> None:
+    """Clear the cached API base URL discovery result."""
+    discover_base_url.cache_clear()  # type: ignore[attr-defined]
+
+
 def _base_url() -> str:
-    # Prefer a value the Control Center or Home set; fall back to env or default
+    # Prefer a value the Control Center or Home set; fall back to env or discovery
     return (
         st.session_state.get("api.base_url")
         or os.getenv("API_BASE_URL")
-        or DEFAULT_API
+        or discover_base_url()
     )
 
 def build_url(path: str) -> str:
