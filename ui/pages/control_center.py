@@ -6,6 +6,20 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 import streamlit as st
 
+try:  # pragma: no cover - optional dependency
+    from streamlit_autorefresh import st_autorefresh  # type: ignore
+except Exception:  # pragma: no cover - fallback when extra not installed
+    def st_autorefresh(*, interval: int, key: str) -> int:
+        count_key = f"__autorefresh_count__{key}"
+        last_key = f"__autorefresh_last__{key}"
+        now = time.time()
+        last = float(st.session_state.get(last_key, 0.0))
+        if now - last >= interval / 1000.0:
+            st.session_state[last_key] = now
+            st.session_state[count_key] = int(st.session_state.get(count_key, 0)) + 1
+            st.rerun()
+        return int(st.session_state.get(count_key, 0))
+
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
 from ui.services.backend import BrokerAPI
@@ -565,9 +579,14 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
         data["exposure"] = {}
 
     try:
-        logs_payload = api.recent_logs(limit=200)
+        logs_payload = api.logs_recent(limit=200)
         if isinstance(logs_payload, dict):
-            data["logs"] = logs_payload.get("lines", [])
+            lines = logs_payload.get("lines")
+            if not isinstance(lines, list):
+                lines = logs_payload.get("entries") or logs_payload.get("events")
+            data["logs"] = lines if isinstance(lines, list) else []
+        elif isinstance(logs_payload, list):
+            data["logs"] = logs_payload
         else:
             data["logs"] = []
     except Exception as exc:  # noqa: BLE001
@@ -694,12 +713,15 @@ def render(
         st.session_state.pop("__cc_status_poll_until__", None)
 
     if auto_enabled:
-        st.autorefresh(interval=int(REFRESH_INTERVAL_SEC * 1000), key="telemetry.autorefresh.tick")
+        st_autorefresh(
+            interval=int(REFRESH_INTERVAL_SEC * 1000),
+            key="telemetry.autorefresh.tick",
+        )
 
     if not _TESTING:
         next_poll = st.session_state.get("__cc_status_poll_until__", 0.0)
         if next_poll and next_poll > now_ts:
-            st.autorefresh(
+            st_autorefresh(
                 interval=int(STATUS_POLL_INTERVAL * 1000),
                 key="telemetry.status.poll",
             )
