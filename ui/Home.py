@@ -70,10 +70,11 @@ def main() -> None:
 
     st.markdown(
         """
-  <style>
-    [data-testid="stSidebarNav"] { display: none !important; }
-  </style>
-""",
+    <style>
+      /* Hide Streamlit's auto-generated sidebar page nav to avoid duplication */
+      section[data-testid="stSidebarNav"] { display: none !important; }
+    </style>
+    """,
         unsafe_allow_html=True,
     )
 

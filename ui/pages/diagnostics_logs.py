@@ -8,21 +8,29 @@ from typing import Any, Dict, Iterable, List
 import pandas as pd
 import streamlit as st
 
-from ui.lib.api_client import ApiClient, build_url
-
-try:  # Prefer the official helper when available.
-    from streamlit_autorefresh import st_autorefresh  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+# --- Streamlit autorefresh compatibility -----------------------------------
+try:
+    # Preferred helper on newer Streamlit versions
+    from streamlit import st_autorefresh  # type: ignore
+except Exception:
+    # Fallback shim for older/newer variants without st_autorefresh
     def st_autorefresh(*, interval: int, key: str) -> int:
-        count_key = f"__autorefresh_count__{key}"
-        last_key = f"__autorefresh_last__{key}"
+        count_key = f"__count__{key}"
         now = time.time()
-        last = float(st.session_state.get(last_key, 0.0))
+        last = float(st.session_state.get(key, 0.0))
         if now - last >= interval / 1000.0:
-            st.session_state[last_key] = now
+            st.session_state[key] = now
             st.session_state[count_key] = int(st.session_state.get(count_key, 0)) + 1
-            st.rerun()
+            try:
+                # Newer API
+                st.rerun()
+            except Exception:
+                # Older API
+                st.experimental_rerun()
         return int(st.session_state.get(count_key, 0))
+# ---------------------------------------------------------------------------
+
+from ui.lib.api_client import ApiClient, build_url
 
 STATE_KEY = "__diagnostics_state__"
 DEFAULT_LINES = 200

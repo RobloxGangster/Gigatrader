@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from app.execution.alpaca_adapter import AlpacaUnauthorized
 from core.broker_config import is_mock
@@ -106,6 +106,61 @@ class BrokerService:
         if isinstance(last_headers, Mapping):
             return dict(last_headers)
         return None
+
+    def cancel_all_orders(self) -> int:
+        cancel_all = getattr(self._adapter, "cancel_all_orders", None)
+        if callable(cancel_all):
+            result = cancel_all()
+            if isinstance(result, Mapping) and "canceled" in result:
+                try:
+                    return int(result["canceled"])
+                except Exception:  # pragma: no cover - defensive
+                    return 0
+            if isinstance(result, Iterable) and not isinstance(result, (str, bytes)):
+                return sum(1 for _ in result)
+            if isinstance(result, int):
+                return result
+            if result is None:
+                return 0
+
+        cancel_orders = getattr(self._adapter, "cancel_orders", None)
+        if callable(cancel_orders):
+            result = cancel_orders()
+            if isinstance(result, Mapping) and "canceled" in result:
+                try:
+                    return int(result["canceled"])
+                except Exception:  # pragma: no cover - defensive
+                    return 0
+            if isinstance(result, Iterable) and not isinstance(result, (str, bytes)):
+                return sum(1 for _ in result)
+            if isinstance(result, int):
+                return result
+            if result is None:
+                return 0
+
+        cancel_one = getattr(self._adapter, "cancel_order", None)
+        if callable(cancel_one):
+            canceled = 0
+            for order in self.get_orders(status="open", limit=500):
+                order_id = order.get("id") or order.get("order_id")
+                if not order_id:
+                    continue
+                try:
+                    result = cancel_one(str(order_id))
+                except Exception:  # pragma: no cover - defensive
+                    continue
+                if result is False:  # pragma: no cover - adapter-specific
+                    continue
+                canceled += 1
+            return canceled
+
+        raise RuntimeError("cancel_all_orders not supported")
+
+    def reconcile_state(self) -> Dict[str, Any]:
+        return reconcile.pull_all_if_live()
+
+    def sync(self) -> Dict[str, Any]:
+        return self.reconcile_state()
 
 
 @dataclass

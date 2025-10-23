@@ -1,23 +1,36 @@
-"""Reconciliation endpoints for syncing state from Alpaca."""
+"""Reconciliation endpoints for syncing broker state."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
-from app.execution.alpaca_adapter import AlpacaAdapter
-
-# NOTE:
-# Do not import symbols from broker router here.  Importing a concrete
-# adapter (e.g. "alpaca") at import time creates circular deps and breaks
-# uvicorn startup.  All broker access is resolved via deps/get_broker.
 from backend.routers.deps import BrokerService, get_broker
 
-router = APIRouter(tags=["reconcile"])
+router = APIRouter(prefix="/reconcile", tags=["reconcile"])
 
 
-@router.post("/reconcile/sync")
-def reconcile_now(service: BrokerService = Depends(get_broker)) -> dict:
-    adapter: AlpacaAdapter = service.adapter
-    orders = service.get_orders(status="all", limit=200)
-    positions = service.get_positions()
-    return {"orders": len(orders), "positions": len(positions)}
+@router.post("/cancel_all")
+def cancel_all(broker: BrokerService = Depends(get_broker)) -> dict[str, str]:
+    try:
+        broker.cancel_all_orders()
+        return {"status": "ok"}
+    except Exception as exc:  # noqa: BLE001 - surface broker failures
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/sync")
+def sync(broker: BrokerService = Depends(get_broker)):
+    """Trigger broker reconciliation and return the adapter response."""
+
+    try:
+        if hasattr(broker, "reconcile_state"):
+            return broker.reconcile_state()
+        if hasattr(broker, "sync"):
+            return broker.sync()
+        return {"status": "ok"}
+    except Exception as exc:  # noqa: BLE001 - propagate failure with context
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+__all__ = ["router"]
+
