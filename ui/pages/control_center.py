@@ -6,10 +6,30 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 import streamlit as st
 
+# --- Streamlit autorefresh compatibility -----------------------------------
+try:
+    # Preferred helper on newer Streamlit versions
+    from streamlit import st_autorefresh  # type: ignore
+except Exception:
+    # Fallback shim for older/newer variants without st_autorefresh
+    def st_autorefresh(interval: int, key: str):
+        import time
+
+        now = time.time()
+        last = st.session_state.get(key, 0.0)
+        if now - last >= (interval / 1000.0):
+            st.session_state[key] = now
+            try:
+                # Newer API
+                st.rerun()
+            except Exception:
+                # Older API
+                st.experimental_rerun()
+# ---------------------------------------------------------------------------
+
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
 from ui.lib.api_client import ApiClient
-from ui.lib.ui_compat import auto_refresh
 from ui.lib.page_guard import require_backend
 from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
@@ -713,9 +733,9 @@ def render(
         st.session_state.pop("__cc_status_poll_until__", None)
 
     if auto_enabled:
-        auto_refresh(interval_ms=int(REFRESH_INTERVAL_SEC * 1000), key="telemetry.autorefresh.tick")
+        st_autorefresh(interval=int(REFRESH_INTERVAL_SEC * 1000), key="telemetry.autorefresh.tick")
 
     if not _TESTING:
         next_poll = st.session_state.get("__cc_status_poll_until__", 0.0)
         if next_poll and next_poll > now_ts:
-            auto_refresh(interval_ms=int(STATUS_POLL_INTERVAL * 1000), key="telemetry.status.poll")
+            st_autorefresh(interval=int(STATUS_POLL_INTERVAL * 1000), key="telemetry.status.poll")
