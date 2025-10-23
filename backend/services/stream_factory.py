@@ -1,84 +1,78 @@
 from __future__ import annotations
 
-import asyncio
 import logging
+import os
 from dataclasses import dataclass
-from typing import Any
-
-from app.market.stream_manager import StreamManager
-from app.streams.factory import MockStream
-from core.broker_config import AlpacaConfig
-from core.runtime_flags import RuntimeFlags, require_alpaca_keys
+from typing import Any, Dict, Optional
 
 log = logging.getLogger(__name__)
 
 
+def _parse_bool(val: Optional[str], default: bool = False) -> bool:
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on", "y"}
+
+
 @dataclass
 class StreamService:
-    """Lightweight wrapper exposing a consistent stream interface."""
+    """
+    Tiny facade describing the active market data stream source and health.
+    This is intentionally minimal because the UI only queries /stream/status.
+    """
+    source: str  # "alpaca" | "mock"
+    healthy: bool = True
+    last_error: Optional[str] = None
 
-    client: Any
-    source: str
-    last_error: str | None = None
-
-    def status(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {"source": self.source}
-        try:
-            status = self.client.status() if hasattr(self.client, "status") else {}
-        except Exception as exc:  # pragma: no cover - defensive guard
-            self.last_error = str(exc)
-            status = {"state": "offline"}
-        if isinstance(status, dict):
-            payload.update(status)
-            running = status.get("running")
-            if running is None:
-                state = str(status.get("state") or status.get("status") or "").lower()
-                running = state in {"online", "running", "connected"}
-            if self.source == "mock" and not running:
-                running = True
-            payload["running"] = bool(running)
-        if self.last_error:
-            payload["last_error"] = self.last_error
-        return payload
-
-    def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
-        if not hasattr(self.client, "start"):
-            return
-        try:
-            self.client.start(loop)
-            self.last_error = None
-        except Exception as exc:  # pragma: no cover - surface via status
-            self.last_error = str(exc)
-            log.error("stream_start_failed source=%s error=%s", self.source, exc)
-            raise
-
-    def stop(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
-        if not hasattr(self.client, "stop"):
-            return
-        try:
-            self.client.stop(loop)
-        except Exception as exc:  # pragma: no cover - surface via status
-            self.last_error = str(exc)
-            log.error("stream_stop_failed source=%s error=%s", self.source, exc)
-            raise
+    async def status(self) -> Dict[str, Any]:
+        """
+        Shape returned by the /stream/status endpoint.
+        """
+        return {
+            "source": self.source,
+            "healthy": bool(self.healthy),
+            "error": self.last_error,
+        }
 
 
-def _build_alpaca_config(flags: RuntimeFlags) -> AlpacaConfig:
-    return AlpacaConfig(
-        base_url=flags.alpaca_base_url,
-        key_id=flags.alpaca_key or "",
-        secret_key=flags.alpaca_secret or "",
-    )
+def _alpaca_env_health() -> tuple[bool, Optional[str]]:
+    """
+    Validate presence of required Alpaca environment variables.
+    Returns (healthy, error_message_if_any).
+    """
+    key = os.getenv("ALPACA_KEY_ID")
+    secret = os.getenv("ALPACA_SECRET_KEY")
+    base_url = os.getenv("ALPACA_BASE_URL")
+    if not key or not secret or not base_url:
+        msg = (
+            "Missing Alpaca credentials: require ALPACA_KEY_ID, "
+            "ALPACA_SECRET_KEY and ALPACA_BASE_URL."
+        )
+        return False, msg
+    return True, None
 
 
-def make_stream_service(flags: RuntimeFlags) -> StreamService:
-    if flags.mock_mode:
-        return StreamService(client=MockStream(), source="mock")
+def make_stream_service(flags: Any | None = None) -> StreamService:
+    """
+    Build a StreamService based on environment/runtime flags.
+    - If MOCK_MODE=true -> mock source.
+    - Otherwise -> alpaca; mark unhealthy with a precise error if creds missing.
+    The optional `flags` arg is accepted for compatibility but not required.
+    """
+    mock_mode = _parse_bool(os.getenv("MOCK_MODE"), default=False)
 
-    require_alpaca_keys()
-    cfg = _build_alpaca_config(flags)
-    manager = StreamManager(cfg)
-    return StreamService(client=manager, source="alpaca")
- 
- 
- __all__ = ["StreamService", "make_stream_service"]
+    if mock_mode:
+        log.info("Stream source selected: mock (MOCK_MODE=true)")
+        return StreamService(source="mock", healthy=True)
+
+    healthy, err = _alpaca_env_health()
+    if not healthy:
+        log.error("Stream source selected: alpaca, but unhealthy: %s", err)
+        return StreamService(source="alpaca", healthy=False, last_error=err)
+
+    log.info("Stream source selected: alpaca")
+    return StreamService(source="alpaca", healthy=True)
+
+
+__all__ = ["StreamService", "make_stream_service"]
+
