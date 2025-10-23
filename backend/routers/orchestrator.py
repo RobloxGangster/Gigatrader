@@ -1,9 +1,12 @@
-"""Orchestrator endpoints for the Control Center."""
+from __future__ import annotations
 
-from typing import Optional
+import asyncio
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
+
+from core.runtime_flags import get_runtime_flags, require_alpaca_keys
 
 from .deps import get_orchestrator
 
@@ -18,18 +21,25 @@ class OrchestratorStartPayload(BaseModel):
 
 
 class OrchestratorStatus(BaseModel):
+    state: Literal["running", "stopped"]
     running: bool
-    last_start: str | None = None
     last_error: str | None = None
+    last_heartbeat: str | None = None
+    uptime_secs: float = 0.0
+    restart_count: int = 0
 
     model_config = ConfigDict(extra="allow")
 
 
 def _build_status(snapshot: dict) -> OrchestratorStatus:
-    payload = dict(snapshot)
-    payload.setdefault("running", bool(snapshot.get("running")))
-    payload.setdefault("last_start", snapshot.get("last_start"))
-    payload.setdefault("last_error", snapshot.get("last_error"))
+    payload = {
+        "state": str(snapshot.get("state") or "stopped"),
+        "running": bool(snapshot.get("running")),
+        "last_error": snapshot.get("last_error"),
+        "last_heartbeat": snapshot.get("last_heartbeat"),
+        "uptime_secs": float(snapshot.get("uptime_secs") or 0.0),
+        "restart_count": int(snapshot.get("restart_count") or 0),
+    }
     return OrchestratorStatus(**payload)
 
 
@@ -44,26 +54,33 @@ def orchestrator_status() -> OrchestratorStatus:
 
 
 @router.post("/start", response_model=OrchestratorStatus)
-def orchestrator_start(payload: OrchestratorStartPayload | None = None) -> OrchestratorStatus:
+async def orchestrator_start(payload: OrchestratorStartPayload | None = None) -> OrchestratorStatus:
     orch = get_orchestrator()
     try:
-        preset = payload.preset if payload else None
-        mode = (payload.mode or "paper") if payload else "paper"
-        result = orch.start_sync(mode=mode, preset=preset)
+        flags = get_runtime_flags()
+        if not flags.mock_mode:
+            try:
+                require_alpaca_keys()
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await orch.start()
+        await asyncio.sleep(0)
         snapshot = orch.status()
-        payload = {**snapshot, **result}
-        return _build_status(payload)
+        if payload and payload.preset:
+            snapshot["preset"] = payload.preset
+        return _build_status(snapshot)
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001 - surfaced to client
         raise HTTPException(status_code=500, detail=f"orchestrator_start: {exc}") from exc
 
 
 @router.post("/stop", response_model=OrchestratorStatus)
-def orchestrator_stop() -> OrchestratorStatus:
+async def orchestrator_stop() -> OrchestratorStatus:
     orch = get_orchestrator()
     try:
-        result = orch.stop_sync()
+        await orch.stop()
         snapshot = orch.status()
-        payload = {**snapshot, **result}
-        return _build_status(payload)
+        return _build_status(snapshot)
     except Exception as exc:  # noqa: BLE001 - surfaced to client
         raise HTTPException(status_code=500, detail=f"orchestrator_stop: {exc}") from exc

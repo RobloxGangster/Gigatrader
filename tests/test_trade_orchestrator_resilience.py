@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -59,9 +59,10 @@ class StubDataClient:  # pragma: no cover - placeholder
 
 FLAGS = RuntimeFlags(
     mock_mode=False,
-    broker_mode="paper",
-    paper_trading=True,
+    broker="alpaca",
+    dry_run=False,
     auto_restart=True,
+    paper_trading=True,
     api_base_url="http://localhost",
     api_port=8000,
     ui_port=8501,
@@ -114,7 +115,7 @@ async def test_orchestrator_auto_restarts_on_failure():
 
 @pytest.mark.asyncio
 async def test_orchestrator_status_reports_last_error():
-    failing_flags = RuntimeFlags(**{**FLAGS.__dict__, "auto_restart": False})
+    failing_flags = replace(FLAGS, auto_restart=False)
     generator = StubSignalGenerator(failures=3)
     orchestrator = TradeOrchestrator(
         data_client=StubDataClient(),

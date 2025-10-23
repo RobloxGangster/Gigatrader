@@ -5,17 +5,18 @@ from __future__ import annotations
 import logging
 import os
 import threading
-import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
-from app.execution.alpaca_adapter import AlpacaAdapter, AlpacaUnauthorized
-from app.market.stream_manager import StreamManager
+from app.execution.alpaca_adapter import AlpacaUnauthorized
 from core.broker_config import is_mock
 from core.kill_switch import KillSwitch
+from core.runtime_flags import get_runtime_flags
 
 from backend.services import reconcile
+from backend.services.broker_factory import make_broker_adapter
+from backend.services.orchestrator import OrchestratorSupervisor
+from backend.services.stream_factory import StreamService, make_stream_service
 
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,12 @@ class BrokerService:
     """Thin wrapper exposing broker helpers expected by the routers."""
 
     def __init__(self) -> None:
-        self._adapter = AlpacaAdapter()
+        self._flags = get_runtime_flags()
+        self._adapter = make_broker_adapter(self._flags)
+
+    @property
+    def adapter(self):
+        return self._adapter
 
     def get_account(self) -> Dict[str, Any]:
         return self._adapter.fetch_account()
@@ -92,6 +98,14 @@ class BrokerService:
                 if str(order.get("status", "")).lower() in wanted
             ]
         return filtered[:limit]
+
+    def last_headers(self) -> Mapping[str, str] | None:
+        last_headers = getattr(self._adapter, "last_headers", None)
+        if last_headers is None:
+            return None
+        if isinstance(last_headers, Mapping):
+            return dict(last_headers)
+        return None
 
 
 @dataclass
@@ -363,122 +377,11 @@ class MetricsService:
         return {"net": net, "gross": gross, "by_symbol": by_symbol}
 
 
-class OrchestratorService:
-    """Keep track of trading runner status for the REST API."""
-
-    def __init__(self, kill_switch: KillSwitch) -> None:
-        self._kill_switch = kill_switch
-        self._lock = threading.Lock()
-        self._runner_thread: Optional[threading.Thread] = None
-        self._running = False
-        self._warnings: List[str] = []
-        if YAML_IMPORT_ERROR:
-            self._warnings.append(YAML_IMPORT_ERROR)
-        config_payload: Dict[str, Any] = {}
-        try:
-            config_payload = try_load_orchestrator_config()
-        except Exception as exc:  # pragma: no cover - defensive guard
-            logger.exception("Orchestrator config load failed: %s", exc)
-            self._warnings.append(f"Orchestrator config unavailable: {exc}")
-            config_payload = {}
-        profile = str(config_payload.get("profile") or "paper")
-        self._profile = profile
-        self._last_run_id: Optional[str] = None
-        self._meta: Dict[str, Any] = {
-            "last_error": None,
-            "last_tick_ts": None,
-            "routed_orders_24h": 0,
-            "last_start": None,
-        }
-        if config_payload.get("last_start"):
-            self._meta["last_start"] = config_payload.get("last_start")
-        self._meta["warnings"] = list(self._warnings)
-
-    def _format_ts(self, ts: Optional[float]) -> Optional[str]:
-        if not ts:
-            return None
-        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
-
-    def mark_tick(self) -> None:
-        with self._lock:
-            self._meta["last_tick_ts"] = time.time()
-
-    def _run_runner(self) -> None:
-        try:
-            from services.runtime import runner as runtime_runner
-
-            runtime_runner.main()
-        except Exception as exc:  # noqa: BLE001 - propagate as status
-            with self._lock:
-                self._meta["last_error"] = str(exc)
-        finally:
-            with self._lock:
-                self._running = False
-                self._runner_thread = None
-                self._meta["last_tick_ts"] = time.time()
-
-    def start_sync(self, *, mode: str = "paper", preset: Optional[str] = None) -> Dict[str, Any]:
-        with self._lock:
-            if self._running:
-                return {"run_id": self._last_run_id or "active"}
-
-            if mode == "paper":
-                os.environ["TRADING_MODE"] = "paper"
-                os.environ["ALPACA_PAPER"] = "true"
-            else:
-                os.environ["TRADING_MODE"] = "live"
-                os.environ["ALPACA_PAPER"] = "false"
-
-            if preset:
-                os.environ["RISK_PROFILE"] = preset
-
-            self._profile = mode
-            self._running = True
-            self._meta["last_error"] = None
-            self._last_run_id = f"{mode}-{int(time.time())}"
-            now = time.time()
-            self._meta["last_tick_ts"] = now
-            self._meta["last_start"] = self._format_ts(now)
-            thread = threading.Thread(target=self._run_runner, daemon=True)
-            self._runner_thread = thread
-            thread.start()
-            return {"run_id": self._last_run_id}
-
-    def stop_sync(self) -> Dict[str, Any]:
-        with self._lock:
-            self._running = False
-            self._meta["last_tick_ts"] = time.time()
-        try:
-            self._kill_switch.engage_sync()
-        except Exception:
-            pass
-        return {"ok": True}
-
-    def set_last_error(self, message: Optional[str]) -> None:
-        with self._lock:
-            self._meta["last_error"] = message
-
-    def status(self) -> Dict[str, Any]:
-        with self._lock:
-            snapshot = {
-                "running": self._running,
-                "profile": self._profile,
-                "last_error": self._meta.get("last_error"),
-                "last_tick_ts": self._format_ts(self._meta.get("last_tick_ts")),
-                "routed_orders_24h": int(self._meta.get("routed_orders_24h") or 0),
-                "kill_switch": self._kill_switch.engaged_sync(),
-                "last_run_id": self._last_run_id,
-                "last_start": self._meta.get("last_start"),
-                "warnings": list(self._warnings),
-            }
-        return snapshot
-
-
 _broker: Optional[BrokerService] = None
-_stream: Optional[StreamManager] = None
+_stream: Optional[StreamService] = None
 _strategy: Optional[StrategyRegistryService] = None
 _risk: Optional[RiskConfigService] = None
-_orchestrator: Optional[OrchestratorService] = None
+_orchestrator: Optional[OrchestratorSupervisor] = None
 _metrics: Optional[MetricsService] = None
 _kill_switch = KillSwitch()
 
@@ -499,10 +402,10 @@ def get_broker() -> BrokerService:
     return _broker
 
 
-def get_stream_manager() -> StreamManager:
+def get_stream_manager() -> StreamService:
     global _stream
     if _stream is None:
-        _stream = StreamManager()
+        _stream = make_stream_service(get_runtime_flags())
     return _stream
 
 
@@ -520,10 +423,10 @@ def get_risk_manager() -> RiskConfigService:
     return _risk
 
 
-def get_orchestrator() -> OrchestratorService:
+def get_orchestrator() -> OrchestratorSupervisor:
     global _orchestrator
     if _orchestrator is None:
-        _orchestrator = OrchestratorService(_kill_switch)
+        _orchestrator = OrchestratorSupervisor(_kill_switch)
     return _orchestrator
 
 
