@@ -12,122 +12,104 @@ except Exception:  # pragma: no cover - defensive bootstrap
     if _s not in sys.path:
         sys.path.insert(0, _s)
 
-import os
-from typing import Any, Callable, Optional
+from typing import Dict, Optional
 
 import streamlit as st
 
-from ui.pages import control_center, diagnostics_logs, option_chain
-from ui.services.backend import BrokerAPI, get_backend
-from ui.state import AppSessionState, init_session_state
-
-PAGE_REGISTRY: dict[str, Callable[..., Any]] = {
-    "control-center": control_center.render,
-    "diagnostics": diagnostics_logs.render,
-    "option-chain": option_chain.render,
-}
-
-PAGE_LABELS: dict[str, str] = {
-    "control-center": "Control Center",
-    "diagnostics": "Diagnostics / Logs",
-    "option-chain": "Option Chain",
-}
-
-SLUG_ALIASES: dict[str, str] = {
-    "diagnostics-logs": "diagnostics",
-    "diagnostics_logs": "diagnostics",
-    "logs": "diagnostics",
-    "log": "diagnostics",
-}
+from ui.lib.api_client import ApiClient, discover_base_url
+from ui.lib.nav import (
+    NAV_ITEMS,
+    default_slug,
+    dispatch_render,
+    find_by_slug,
+    resolve_renderer,
+)
 
 
-def _init_session_defaults() -> None:
-    st.session_state.setdefault("nav.slug", "control-center")
-    st.session_state.setdefault("telemetry.autorefresh", False)
-    st.session_state.setdefault(
-        "api.base_url", os.getenv("API_BASE_URL") or "http://127.0.0.1:8000"
+def _read_query_params() -> Dict[str, str]:
+    try:
+        return dict(st.query_params)  # type: ignore[arg-type]
+    except Exception:  # pragma: no cover - Streamlit < 1.30 fallback
+        params = st.experimental_get_query_params()
+        return {k: v[0] if isinstance(v, list) and v else v for k, v in params.items()}
+
+
+def _set_query_slug(slug: str) -> None:
+    try:
+        st.query_params["page"] = slug
+    except Exception:  # pragma: no cover - legacy fallback
+        st.experimental_set_query_params(page=slug)
+
+
+def _stored_slug() -> Optional[str]:
+    value = st.session_state.get("nav.slug")
+    return str(value) if isinstance(value, str) else None
+
+
+def _initial_item() -> Dict[str, str]:
+    params = _read_query_params()
+    raw_slug = params.get("page")
+    if raw_slug:
+        item = find_by_slug(raw_slug)
+        if item:
+            return item
+    stored = _stored_slug()
+    if stored:
+        item = find_by_slug(stored)
+        if item:
+            return item
+    return find_by_slug(default_slug()) or NAV_ITEMS[0]
+
+
+def main() -> None:
+    st.set_page_config(
+        page_title="Gigatrader",
+        layout="wide",
+        initial_sidebar_state="collapsed",
     )
 
+    st.markdown(
+        """
+  <style>
+    [data-testid="stSidebarNav"] { display: none !important; }
+  </style>
+""",
+        unsafe_allow_html=True,
+    )
 
-def _resolve_slug(raw: str | None) -> str:
-    slug = (raw or "").strip().lower()
-    slug = SLUG_ALIASES.get(slug, slug)
-    if slug not in PAGE_REGISTRY:
-        slug = "control-center"
-    return slug
+    current_item = _initial_item()
+    slug = current_item["slug"]
+    st.session_state["nav.slug"] = slug
 
+    labels = [item["label"] for item in NAV_ITEMS]
+    current_index = next((i for i, item in enumerate(NAV_ITEMS) if item["slug"] == slug), 0)
 
-def _slug_from_query() -> str:
-    try:
-        query = st.query_params
-        raw_value = query.get("page")
-    except Exception:  # pragma: no cover - Streamlit < 1.30 fallback
-        query = st.experimental_get_query_params()
-        raw_value = query.get("page")
-
-    if isinstance(raw_value, list):
-        value = raw_value[0] if raw_value else None
-    else:
-        value = raw_value
-
-    if not value:
-        value = str(st.session_state.get("nav.slug", ""))
-
-    return _resolve_slug(value)
-
-
-def _select_page(current: str) -> str:
-    st.markdown("### Navigation ↪")
-    labels = [PAGE_LABELS[slug] for slug in PAGE_REGISTRY]
-    slugs = list(PAGE_REGISTRY)
-    current_slug = current if current in PAGE_REGISTRY else "control-center"
-    current_index = slugs.index(current_slug)
-
-    label = st.selectbox(
-        "Navigate",
+    selection = st.selectbox(
+        "Navigation",
         labels,
         index=current_index,
         key="nav.select",
         help="Jump between Gigatrader pages.",
     )
-    chosen = slugs[labels.index(label)]
 
-    if chosen != current_slug:
-        st.session_state["nav.slug"] = chosen
-        try:
-            st.query_params["page"] = chosen
-        except Exception:  # pragma: no cover - legacy fallback
-            st.experimental_set_query_params(page=chosen)
-        st.rerun()
+    selected_item = next(item for item in NAV_ITEMS if item["label"] == selection)
+    if selected_item["slug"] != slug:
+        slug = selected_item["slug"]
+        st.session_state["nav.slug"] = slug
+        _set_query_slug(slug)
+        current_item = selected_item
+    else:
+        params = _read_query_params()
+        if params.get("page") != slug:
+            _set_query_slug(slug)
 
-    return chosen
+    resolved_api = discover_base_url()
+    client = ApiClient()
+    st.caption(f"Resolved API: {resolved_api}")
+    st.session_state.setdefault("api.base_url", client.base())
 
-
-def _call_render(fn: Callable[..., Any]) -> Optional[Any]:
-    state: AppSessionState = init_session_state()
-    api: BrokerAPI = get_backend()
-
-    try:
-        return fn(api, state)  # type: ignore[arg-type]
-    except TypeError:
-        try:
-            return fn(api)  # type: ignore[arg-type]
-        except TypeError:
-            try:
-                return fn(state)  # type: ignore[arg-type]
-            except TypeError:
-                return fn()
-
-
-def main() -> None:
-    st.set_page_config(page_title="Gigatrader", layout="wide")
-    _init_session_defaults()
-
-    slug = _slug_from_query()
-    st.session_state["nav.slug"] = slug
-    slug = _select_page(slug)
-    renderer = PAGE_REGISTRY.get(slug, control_center.render)
-    _call_render(renderer)
+    renderer = resolve_renderer(current_item)
+    dispatch_render(renderer)
 
 
 if __name__ == "__main__":

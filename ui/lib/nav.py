@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+"""Navigation metadata and helpers for the Streamlit UI."""
+
+from importlib import import_module
+from typing import Any, Callable, Dict, Iterable, List, Optional
+
+from ui.state import AppSessionState, init_session_state
+from ui.services.backend import BrokerAPI, get_backend
+
+# Registry of first-class navigation items shown in the global selectbox.
+# Each item includes the human-facing label, canonical slug (used in the
+# query string), and the import path for the associated Streamlit page module.
+NAV_ITEMS: List[Dict[str, str]] = [
+    {
+        "label": "Control Center",
+        "slug": "control-center",
+        "import_path": "ui.pages.control_center",
+        "render_name": "render",
+    },
+    {
+        "label": "Diagnostics / Logs",
+        "slug": "diagnostics",
+        "import_path": "ui.pages.diagnostics_logs",
+        "render_name": "render",
+    },
+    {
+        "label": "Option Chain",
+        "slug": "option-chain",
+        "import_path": "ui.pages.option_chain",
+        "render_name": "render",
+    },
+    {
+        "label": "Orders & Positions",
+        "slug": "orders-positions",
+        "import_path": "ui.pages.orders_positions",
+        "render_name": "render",
+    },
+    {
+        "label": "Trade Blotter",
+        "slug": "trade-blotter",
+        "import_path": "ui.pages.trade_blotter",
+        "render_name": "render",
+    },
+    {
+        "label": "Strategy Backtests",
+        "slug": "strategy-backtests",
+        "import_path": "ui.pages.backtest",
+        "render_name": "render",
+    },
+    {
+        "label": "Backtest Reports",
+        "slug": "backtest-reports",
+        "import_path": "ui.pages.backtest_reports",
+        "render_name": "render",
+    },
+    {
+        "label": "Strategy Tuning",
+        "slug": "strategy-tuning",
+        "import_path": "ui.pages.strategy_tuning",
+        "render_name": "render",
+    },
+    {
+        "label": "Signal Preview",
+        "slug": "signal-preview",
+        "import_path": "ui.pages.signals",
+        "render_name": "render",
+    },
+    {
+        "label": "Research",
+        "slug": "research",
+        "import_path": "ui.pages.research",
+        "render_name": "render",
+    },
+    {
+        "label": "Data Inspector",
+        "slug": "data-inspector",
+        "import_path": "ui.pages.data_inspector",
+        "render_name": "render",
+    },
+    {
+        "label": "ML Ops",
+        "slug": "ml-ops",
+        "import_path": "ui.pages.ml",
+        "render_name": "render",
+    },
+    {
+        "label": "Equity & Risk",
+        "slug": "equity-risk",
+        "import_path": "ui.pages.equity_risk",
+        "render_name": "render",
+    },
+]
+
+
+# Legacy slugs that should continue to resolve for deep links.
+_SLUG_ALIASES = {
+    "diagnostics-logs": "diagnostics",
+    "diagnostics_logs": "diagnostics",
+    "logs": "diagnostics",
+    "log": "diagnostics",
+}
+
+
+def slugify(label: str) -> str:
+    """Convert a page label into a canonical slug."""
+
+    cleaned = label.lower().replace(" / ", "-").replace("/", "-").replace(" ", "-")
+    return "".join(ch for ch in cleaned if ch.isalnum() or ch == "-")
+
+
+def _iter_candidates() -> Iterable[Dict[str, str]]:
+    yield from NAV_ITEMS
+
+
+def find_by_slug(slug: str | None) -> Optional[Dict[str, str]]:
+    """Locate a navigation item by slug or known alias."""
+
+    if not slug:
+        return None
+    target = slug.strip().lower()
+    target = _SLUG_ALIASES.get(target, target)
+    for item in _iter_candidates():
+        if target == item["slug"] or target == slugify(item["label"]):
+            return item
+    return None
+
+
+def default_slug() -> str:
+    return "control-center"
+
+
+def resolve_renderer(item: Dict[str, str]) -> Callable[..., Any]:
+    module = import_module(item["import_path"])
+    return getattr(module, item["render_name"])
+
+
+def dispatch_render(fn: Callable[..., Any]) -> Any:
+    """Invoke a page render function with best-effort dependency injection."""
+
+    state: AppSessionState = init_session_state()
+    api: BrokerAPI = get_backend()
+
+    try:
+        return fn(api, state)  # type: ignore[arg-type]
+    except TypeError:
+        try:
+            return fn(api)  # type: ignore[arg-type]
+        except TypeError:
+            try:
+                return fn(state)  # type: ignore[arg-type]
+            except TypeError:
+                return fn()
+
+
+__all__ = [
+    "NAV_ITEMS",
+    "slugify",
+    "find_by_slug",
+    "default_slug",
+    "resolve_renderer",
+    "dispatch_render",
+]
