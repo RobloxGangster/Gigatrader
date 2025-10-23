@@ -6,28 +6,15 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 import streamlit as st
 
-try:  # pragma: no cover - optional dependency
-    from streamlit_autorefresh import st_autorefresh  # type: ignore
-except Exception:  # pragma: no cover - fallback when extra not installed
-    def st_autorefresh(*, interval: int, key: str) -> int:
-        count_key = f"__autorefresh_count__{key}"
-        last_key = f"__autorefresh_last__{key}"
-        now = time.time()
-        last = float(st.session_state.get(last_key, 0.0))
-        if now - last >= interval / 1000.0:
-            st.session_state[last_key] = now
-            st.session_state[count_key] = int(st.session_state.get(count_key, 0)) + 1
-            st.rerun()
-        return int(st.session_state.get(count_key, 0))
-
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
-from ui.services.backend import BrokerAPI
 from ui.lib.api_client import ApiClient
+from ui.lib.ui_compat import auto_refresh
 from ui.lib.page_guard import require_backend
 from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
+from ui.services.backend import BrokerAPI
 
 _TESTING = "PYTEST_CURRENT_TEST" in os.environ
 REFRESH_INTERVAL_SEC = 5
@@ -726,15 +713,9 @@ def render(
         st.session_state.pop("__cc_status_poll_until__", None)
 
     if auto_enabled:
-        st_autorefresh(
-            interval=int(REFRESH_INTERVAL_SEC * 1000),
-            key="telemetry.autorefresh.tick",
-        )
+        auto_refresh(interval_ms=int(REFRESH_INTERVAL_SEC * 1000), key="telemetry.autorefresh.tick")
 
     if not _TESTING:
         next_poll = st.session_state.get("__cc_status_poll_until__", 0.0)
         if next_poll and next_poll > now_ts:
-            st_autorefresh(
-                interval=int(STATUS_POLL_INTERVAL * 1000),
-                key="telemetry.status.poll",
-            )
+            auto_refresh(interval_ms=int(STATUS_POLL_INTERVAL * 1000), key="telemetry.status.poll")
