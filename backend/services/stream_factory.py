@@ -24,15 +24,18 @@ class StreamService:
     healthy: bool = True
     last_error: Optional[str] = None
 
-    async def status(self) -> Dict[str, Any]:
-        """
-        Shape returned by the /stream/status endpoint.
-        """
-        return {
+    def status(self) -> Dict[str, Any]:
+        """Return an in-memory status snapshot for downstream routes."""
+
+        status = "online" if self.healthy else "offline"
+        payload: Dict[str, Any] = {
             "source": self.source,
             "healthy": bool(self.healthy),
-            "error": self.last_error,
+            "status": status,
         }
+        if self.last_error:
+            payload["last_error"] = self.last_error
+        return payload
 
 
 def _alpaca_env_health() -> tuple[bool, Optional[str]]:

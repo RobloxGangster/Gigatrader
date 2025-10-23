@@ -258,11 +258,12 @@ def _render_algorithm_controls(
         preset_index = 1
 
     with st.form("algorithm_controls"):
+        start_label = "Start Paper" if mock_mode else "Start Trading"
         preset = st.selectbox(
             "Run Preset", DEFAULT_PRESETS, index=preset_index, key="cc_run_preset"
         )
         start_col, stop_col, reconcile_col = st.columns(3)
-        start_clicked = start_col.form_submit_button("Start Trading")
+        start_clicked = start_col.form_submit_button(start_label)
         stop_clicked = stop_col.form_submit_button("Stop")
         st.caption(
             "Start/stop orchestrator and enable live routing."
@@ -543,6 +544,13 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
         data["account_error"] = str(exc)
         data["account"] = {}
 
+    health = data.get("health")
+    if isinstance(health, dict) and health.get("mock_mode"):
+        account_snapshot = data.setdefault("account", {})
+        if isinstance(account_snapshot, dict):
+            account_snapshot.setdefault("mock_mode", True)
+        st.session_state["__mock_mode__"] = True
+
     try:
         positions = api.positions()
         data["positions"] = positions if isinstance(positions, list) else []
@@ -658,6 +666,8 @@ def render(
 
     health_snapshot = data.get("health", {}) if isinstance(data, dict) else {}
     status_snapshot = data.get("status", {}) if isinstance(data, dict) else {}
+    if isinstance(health_snapshot, dict) and health_snapshot.get("mock_mode"):
+        st.sidebar.info("Mock mode enabled")
     broker_label = health_snapshot.get("broker", status_snapshot.get("broker", "unknown"))
     dry_run_label = health_snapshot.get("dry_run", status_snapshot.get("dry_run"))
     profile_label = (
