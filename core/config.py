@@ -23,13 +23,13 @@ from dataclasses import dataclass, field, asdict
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
-from core.runtime_flags import BrokerMode, get_runtime_flags
+from core.runtime_flags import Broker, get_runtime_flags
 
 
 _FLAGS = get_runtime_flags()
 
 MOCK_MODE: bool = _FLAGS.mock_mode
-EXECUTION_MODE: Literal["alpaca", "mock"] = "mock" if MOCK_MODE else "alpaca"
+EXECUTION_MODE: Literal["alpaca", "mock"] = _FLAGS.broker
 API_PORT: int = int(_FLAGS.api_port or 8000)
 UI_PORT: int = int(_FLAGS.ui_port or 8501)
 API_BASE_URL: str = (_FLAGS.api_base_url or f"http://127.0.0.1:{API_PORT}").rstrip("/")
@@ -70,7 +70,7 @@ class AlpacaSettings:
     api_secret: str | None
     base_url: str
     paper: bool
-    mode: BrokerMode
+    mode: Broker
 
 
 @dataclass(slots=True)
@@ -196,7 +196,7 @@ def get_alpaca_settings() -> AlpacaSettings:
         api_secret=flags.alpaca_secret,
         base_url=flags.alpaca_base_url,
         paper=flags.paper_trading,
-        mode=flags.broker_mode,
+        mode=flags.broker,
     )
 
 

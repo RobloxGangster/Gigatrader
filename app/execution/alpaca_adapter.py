@@ -16,9 +16,19 @@ from services.ops.alerts import audit_log
 class AlpacaUnauthorized(Exception):
     """Raised when Alpaca credentials are invalid."""
 
+    def __init__(self, message: str, *, status_code: int | None = None, payload: Any | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.payload = payload
+
 
 class AlpacaOrderError(Exception):
     """Raised when Alpaca rejects an order payload."""
+
+    def __init__(self, message: str, *, status_code: int | None = None, payload: Any | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.payload = payload
 
 
 log = logging.getLogger(__name__)
@@ -103,6 +113,7 @@ class AlpacaAdapter:
         self._max_attempts = max(1, int(max_attempts))
         self._backoff_base = max(0.1, float(backoff_base))
         self._backoff_cap = max(self._backoff_base, float(backoff_cap))
+        self._last_headers: dict[str, str] | None = None
 
     # ------------------------------------------------------------------
     # Public Alpaca REST helpers
@@ -137,6 +148,10 @@ class AlpacaAdapter:
     def cancel_order(self, order_id: str) -> bool:
         self._delete(f"/v2/orders/{order_id}")
         return True
+
+    @property
+    def last_headers(self) -> Mapping[str, str] | None:
+        return dict(self._last_headers) if self._last_headers is not None else None
 
     # ------------------------------------------------------------------
     # Compatibility helpers for legacy callers
@@ -211,6 +226,10 @@ class AlpacaAdapter:
                     headers=merged_headers or None,
                     **kwargs,
                 )
+            try:
+                self._last_headers = dict(response.headers)  # type: ignore[arg-type]
+            except Exception:  # pragma: no cover - defensive guard
+                self._last_headers = None
             self._audit(method, url, kwargs, response)
             if not retry:
                 return response
@@ -282,9 +301,20 @@ def _safe_float(value: Any) -> Optional[float]:
 
 
 def _map_http_error(response: requests.Response, exc: requests.HTTPError) -> Exception:
-    if response.status_code in {401, 403}:
-        return AlpacaUnauthorized(str(exc))
-    return AlpacaOrderError(str(exc))
+    payload: Any | None
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {"error": response.text}
+    message = str(
+        (payload or {}).get("message")
+        or (payload or {}).get("error")
+        or str(exc)
+    )
+    status_code = response.status_code
+    if status_code in {401, 403}:
+        return AlpacaUnauthorized(message, status_code=status_code, payload=payload)
+    return AlpacaOrderError(message, status_code=status_code, payload=payload)
 
 
 __all__ = ["AlpacaAdapter"]

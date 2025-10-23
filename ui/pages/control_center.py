@@ -32,7 +32,7 @@ from ui.utils.num import to_float
 _TESTING = "PYTEST_CURRENT_TEST" in os.environ
 REFRESH_INTERVAL_SEC = 5
 STATUS_POLL_INTERVAL = 1.5
-STATUS_POLL_WINDOW = 10.0
+STATUS_POLL_WINDOW = 2.0
 DEFAULT_PRESETS: Tuple[str, ...] = ("safe", "balanced", "high_risk")
 STRATEGY_LABELS: Dict[str, str] = {
     "intraday_momo": "Intraday Momentum",
@@ -85,7 +85,7 @@ def _render_connection_badge(
         )
         return
 
-    paper_flag = status.get("paper")
+    paper_flag = status.get("paper_mode") if "paper_mode" in status else status.get("paper")
     if paper_flag is None:
         paper_flag = account.get("paper")
     if paper_flag is None:
@@ -162,10 +162,14 @@ def _emit_config_warnings(section: str, payload: Dict[str, Any]) -> None:
 def _render_status_header(
     status: Dict[str, Any], stream: Dict[str, Any], orchestrator: Dict[str, Any]
 ) -> None:
+    profile_label = "Paper" if status.get("paper_mode", True) else "Live"
+    broker_label = str(status.get("broker", "alpaca")).title()
+    run_state = str(orchestrator.get("state", "stopped")).title()
+
     cols = st.columns(4)
-    cols[0].metric("Profile", status.get("profile", "paper"))
-    cols[1].metric("Mode", "Paper" if status.get("paper", True) else "Live")
-    cols[2].metric("Run State", "Running" if status.get("running") else "Stopped")
+    cols[0].metric("Profile", profile_label)
+    cols[1].metric("Broker", broker_label)
+    cols[2].metric("Run State", run_state)
     cols[3].metric(
         "Kill Switch", "Engaged" if orchestrator.get("kill_switch") else "Standby"
     )
@@ -181,10 +185,14 @@ def _render_status_header(
         st.caption(f"Stream error: {stream['last_error']}")
 
     if orchestrator.get("last_error"):
-        st.error(f"Orchestrator: {orchestrator['last_error']}")
+        with st.expander("Last orchestrator error", expanded=False):
+            st.code(str(orchestrator.get("last_error")))
 
-    if orchestrator.get("last_tick_ts"):
-        st.caption(f"Last orchestrator activity: {orchestrator['last_tick_ts']}")
+    if orchestrator.get("last_heartbeat"):
+        st.caption(f"Last orchestrator heartbeat: {orchestrator['last_heartbeat']}")
+    if orchestrator.get("uptime_secs"):
+        uptime_hours = float(orchestrator.get("uptime_secs", 0.0)) / 3600.0
+        st.caption(f"Orchestrator uptime: {uptime_hours:.2f}h")
 
 
 def _render_metrics(
@@ -641,10 +649,15 @@ def render(
 
     data = _load_remote_state(api)
 
+    health_snapshot = data.get("health", {}) if isinstance(data, dict) else {}
     status_snapshot = data.get("status", {}) if isinstance(data, dict) else {}
-    broker_label = status_snapshot.get("broker", "unknown")
-    dry_run_label = status_snapshot.get("dry_run")
-    profile_label = status_snapshot.get("profile", "paper")
+    broker_label = health_snapshot.get("broker", status_snapshot.get("broker", "unknown"))
+    dry_run_label = health_snapshot.get("dry_run", status_snapshot.get("dry_run"))
+    profile_label = (
+        "paper"
+        if health_snapshot.get("paper_mode", status_snapshot.get("paper", True))
+        else "live"
+    )
     st.caption(
         f"Runtime profile={profile_label} · broker={broker_label} · dry_run={dry_run_label}"
     )
@@ -655,11 +668,11 @@ def render(
 
     _render_connection_badge(
         data.get("account", {}),
-        data.get("status", {}),
+        data.get("health", {}),
         data.get("account_error"),
     )
 
-    update_session_state(last_trace_id=data.get("orchestrator", {}).get("last_tick_ts"))
+    update_session_state(last_trace_id=data.get("orchestrator", {}).get("last_heartbeat"))
 
     if data.get("status_error"):
         st.error(f"Backend status unavailable: {data['status_error']}")
@@ -687,7 +700,7 @@ def render(
     _emit_config_warnings("Risk", data.get("risk", {}))
 
     _render_status_header(
-        data.get("status", {}), data.get("stream", {}), data.get("orchestrator", {})
+        data.get("health", {}), data.get("stream", {}), data.get("orchestrator", {})
     )
     _render_metrics(
         data.get("account", {}), data.get("pnl", {}), data.get("exposure", {})

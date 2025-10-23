@@ -47,8 +47,9 @@ def is_mock() -> bool:
             return True
         if env_value.strip().lower() in {"0", "false", "no", "off"}:
             return False
-    return _flags().broker_mode == "mock"
+    return _flags().mock_mode
 
 
 def is_paper() -> bool:
-    return _flags().broker_mode == "paper"
+    flags = _flags()
+    return flags.paper_trading and not flags.mock_mode

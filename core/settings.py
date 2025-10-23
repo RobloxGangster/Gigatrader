@@ -33,7 +33,7 @@ class AlpacaSettings(BaseModel):
             or os.getenv("ALPACA_API_SECRET_KEY")
             or os.getenv("APCA_API_SECRET_KEY")
         )
-        use_paper_flag = flags.broker_mode != "live"
+        use_paper_flag = flags.paper_trading
         return cls(
             base_url=base_url,
             key_id=key_id,
@@ -55,32 +55,20 @@ class RuntimeProfile(BaseModel):
         cls, *, alpaca: AlpacaSettings, flags: RuntimeFlags | None = None
     ) -> "RuntimeProfile":
         flags = flags or get_runtime_flags()
-        profile = os.getenv("PROFILE", "paper").strip().lower() or "paper"
-        broker = os.getenv("BROKER", "alpaca").strip().lower() or "alpaca"
-        dry_run_value = os.getenv("DRY_RUN", "false")
-        dry_run = str(dry_run_value).strip().lower() in {"1", "true", "yes", "on"}
+        profile = "live" if not flags.paper_trading and not flags.mock_mode else "paper"
+        broker = flags.broker
+        dry_run = flags.dry_run
 
-        broker_mode = flags.broker_mode
-        if broker_mode == "live":
-            profile = "live"
-        elif broker_mode == "mock":
-            profile = "paper"
-        else:
-            profile = "paper"
-
-        if broker_mode == "mock":
-            broker = "mock"
+        if flags.mock_mode:
             dry_run = True
-        else:
-            broker = "alpaca"
-            if alpaca.key_id and alpaca.secret_key:
-                dry_run = False
+        elif broker == "alpaca" and alpaca.key_id and alpaca.secret_key:
+            dry_run = False
 
         return cls(
             profile=profile,
             broker=broker,
             dry_run=dry_run,
-            broker_mode=broker_mode,
+            broker_mode="mock" if flags.mock_mode else ("paper" if flags.paper_trading else "live"),
         )
 
 

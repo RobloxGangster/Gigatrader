@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import time
 from contextlib import asynccontextmanager
@@ -35,6 +36,7 @@ from core.settings import get_settings
 load_dotenv()
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def _ensure_log_directories() -> None:
@@ -53,6 +55,15 @@ def _ensure_log_directories() -> None:
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
     _ensure_log_directories()
+    flags = get_runtime_flags()
+    profile = "paper" if flags.paper_trading else "live"
+    logger.info(
+        "profile=%s broker=%s dry_run=%s mock_mode=%s",
+        profile,
+        flags.broker,
+        flags.dry_run,
+        flags.mock_mode,
+    )
     try:
         loop = asyncio.get_event_loop()
         get_stream_manager().start(loop)
@@ -135,13 +146,16 @@ def health() -> JSONResponse:
             orchestrator_snapshot = orchestrator.status()
         except Exception as exc:  # pragma: no cover - defensive snapshot guard
             orchestrator_snapshot = {"running": False, "last_error": str(exc)}
+        orchestrator_snapshot.setdefault("state", "stopped")
 
         try:
             stream_status: Dict[str, Any] | bool = get_stream_manager().status()
         except Exception as exc:  # pragma: no cover - defensive
-            stream_status = {"ok": False, "error": str(exc)}
+            stream_status = {"ok": False, "error": str(exc), "source": "mock"}
 
+        stream_source = "mock" if flags.mock_mode else "alpaca"
         if isinstance(stream_status, dict):
+            stream_source = str(stream_status.get("source") or stream_source)
             stream_ok = stream_status.get("ok")
             if stream_ok is None:
                 if "online" in stream_status:
@@ -152,11 +166,14 @@ def health() -> JSONResponse:
         else:
             stream_ok = bool(stream_status)
 
-        broker_ok = True if flags.mock_mode else bool(flags.alpaca_key and flags.alpaca_secret)
+        broker_source = "mock" if flags.mock_mode else "alpaca"
+        broker_ok = True
+        if broker_source == "alpaca":
+            broker_ok = bool(flags.alpaca_key and flags.alpaca_secret and flags.alpaca_base_url)
         broker_status = {
-            "source": "mock" if flags.mock_mode else "alpaca",
+            "source": broker_source,
             "paper": flags.paper_trading,
-            "mode": flags.broker_mode,
+            "mode": "mock" if flags.mock_mode else ("paper" if flags.paper_trading else "live"),
             "base_url": flags.alpaca_base_url,
             "ok": broker_ok,
         }
@@ -173,14 +190,14 @@ def health() -> JSONResponse:
             "status": status,
             "ok": status == "ok",
             "mock_mode": flags.mock_mode,
-            "mode": {
-                "mock_mode": flags.mock_mode,
-                "paper": flags.paper_trading,
-                "broker_mode": flags.broker_mode,
-            },
+            "paper_mode": flags.paper_trading,
+            "dry_run": flags.dry_run,
+            "profile": "paper" if flags.paper_trading else "live",
+            "broker": broker_source,
+            "broker_details": broker_status,
+            "stream": stream_source,
+            "stream_details": stream_status,
             "orchestrator": orchestrator_snapshot,
-            "stream": stream_status,
-            "broker": broker_status,
         }
         return JSONResponse(payload, status_code=200)
     except Exception as exc:  # pragma: no cover - defensive

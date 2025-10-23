@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from core.runtime_flags import RuntimeFlags
+from core.runtime_flags import RuntimeFlags, require_alpaca_keys
 
 from .alpaca_adapter import AlpacaAdapter
 
@@ -44,8 +44,11 @@ class MockBrokerAdapter:
 def make_broker_adapter(flags: RuntimeFlags) -> BrokerAdapter:
     if flags.mock_mode:
         return MockBrokerAdapter()
-    return AlpacaAdapter(
+    require_alpaca_keys()
+    adapter = AlpacaAdapter(
         base_url=flags.alpaca_base_url,
         key_id=flags.alpaca_key,
         secret_key=flags.alpaca_secret,
     )
+    setattr(adapter, "paper", bool(flags.paper_trading))
+    return adapter
