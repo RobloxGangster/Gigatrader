@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 import os
 import time
@@ -8,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -26,9 +27,16 @@ from backend.routers import (
     stream,
     telemetry,
 )
-from backend.routers.deps import get_kill_switch, get_orchestrator, get_stream_manager
+from backend.routers.deps import (
+    BrokerService,
+    get_broker,
+    get_kill_switch,
+    get_orchestrator,
+    get_stream_manager,
+)
 from backend.services import reconcile
 from backend.services.alpaca_client import get_trading_client
+from backend.services.stream_factory import StreamService, make_stream_service
 from core.broker_config import is_mock
 from core.runtime_flags import get_runtime_flags
 from core.settings import get_settings
@@ -123,6 +131,12 @@ for alias in ("/api", "/v1"):
         app.include_router(router, prefix=f"{alias}{prefix}", tags=compat_tag)
 
 
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 def _register_compat_route(
     path: str,
     endpoint: Callable[..., Any],
@@ -138,18 +152,21 @@ def _register_compat_route(
 
 
 @root_router.get("/health")
-def health() -> JSONResponse:
+async def health(
+    stream: StreamService = Depends(make_stream_service),
+    broker: BrokerService = Depends(get_broker),
+    orchestrator: Any = Depends(get_orchestrator),
+) -> JSONResponse:
     try:
         flags = get_runtime_flags()
-        orchestrator = get_orchestrator()
         try:
-            orchestrator_snapshot = orchestrator.status()
+            orchestrator_snapshot = await _maybe_await(orchestrator.status())
         except Exception as exc:  # pragma: no cover - defensive snapshot guard
             orchestrator_snapshot = {"running": False, "last_error": str(exc)}
         orchestrator_snapshot.setdefault("state", "stopped")
 
         try:
-            stream_status: Dict[str, Any] | bool = get_stream_manager().status()
+            stream_status: Dict[str, Any] | bool = await _maybe_await(stream.status())
         except Exception as exc:  # pragma: no cover - defensive
             stream_status = {"ok": False, "error": str(exc), "source": "mock"}
 
@@ -157,6 +174,8 @@ def health() -> JSONResponse:
         if isinstance(stream_status, dict):
             stream_source = str(stream_status.get("source") or stream_source)
             stream_ok = stream_status.get("ok")
+            if stream_ok is None and "healthy" in stream_status:
+                stream_ok = bool(stream_status.get("healthy"))
             if stream_ok is None:
                 if "online" in stream_status:
                     stream_ok = bool(stream_status.get("online"))
@@ -168,15 +187,30 @@ def health() -> JSONResponse:
 
         broker_source = "mock" if flags.mock_mode else "alpaca"
         broker_ok = True
+        broker_ping_ok = True
+        broker_ping_error: str | None = None
+        try:
+            if hasattr(broker, "ping"):
+                await _maybe_await(broker.ping())
+        except Exception as exc:  # pragma: no cover - defensive ping guard
+            broker_ping_ok = False
+            broker_ping_error = str(exc)
         if broker_source == "alpaca":
-            broker_ok = bool(flags.alpaca_key and flags.alpaca_secret and flags.alpaca_base_url)
+            broker_ok = bool(
+                flags.alpaca_key and flags.alpaca_secret and flags.alpaca_base_url
+            )
+        broker_ok = broker_ok and broker_ping_ok
         broker_status = {
             "source": broker_source,
             "paper": flags.paper_trading,
-            "mode": "mock" if flags.mock_mode else ("paper" if flags.paper_trading else "live"),
+            "mode": "mock"
+            if flags.mock_mode
+            else ("paper" if flags.paper_trading else "live"),
             "base_url": flags.alpaca_base_url,
             "ok": broker_ok,
         }
+        if broker_ping_error:
+            broker_status["ping_error"] = broker_ping_error
 
         orchestrator_running = bool(orchestrator_snapshot.get("running", True))
         last_error = orchestrator_snapshot.get("last_error")

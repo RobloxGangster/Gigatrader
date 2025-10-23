@@ -160,13 +160,22 @@ def require_alpaca_keys() -> None:
 
 
 @lru_cache(maxsize=1)
-def get_runtime_flags() -> RuntimeFlags:
+def _get_runtime_flags_cached() -> RuntimeFlags:
     return RuntimeFlags.from_env()
 
 
+def get_runtime_flags() -> RuntimeFlags:
+    if parse_bool(os.getenv("GIGATRADER_DISABLE_RUNTIME_FLAGS_CACHE")):
+        return RuntimeFlags.from_env()
+    return _get_runtime_flags_cached()
+
+
+get_runtime_flags.cache_clear = _get_runtime_flags_cached.cache_clear  # type: ignore[attr-defined]
+
+
 def refresh_runtime_flags() -> RuntimeFlags:
-    get_runtime_flags.cache_clear()  # type: ignore[attr-defined]
-    return get_runtime_flags()
+    _get_runtime_flags_cached.cache_clear()  # type: ignore[attr-defined]
+    return _get_runtime_flags_cached()
 
 
 __all__ = [

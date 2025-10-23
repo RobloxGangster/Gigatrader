@@ -8,7 +8,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from core.runtime_flags import RuntimeFlags, get_runtime_flags
+from core.runtime_flags import RuntimeFlags, refresh_runtime_flags
 
 
 class AlpacaSettings(BaseModel):
@@ -83,7 +83,7 @@ class Settings(BaseModel):
 
     @classmethod
     def from_env(cls) -> "Settings":
-        flags = get_runtime_flags()
+        flags = refresh_runtime_flags()
         alpaca = AlpacaSettings.from_env(flags=flags)
         runtime = RuntimeProfile.from_env(alpaca=alpaca, flags=flags)
         return cls(

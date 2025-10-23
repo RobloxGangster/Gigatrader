@@ -26,6 +26,11 @@ def _record_rate_limit(service: BrokerService) -> None:
     record_rate_limit(service.last_headers())
 
 
+def alpaca(service: BrokerService = Depends(get_broker)) -> Any:
+    adapter = getattr(service, "adapter", None)
+    return adapter or service
+
+
 @router.get("/account")
 def account(service: BrokerService = Depends(get_broker)) -> Dict[str, Any]:
     try:
@@ -56,9 +61,13 @@ def orders(
     status: str = Query("all"),
     limit: int = Query(50, ge=1, le=500),
     service: BrokerService = Depends(get_broker),
+    adapter: Any = Depends(alpaca),
 ) -> list[dict]:
     try:
-        raw = service.get_orders(status=status, limit=limit)
+        if hasattr(adapter, "list_orders"):
+            raw = adapter.list_orders(status=status, limit=limit)
+        else:
+            raw = service.get_orders(status=status, limit=limit)
         if raw and hasattr(AlpacaAdapter, "normalize_order"):
             return [AlpacaAdapter.normalize_order(order) for order in raw]
         return raw
@@ -117,4 +126,5 @@ def cancel_order(order_id: str, service: BrokerService = Depends(get_broker)) ->
 __all__ = [
     "router",
     "deterministic_client_id",
+    "alpaca",
 ]

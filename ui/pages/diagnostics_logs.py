@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterable, List
+import zipfile
 
 import pandas as pd
 import streamlit as st
@@ -37,6 +39,41 @@ DEFAULT_LINES = 200
 REFRESH_INTERVAL_MS = 5_000
 
 
+def _iter_fixture_files(fixtures_dir: Path) -> Iterable[Path]:
+    if not fixtures_dir.exists():
+        return []
+    return [path for path in fixtures_dir.iterdir() if path.is_file()]
+
+
+def _create_repro_bundle() -> Path | None:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target_dir = Path("repros")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    bundle_path = target_dir / f"repro_{timestamp}.zip"
+
+    with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for name in ("config.yaml", "config.example.yaml", "RISK_PRESETS.md"):
+            candidate = Path(name)
+            if candidate.exists() and candidate.is_file():
+                bundle.write(candidate, arcname=candidate.name)
+
+        fixtures_dir = Path("fixtures")
+        for fixture in _iter_fixture_files(fixtures_dir):
+            bundle.write(fixture, arcname=f"fixtures/{fixture.name}")
+
+        logs_dir = Path("logs")
+        if logs_dir.exists():
+            for log_file in logs_dir.rglob("*"):
+                if log_file.is_file():
+                    try:
+                        arcname = log_file.relative_to(Path.cwd())
+                    except ValueError:
+                        arcname = log_file.name
+                    bundle.write(log_file, arcname=str(arcname))
+
+    return bundle_path
+
+
 def _get_state() -> Dict[str, Any]:
     return st.session_state.setdefault(
         STATE_KEY,
@@ -63,6 +100,13 @@ def render() -> None:
 
     client = ApiClient()
     state = _get_state()
+
+    if st.button("Create Repro Bundle", type="primary"):
+        bundle = _create_repro_bundle()
+        if bundle is not None:
+            st.success(f"Repro bundle created: {bundle}")
+        else:
+            st.warning("Unable to create repro bundle.")
 
     controls = st.columns([1, 1, 1, 2])
     with controls[0]:
