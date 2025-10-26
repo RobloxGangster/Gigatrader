@@ -85,8 +85,8 @@ class RuntimeFlags:
 
     @staticmethod
     def from_env() -> "RuntimeFlags":
-        mock_mode = parse_bool(os.getenv("MOCK_MODE"))
-        dry_run = parse_bool(os.getenv("DRY_RUN"))
+        mock_mode = parse_bool(os.getenv("MOCK_MODE"), default=False)
+        dry_run = parse_bool(os.getenv("DRY_RUN"), default=False)
 
         broker_env = os.getenv("BROKER", "").strip().lower()
         broker: Broker = "mock" if mock_mode else "alpaca"

@@ -31,6 +31,25 @@ def alpaca(service: BrokerService = Depends(get_broker)) -> Any:
     return adapter or service
 
 
+@router.get("/status")
+def broker_status(service: BrokerService = Depends(get_broker)) -> Dict[str, Any]:
+    adapter = getattr(service, "adapter", None)
+    flags = getattr(service, "flags", None)
+    profile = None
+    dry_run = None
+    if flags is not None:
+        profile = "paper" if getattr(flags, "paper_trading", False) else "live"
+        dry_run = getattr(flags, "dry_run", None)
+    impl_name = type(adapter).__name__ if adapter is not None else type(service).__name__
+    return {
+        "ok": True,
+        "broker": getattr(adapter, "name", getattr(flags, "broker", "unknown")),
+        "impl": impl_name,
+        "dry_run": getattr(adapter, "dry_run", dry_run),
+        "profile": getattr(adapter, "profile", profile),
+    }
+
+
 @router.get("/account")
 def account(service: BrokerService = Depends(get_broker)) -> Dict[str, Any]:
     try:
@@ -86,9 +105,19 @@ def place_order(order: Dict[str, Any], service: BrokerService = Depends(get_brok
     payload = dict(order)
     payload.setdefault("client_order_id", deterministic_client_id(payload))
     adapter = service.adapter
+    flags = service.flags
     try:
+        if (
+            getattr(flags, "broker", "").lower() == "alpaca"
+            and (getattr(flags, "mock_mode", False) or getattr(flags, "dry_run", False))
+        ):
+            raise RuntimeError(
+                "Alpaca selected but mock_mode/dry_run prevents live submission"
+            )
         created = adapter.place_order(payload)
         return AlpacaAdapter.normalize_order(created) if created else created
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except AlpacaUnauthorized as exc:
         raise HTTPException(status_code=401, detail="alpaca_unauthorized") from exc
     except AlpacaOrderError as exc:
@@ -127,4 +156,5 @@ __all__ = [
     "router",
     "deterministic_client_id",
     "alpaca",
+    "broker_status",
 ]

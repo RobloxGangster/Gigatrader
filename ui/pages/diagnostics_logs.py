@@ -10,27 +10,7 @@ import zipfile
 import pandas as pd
 import streamlit as st
 
-# --- Streamlit autorefresh compatibility -----------------------------------
-try:
-    # Preferred helper on newer Streamlit versions
-    from streamlit import st_autorefresh  # type: ignore
-except Exception:
-    # Fallback shim for older/newer variants without st_autorefresh
-    def st_autorefresh(*, interval: int, key: str) -> int:
-        count_key = f"__count__{key}"
-        now = time.time()
-        last = float(st.session_state.get(key, 0.0))
-        if now - last >= interval / 1000.0:
-            st.session_state[key] = now
-            st.session_state[count_key] = int(st.session_state.get(count_key, 0)) + 1
-            try:
-                # Newer API
-                st.rerun()
-            except Exception:
-                # Older API
-                st.experimental_rerun()
-        return int(st.session_state.get(count_key, 0))
-# ---------------------------------------------------------------------------
+from ui.lib.st_compat import auto_refresh
 
 from ui.lib.api_client import ApiClient, build_url
 
@@ -144,7 +124,7 @@ def render() -> None:
 
     refresh_token = 0
     if auto_enabled:
-        refresh_token = st_autorefresh(interval=REFRESH_INTERVAL_MS, key="diagnostics.logs.refresh")
+        refresh_token = auto_refresh(interval_ms=REFRESH_INTERVAL_MS, key="diagnostics.logs.refresh")
     else:
         state["last_refresh_token"] = 0
 

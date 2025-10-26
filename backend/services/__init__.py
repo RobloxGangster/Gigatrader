@@ -3,4 +3,5 @@
 __all__ = [
     "alpaca_client",
     "reconcile",
+    "options_gateway",
 ]

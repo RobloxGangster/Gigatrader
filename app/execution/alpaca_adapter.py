@@ -7,6 +7,7 @@ import os
 import random
 import time
 from typing import Any, Dict, Iterable, Mapping, Optional
+from uuid import uuid4
 
 import requests
 
@@ -114,6 +115,9 @@ class AlpacaAdapter:
         self._backoff_base = max(0.1, float(backoff_base))
         self._backoff_cap = max(self._backoff_base, float(backoff_cap))
         self._last_headers: dict[str, str] | None = None
+        self.dry_run: bool = False
+        self.profile: str | None = None
+        self.name: str = "alpaca"
 
     # ------------------------------------------------------------------
     # Public Alpaca REST helpers
@@ -139,11 +143,49 @@ class AlpacaAdapter:
     def place_order(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         if "client_order_id" not in payload:
             raise ValueError("client_order_id is required")
-        return self._post(
-            "/v2/orders",
-            json=dict(payload),
-            idempotency_key=str(payload["client_order_id"]),
+        if getattr(self, "dry_run", False):
+            raise RuntimeError("dry_run is True — refusing to submit order to Alpaca")
+
+        trace_id = str(payload.get("client_order_id") or uuid4().hex)
+        log.info(
+            "alpaca.submit_order",
+            extra={
+                "trace_id": trace_id,
+                "symbol": payload.get("symbol"),
+                "qty": payload.get("qty"),
+                "side": payload.get("side"),
+            },
         )
+        try:
+            response = self._post(
+                "/v2/orders",
+                json=dict(payload),
+                idempotency_key=str(payload["client_order_id"]),
+                headers={"X-Trace-Id": trace_id},
+            )
+        except Exception:
+            log.exception(
+                "alpaca.submit_order.failed",
+                extra={
+                    "trace_id": trace_id,
+                    "symbol": payload.get("symbol"),
+                },
+            )
+            raise
+        order_id = None
+        status = None
+        if isinstance(response, Mapping):
+            order_id = response.get("id") or response.get("order_id")
+            status = response.get("status")
+        log.info(
+            "alpaca.submit_order.ok",
+            extra={
+                "trace_id": trace_id,
+                "alpaca_id": order_id,
+                "status": status,
+            },
+        )
+        return response
 
     def cancel_order(self, order_id: str) -> bool:
         self._delete(f"/v2/orders/{order_id}")
@@ -250,10 +292,24 @@ class AlpacaAdapter:
         return response.json()
 
     def _post(
-        self, path: str, *, idempotency_key: str | None = None, **kwargs: Any
+        self,
+        path: str,
+        *,
+        idempotency_key: str | None = None,
+        headers: Mapping[str, str] | None = None,
+        **kwargs: Any,
     ) -> Any:
-        headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
-        response = self._request("POST", path, headers=headers, **kwargs)
+        merged_headers: dict[str, str] = {}
+        if headers:
+            merged_headers.update(headers)
+        if idempotency_key:
+            merged_headers.setdefault("Idempotency-Key", idempotency_key)
+        response = self._request(
+            "POST",
+            path,
+            headers=merged_headers or None,
+            **kwargs,
+        )
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:  # pragma: no cover - network failure path
