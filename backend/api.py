@@ -157,85 +157,80 @@ async def health(
     broker: BrokerService = Depends(get_broker),
     orchestrator: Any = Depends(get_orchestrator),
 ) -> JSONResponse:
+    flags = get_runtime_flags()
+    status: str = "ok"
+    orchestrator_snapshot: Dict[str, Any] = {}
     try:
-        flags = get_runtime_flags()
-        try:
-            orchestrator_snapshot = await _maybe_await(orchestrator.status())
-        except Exception as exc:  # pragma: no cover - defensive snapshot guard
-            orchestrator_snapshot = {"running": False, "last_error": str(exc)}
-        orchestrator_snapshot.setdefault("state", "stopped")
+        orchestrator_snapshot = await _maybe_await(orchestrator.status())
+    except Exception as exc:  # pragma: no cover - defensive snapshot guard
+        status = "degraded"
+        orchestrator_snapshot = {"running": False, "last_error": str(exc)}
+    orchestrator_snapshot.setdefault("state", "stopped")
 
-        try:
-            stream_status: Dict[str, Any] | bool = await _maybe_await(stream.status())
-        except Exception as exc:  # pragma: no cover - defensive
-            stream_status = {"ok": False, "error": str(exc), "source": "mock"}
-
-        stream_source = "mock" if flags.mock_mode else "alpaca"
-        if isinstance(stream_status, dict):
-            stream_source = str(stream_status.get("source") or stream_source)
-            stream_ok = stream_status.get("ok")
-            if stream_ok is None and "healthy" in stream_status:
-                stream_ok = bool(stream_status.get("healthy"))
-            if stream_ok is None:
-                if "online" in stream_status:
-                    stream_ok = bool(stream_status.get("online"))
-                elif "state" in stream_status:
-                    stream_ok = str(stream_status.get("state")).lower() == "online"
-            stream_ok = True if stream_ok is None else bool(stream_ok)
-        else:
-            stream_ok = bool(stream_status)
-
-        broker_source = "mock" if flags.mock_mode else "alpaca"
-        broker_ok = True
-        broker_ping_ok = True
-        broker_ping_error: str | None = None
-        try:
-            if hasattr(broker, "ping"):
-                await _maybe_await(broker.ping())
-        except Exception as exc:  # pragma: no cover - defensive ping guard
-            broker_ping_ok = False
-            broker_ping_error = str(exc)
-        if broker_source == "alpaca":
-            broker_ok = bool(
-                flags.alpaca_key and flags.alpaca_secret and flags.alpaca_base_url
-            )
-        broker_ok = broker_ok and broker_ping_ok
-        broker_status = {
-            "source": broker_source,
-            "paper": flags.paper_trading,
-            "mode": "mock"
-            if flags.mock_mode
-            else ("paper" if flags.paper_trading else "live"),
-            "base_url": flags.alpaca_base_url,
-            "ok": broker_ok,
-        }
-        if broker_ping_error:
-            broker_status["ping_error"] = broker_ping_error
-
-        orchestrator_running = bool(orchestrator_snapshot.get("running", True))
-        last_error = orchestrator_snapshot.get("last_error")
-        orchestrator_ok = orchestrator_running or last_error in (None, "")
-
-        status = "ok"
-        if not broker_ok or not stream_ok or not orchestrator_ok:
-            status = "degraded"
-
-        payload = {
-            "status": status,
-            "ok": status == "ok",
-            "mock_mode": flags.mock_mode,
-            "paper_mode": flags.paper_trading,
-            "dry_run": flags.dry_run,
-            "profile": "paper" if flags.paper_trading else "live",
-            "broker": broker_source,
-            "broker_details": broker_status,
-            "stream": stream_source,
-            "stream_details": stream_status,
-            "orchestrator": orchestrator_snapshot,
-        }
-        return JSONResponse(payload, status_code=200)
+    try:
+        stream_status_raw = await _maybe_await(stream.status())
     except Exception as exc:  # pragma: no cover - defensive
-        return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
+        status = "degraded"
+        stream_status_raw = {"ok": False, "error": str(exc), "source": "mock"}
+
+    stream_source = "mock" if flags.mock_mode else "alpaca"
+    stream_ok = True
+    if isinstance(stream_status_raw, dict):
+        stream_source = str(stream_status_raw.get("source") or stream_source)
+        stream_ok = bool(
+            stream_status_raw.get("ok")
+            or stream_status_raw.get("healthy")
+            or stream_status_raw.get("online")
+        )
+    elif isinstance(stream_status_raw, bool):
+        stream_ok = stream_status_raw
+    if not stream_ok:
+        status = "degraded"
+
+    broker_source = "mock" if flags.mock_mode else "alpaca"
+    broker_status: Dict[str, Any] = {
+        "source": broker_source,
+        "paper": flags.paper_trading,
+        "mode": "mock"
+        if flags.mock_mode
+        else ("paper" if flags.paper_trading else "live"),
+        "base_url": flags.alpaca_base_url,
+        "ok": True,
+    }
+
+    try:
+        if hasattr(broker, "ping"):
+            await _maybe_await(broker.ping())
+    except Exception as exc:  # pragma: no cover - defensive ping guard
+        broker_status["ok"] = False
+        broker_status["ping_error"] = str(exc)
+        status = "degraded"
+
+    if broker_source == "alpaca" and not (
+        flags.alpaca_key and flags.alpaca_secret and flags.alpaca_base_url
+    ):
+        broker_status["ok"] = False
+        broker_status.setdefault("ping_error", "alpaca_credentials_missing")
+        status = "degraded"
+
+    payload = {
+        "status": status,
+        "ok": status == "ok",
+        "mock_mode": flags.mock_mode,
+        "paper_mode": flags.paper_trading,
+        "dry_run": flags.dry_run,
+        "profile": "paper" if flags.paper_trading else "live",
+        "broker": broker_source,
+        "broker_details": broker_status,
+        "stream": stream_source,
+        "stream_details": stream_status_raw,
+        "orchestrator": orchestrator_snapshot,
+    }
+
+    if status != "ok":
+        payload.setdefault("error", "degraded")
+
+    return JSONResponse(payload, status_code=200)
 
 
 @app.get("/version")

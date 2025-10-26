@@ -81,19 +81,32 @@ def _render_connection_badge(
 
     broker_impl = "unknown"
     broker_profile = "paper" if paper_flag else "live"
-    dry_run_flag = None
+    dry_run_flag: bool | None = None
     if isinstance(broker_status, Mapping):
-        broker_impl = broker_status.get("impl", broker_impl)
+        broker_impl = str(broker_status.get("impl", broker_impl))
         profile_override = broker_status.get("profile")
         if isinstance(profile_override, str) and profile_override:
             broker_profile = profile_override
-        dry_run_flag = broker_status.get("dry_run")
+        dry_run_raw = broker_status.get("dry_run")
+        if dry_run_raw is not None:
+            dry_run_flag = bool(dry_run_raw)
+    if dry_run_flag is None:
+        dry_run_flag = bool(status.get("dry_run"))
 
-    mode_label = f"{broker_impl} (dry_run={dry_run_flag}, profile={broker_profile})"
-    if bool(paper_flag):
-        st.success(f"PAPER MODE — {mode_label}")
+    impl_lower = broker_impl.lower()
+    if impl_lower.startswith("mock") or bool(status.get("mock_mode")):
+        st.warning("MOCK MODE — simulated broker (no live orders).")
+        st.caption(
+            "Execution adapter: Mock broker (orders remain local to this session)."
+        )
     else:
-        st.warning(f"LIVE MODE — {mode_label}")
+        profile_label = "paper" if broker_profile.lower() != "live" else "live"
+        st.success(
+            f"{profile_label.upper()} MODE — connected to Alpaca {profile_label}."
+        )
+        st.caption(
+            f"Execution adapter: {broker_impl} (profile={profile_label}, dry_run={dry_run_flag})."
+        )
 
     if dry_run_flag:
         st.warning("dry_run is ON — orders will NOT be sent to Alpaca.")
@@ -168,7 +181,7 @@ def _render_status_header(
     stream_label = "Running" if running else "Stopped"
     status_pill("Stream", stream_label, variant="positive" if running else "warning")
     if stream.get("source"):
-        st.caption(f"Feed source: {stream['source']}")
+        st.caption(f"Market data feed: {stream['source']}")
     if stream.get("last_heartbeat"):
         st.caption(f"Last stream heartbeat: {stream['last_heartbeat']}")
     if stream.get("last_error"):

@@ -82,9 +82,6 @@ class StubBroker:
 @pytest.fixture
 def reconcile_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     os.environ["MOCK_MODE"] = "true"
-    from core.runtime_flags import get_runtime_flags
-
-    get_runtime_flags.cache_clear()
     import backend.server as server_module
 
     server = importlib.reload(server_module)

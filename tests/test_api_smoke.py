@@ -9,6 +9,8 @@ except Exception:
     pytest.skip("fastapi not installed in this environment; skipping API smoke", allow_module_level=True)
 
 os.environ.setdefault("SERVICE_PORT", "8000")
+os.environ.setdefault("MOCK_MODE", "true")
+os.environ.setdefault("BROKER", "mock")
 
 app_module = importlib.import_module("backend.server")
 app = getattr(app_module, "app")

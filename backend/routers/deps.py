@@ -8,7 +8,6 @@ import threading
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
-from app.execution.alpaca_adapter import AlpacaUnauthorized
 from core.broker_config import is_mock
 from core.kill_switch import KillSwitch
 from core.runtime_flags import get_runtime_flags
@@ -436,7 +435,6 @@ class MetricsService:
         return {"net": net, "gross": gross, "by_symbol": by_symbol}
 
 
-_broker: Optional[BrokerService] = None
 _stream: Optional[StreamService] = None
 _strategy: Optional[StrategyRegistryService] = None
 _risk: Optional[RiskConfigService] = None
@@ -455,10 +453,7 @@ def get_kill_switch() -> KillSwitch:
 
 
 def get_broker() -> BrokerService:
-    global _broker
-    if _broker is None:
-        _broker = BrokerService()
-    return _broker
+    return BrokerService()
 
 
 def get_stream_manager() -> StreamService:

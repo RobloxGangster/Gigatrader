@@ -24,7 +24,7 @@ class StreamService:
     healthy: bool = True
     last_error: Optional[str] = None
 
-    def status(self) -> Dict[str, Any]:
+    async def status(self) -> Dict[str, Any]:
         """Return an in-memory status snapshot for downstream routes."""
 
         status = "online" if self.healthy else "offline"

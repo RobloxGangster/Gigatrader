@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -115,7 +115,7 @@ async def test_orchestrator_auto_restarts_on_failure():
 
 @pytest.mark.asyncio
 async def test_orchestrator_status_reports_last_error():
-    failing_flags = replace(FLAGS, auto_restart=False)
+    failing_flags = FLAGS.model_copy(update={"auto_restart": False})
     generator = StubSignalGenerator(failures=3)
     orchestrator = TradeOrchestrator(
         data_client=StubDataClient(),

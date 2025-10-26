@@ -154,6 +154,8 @@ class AlpacaAdapter:
                 "symbol": payload.get("symbol"),
                 "qty": payload.get("qty"),
                 "side": payload.get("side"),
+                "dry_run": getattr(self, "dry_run", None),
+                "profile": getattr(self, "profile", None),
             },
         )
         try:
@@ -169,6 +171,8 @@ class AlpacaAdapter:
                 extra={
                     "trace_id": trace_id,
                     "symbol": payload.get("symbol"),
+                    "dry_run": getattr(self, "dry_run", None),
+                    "profile": getattr(self, "profile", None),
                 },
             )
             raise
@@ -183,6 +187,8 @@ class AlpacaAdapter:
                 "trace_id": trace_id,
                 "alpaca_id": order_id,
                 "status": status,
+                "dry_run": getattr(self, "dry_run", None),
+                "profile": getattr(self, "profile", None),
             },
         )
         return response
