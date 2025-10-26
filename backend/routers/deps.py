@@ -58,6 +58,10 @@ class BrokerService:
     def adapter(self):
         return self._adapter
 
+    @property
+    def flags(self):
+        return self._flags
+
     def get_account(self) -> Dict[str, Any]:
         return self._adapter.fetch_account()
 

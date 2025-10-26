@@ -6,19 +6,35 @@ from __future__ import annotations
 
 import json
 
+from typing import Any, Mapping
+
 import pandas as pd
 import streamlit as st
 
 from ui.lib.api_client import ApiClient
 from ui.lib.page_guard import require_backend
 from ui.services.backend import BrokerAPI
-from ui.state import AppSessionState, update_session_state
+from ui.state import AppSessionState, OptionChain, update_session_state
+
+
+def _load_chain(api: BrokerAPI, symbol: str, expiry: str | None) -> OptionChain:
+    raw = api.options_chain(symbol, expiry)
+    payload: Any
+    if hasattr(raw, "json"):
+        payload = raw.json()
+    else:
+        payload = raw
+    if not isinstance(payload, Mapping):
+        raise TypeError(
+            f"options_chain returned non-mapping type: {type(payload)}"
+        )
+    return OptionChain(**payload)
 
 
 def _chain_dataframe(
     api: BrokerAPI, symbol: str, expiry: str | None, liquidity_only: bool
 ) -> pd.DataFrame:
-    chain = api.get_option_chain(symbol, expiry or None)
+    chain = _load_chain(api, symbol, expiry or None)
     rows = [row.model_dump() for row in chain.rows]
     df = pd.DataFrame(rows)
     if liquidity_only:

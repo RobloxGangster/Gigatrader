@@ -2,35 +2,15 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 import streamlit as st
-
-# --- Streamlit autorefresh compatibility -----------------------------------
-try:
-    # Preferred helper on newer Streamlit versions
-    from streamlit import st_autorefresh  # type: ignore
-except Exception:
-    # Fallback shim for older/newer variants without st_autorefresh
-    def st_autorefresh(interval: int, key: str):
-        import time
-
-        now = time.time()
-        last = st.session_state.get(key, 0.0)
-        if now - last >= (interval / 1000.0):
-            st.session_state[key] = now
-            try:
-                # Newer API
-                st.rerun()
-            except Exception:
-                # Older API
-                st.experimental_rerun()
-# ---------------------------------------------------------------------------
 
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
 from ui.lib.api_client import ApiClient
 from ui.lib.page_guard import require_backend
+from ui.lib.st_compat import auto_refresh
 from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
@@ -70,6 +50,7 @@ def _fmt_pct(value: Any, digits: int = 2) -> str:
 def _render_connection_badge(
     account: Dict[str, Any],
     status: Dict[str, Any],
+    broker_status: Mapping[str, Any] | None,
     error: str | None,
 ) -> None:
     if error:
@@ -98,22 +79,24 @@ def _render_connection_badge(
     if paper_flag is None:
         paper_flag = True
 
+    broker_impl = "unknown"
+    broker_profile = "paper" if paper_flag else "live"
+    dry_run_flag = None
+    if isinstance(broker_status, Mapping):
+        broker_impl = broker_status.get("impl", broker_impl)
+        profile_override = broker_status.get("profile")
+        if isinstance(profile_override, str) and profile_override:
+            broker_profile = profile_override
+        dry_run_flag = broker_status.get("dry_run")
+
+    mode_label = f"{broker_impl} (dry_run={dry_run_flag}, profile={broker_profile})"
     if bool(paper_flag):
-        st.markdown(
-            "<div style='padding:6px 10px;background:#e6fff3;border:1px solid #9de2bf;"
-            "border-radius:8px;display:inline-block;font-weight:600;color:#0f5132'>"
-            "✅ PAPER MODE — connected to Alpaca paper."
-            "</div>",
-            unsafe_allow_html=True,
-        )
+        st.success(f"PAPER MODE — {mode_label}")
     else:
-        st.markdown(
-            "<div style='padding:6px 10px;background:#ffe7cc;border:1px solid #ffbc6b;"
-            "border-radius:8px;display:inline-block;font-weight:600;color:#7c3d00'>"
-            "⚠️ LIVE MODE — confirm risk controls before trading."
-            "</div>",
-            unsafe_allow_html=True,
-        )
+        st.warning(f"LIVE MODE — {mode_label}")
+
+    if dry_run_flag:
+        st.warning("dry_run is ON — orders will NOT be sent to Alpaca.")
 
 
 def _trim_orders(raw: Iterable[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
@@ -539,6 +522,12 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
         data["status"] = {}
 
     try:
+        data["broker"] = api.broker_status()
+    except Exception as exc:  # noqa: BLE001
+        data["broker_error"] = str(exc)
+        data["broker"] = {}
+
+    try:
         data["account"] = api.account()
     except Exception as exc:  # noqa: BLE001
         data["account_error"] = str(exc)
@@ -668,6 +657,7 @@ def render(
     status_snapshot = data.get("status", {}) if isinstance(data, dict) else {}
     if isinstance(health_snapshot, dict) and health_snapshot.get("mock_mode"):
         st.sidebar.info("Mock mode enabled")
+    broker_snapshot = data.get("broker", {})
     broker_label = health_snapshot.get("broker", status_snapshot.get("broker", "unknown"))
     dry_run_label = health_snapshot.get("dry_run", status_snapshot.get("dry_run"))
     profile_label = (
@@ -675,17 +665,24 @@ def render(
         if health_snapshot.get("paper_mode", status_snapshot.get("paper", True))
         else "live"
     )
+    if isinstance(broker_snapshot, Mapping):
+        broker_label = broker_snapshot.get("impl", broker_label)
+        dry_run_label = broker_snapshot.get("dry_run", dry_run_label)
+        profile_label = broker_snapshot.get("profile", profile_label)
     st.caption(
-        f"Runtime profile={profile_label} · broker={broker_label} · dry_run={dry_run_label}"
+        f"Runtime mode: {broker_label} (profile={profile_label}, dry_run={dry_run_label})"
     )
     if data.get("health_error"):
         st.warning(f"Health check failed: {data['health_error']}")
     elif data.get("health"):
         st.caption("Backend health: OK")
+    if data.get("broker_error"):
+        st.warning(f"Broker status unavailable: {data['broker_error']}")
 
     _render_connection_badge(
         data.get("account", {}),
         data.get("health", {}),
+        data.get("broker", {}),
         data.get("account_error"),
     )
 
@@ -743,9 +740,9 @@ def render(
         st.session_state.pop("__cc_status_poll_until__", None)
 
     if auto_enabled:
-        st_autorefresh(interval=int(REFRESH_INTERVAL_SEC * 1000), key="telemetry.autorefresh.tick")
+        auto_refresh(interval_ms=int(REFRESH_INTERVAL_SEC * 1000), key="telemetry.autorefresh.tick")
 
     if not _TESTING:
         next_poll = st.session_state.get("__cc_status_poll_until__", 0.0)
         if next_poll and next_poll > now_ts:
-            st_autorefresh(interval=int(STATUS_POLL_INTERVAL * 1000), key="telemetry.status.poll")
+            auto_refresh(interval_ms=int(STATUS_POLL_INTERVAL * 1000), key="telemetry.status.poll")

@@ -249,7 +249,7 @@ _register_compat_route("/version", version, ["GET"], tag="version")
 app.include_router(root_router)
 
 from backend.routes import backtests_compat  # noqa: E402
-from backend.routes import options as options_routes  # noqa: E402
+from backend.routers import options as options_router  # noqa: E402
 from backend.routes import logs as logs_routes  # noqa: E402
 from backend.routes import pacing as pacing_routes  # noqa: E402
 from backend.routes import backtest_v2 as backtest_v2_routes  # noqa: E402
@@ -262,7 +262,7 @@ app.include_router(ml_routes.router)
 app.include_router(ml_calibration_routes.router)
 app.include_router(backtest_v2_routes.router)
 app.include_router(backtests_compat.router)
-app.include_router(options_routes.router)
+app.include_router(options_router.router)
 app.include_router(logs_routes.router)
 app.include_router(pacing_routes.router)
 app.include_router(alpaca_live_routes.router)

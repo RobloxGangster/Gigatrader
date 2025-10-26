@@ -222,6 +222,12 @@ class ApiClient:
     def status(self) -> Any:
         return self.get("/status")
 
+    def broker_status(self) -> Any:
+        payload = self.get("/broker/status")
+        if isinstance(payload, dict):
+            return payload
+        return {"raw": payload}
+
     def orchestrator_status(self) -> Any:
         return self.get("/orchestrator/status")
 

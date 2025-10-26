@@ -9,7 +9,7 @@ import urllib.parse
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Protocol
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -234,6 +234,8 @@ class BackendError(RuntimeError):
 class BrokerAPI(Protocol):
     """Protocol describing backend interactions required by the UI."""
 
+    def broker_status(self) -> Dict[str, Any]: ...
+
     def get_status(self) -> Dict[str, Any]: ...
 
     def start_paper(self, preset: Optional[str] = None) -> Dict[str, Any]: ...
@@ -254,6 +256,10 @@ class BrokerAPI(Protocol):
     def get_account(self) -> Dict[str, Any]: ...
 
     def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Trade]: ...
+
+    def options_chain(self, symbol: str, expiry: Optional[str] = None) -> Dict[str, Any]: ...
+
+    def option_greeks(self, contract: str) -> Dict[str, Any]: ...
 
     def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain: ...
 
@@ -336,6 +342,12 @@ class RealAPI:
         if isinstance(result, bytes):
             return result.decode("utf-8", "ignore")
         return result
+
+    def broker_status(self) -> Dict[str, Any]:
+        payload = self._request("GET", "/broker/status")
+        if isinstance(payload, Mapping):
+            return dict(payload)
+        raise BackendError("Invalid broker status response")
 
     def get_status(self) -> Dict[str, Any]:
         return self._request("GET", "/status")
@@ -444,18 +456,30 @@ class RealAPI:
     def get_account(self) -> Dict[str, Any]:
         return self._request("GET", "/alpaca/account")
 
+    def options_chain(self, symbol: str, expiry: Optional[str] = None) -> Dict[str, Any]:
+        payload = self._request(
+            "GET", "/options/chain", params={"symbol": symbol, "expiry": expiry}
+        )
+        if isinstance(payload, Mapping):
+            return dict(payload)
+        raise BackendError("Invalid option chain payload")
+
+    def option_greeks(self, contract: str) -> Dict[str, Any]:
+        payload = self._request("GET", "/options/greeks", params={"contract": contract})
+        if isinstance(payload, Mapping):
+            return dict(payload)
+        raise BackendError("Invalid option greeks payload")
+
     def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Trade]:
         payload = self._request("GET", "/trades", params=filters)
         return [Trade(**item) for item in payload]
 
     def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:
-        payload = self._request(
-            "GET", "/options/chain", params={"symbol": symbol, "expiry": expiry}
-        )
+        payload = self.options_chain(symbol, expiry)
         return OptionChain(**payload)
 
     def get_greeks(self, contract: str) -> Greeks:
-        payload = self._request("GET", "/options/greeks", params={"contract": contract})
+        payload = self.option_greeks(contract)
         return Greeks(**payload)
 
     def get_indicators(self, symbol: str, lookback: int) -> Indicators:
@@ -564,6 +588,17 @@ class MockAPI:
         if self._state.params:
             status["strategy_params"] = self._state.params
         return status
+
+    def broker_status(self) -> Dict[str, Any]:
+        profile = self._state.status.get("profile", "mock")
+        dry_run = profile != "live"
+        return {
+            "ok": True,
+            "broker": "mock",
+            "impl": type(self).__name__,
+            "dry_run": dry_run,
+            "profile": profile,
+        }
 
     def start_paper(self, preset: Optional[str] = None) -> Dict[str, Any]:
         run_id = f"paper-{self.random.randint(1000, 9999)}"
@@ -684,19 +719,27 @@ class MockAPI:
     def get_metrics(self) -> Dict[str, Any]:
         return {"alpaca_stream_connected": 0}
 
-    def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:
+    def options_chain(self, symbol: str, expiry: Optional[str] = None) -> Dict[str, Any]:
         name = f"option_chain_{symbol.lower()}"
         payload = _load_json_fixture(name)
         if expiry:
             payload["expiry"] = expiry
+        return dict(payload)
+
+    def option_greeks(self, contract: str) -> Dict[str, Any]:
+        payload = _load_json_fixture("greeks")
+        payload["contract"] = contract
+        return dict(payload)
+
+    def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:
+        payload = self.options_chain(symbol, expiry)
         chain = OptionChain(**payload)
         if expiry:
             chain.expiry = datetime.fromisoformat(expiry)
         return chain
 
     def get_greeks(self, contract: str) -> Greeks:
-        payload = _load_json_fixture("greeks")
-        payload["contract"] = contract
+        payload = self.option_greeks(contract)
         return Greeks(**payload)
 
     def get_indicators(self, symbol: str, lookback: int) -> Indicators:
