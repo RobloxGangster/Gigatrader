@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import os
-from functools import lru_cache
-
 from pydantic import BaseModel, Field
 
 from core.runtime_flags import get_runtime_flags
@@ -16,7 +14,6 @@ def _env(*names: str, default: str = "") -> str:
     return default
 
 
-@lru_cache(maxsize=1)
 def _flags():
     return get_runtime_flags()
 

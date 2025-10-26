@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import time
 from datetime import datetime, timezone
@@ -46,10 +47,13 @@ def _status_payload(status: Dict[str, object], *, running: bool | None = None) -
 
 
 @router.get("/status")
-def stream_status() -> dict:
+async def stream_status() -> dict:
     sm = get_stream_manager()
     try:
-        return _status_payload(sm.status())
+        status = sm.status()
+        if inspect.isawaitable(status):
+            status = await status
+        return _status_payload(status)
     except Exception as exc:  # noqa: BLE001 - surfaced to client
         raise HTTPException(status_code=500, detail=f"stream_status: {exc}") from exc
 

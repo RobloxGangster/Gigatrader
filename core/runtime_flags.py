@@ -2,22 +2,23 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
-from functools import lru_cache
 from typing import Literal
 
+from dotenv import load_dotenv
+from pydantic import BaseModel, ConfigDict, Field
+
+
+load_dotenv()
 
 _FALSEY = {"0", "false", "no", "off", "f", "n"}
 _TRUEY = {"1", "true", "yes", "on", "t", "y"}
 
 
-def parse_bool(value: object | None, default: bool = False) -> bool:
-    """Coerce user-provided strings and booleans into a boolean.
+Broker = Literal["alpaca", "mock"]
 
-    The helper treats common truthy and falsey string representations in a
-    case-insensitive manner and gracefully falls back to ``default`` when the
-    input cannot be interpreted.
-    """
+
+def parse_bool(value: object | None, default: bool = False) -> bool:
+    """Coerce user-provided strings and booleans into a boolean."""
 
     if value is None:
         return default
@@ -32,9 +33,6 @@ def parse_bool(value: object | None, default: bool = False) -> bool:
     if lowered in _FALSEY:
         return False
     return default
-
-
-Broker = Literal["alpaca", "mock"]
 
 
 def _coerce_int(value: object | None, default: int) -> int:
@@ -63,19 +61,21 @@ def _determine_paper_mode(base_url: str) -> bool:
     return parse_bool(env_override, default=True)
 
 
-@dataclass(frozen=True)
-class RuntimeFlags:
-    mock_mode: bool
-    broker: Broker
-    dry_run: bool
-    auto_restart: bool
-    paper_trading: bool
-    api_base_url: str
-    api_port: int
-    ui_port: int
-    alpaca_base_url: str
-    alpaca_key: str | None
-    alpaca_secret: str | None
+class RuntimeFlags(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    broker: str = Field(default="alpaca")
+    profile: str = Field(default="paper")
+    mock_mode: bool = Field(default=False)
+    dry_run: bool = Field(default=False)
+    auto_restart: bool = Field(default=True)
+    paper_trading: bool = Field(default=True)
+    api_base_url: str = Field(default="http://127.0.0.1:8000")
+    api_port: int = Field(default=8000)
+    ui_port: int = Field(default=8501)
+    alpaca_base_url: str = Field(default="https://paper-api.alpaca.markets")
+    alpaca_key: str | None = Field(default=None)
+    alpaca_secret: str | None = Field(default=None)
 
     @property
     def broker_mode(self) -> Literal["mock", "paper", "live"]:
@@ -83,61 +83,93 @@ class RuntimeFlags:
             return "mock"
         return "paper" if self.paper_trading else "live"
 
-    @staticmethod
-    def from_env() -> "RuntimeFlags":
-        mock_mode = parse_bool(os.getenv("MOCK_MODE"), default=False)
-        dry_run = parse_bool(os.getenv("DRY_RUN"), default=False)
 
-        broker_env = os.getenv("BROKER", "").strip().lower()
-        broker: Broker = "mock" if mock_mode else "alpaca"
-        if broker_env in {"mock", "alpaca"}:
-            broker = "mock" if broker_env == "mock" else "alpaca"
-            if broker == "mock":
-                mock_mode = True
+def runtime_flags_from_env() -> RuntimeFlags:
+    """Build :class:`RuntimeFlags` from the current process environment."""
 
-        api_base = _sanitize_url(
-            os.getenv("API_BASE") or os.getenv("API_BASE_URL"),
-            default="http://127.0.0.1:8000",
-        )
-        api_port = _coerce_int(os.getenv("API_PORT"), 8000)
-        ui_port = _coerce_int(os.getenv("UI_PORT"), 8501)
+    def _parse_bool(name: str, default: bool) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
-        env_base = os.getenv("ALPACA_BASE_URL") or os.getenv("APCA_API_BASE_URL")
-        alpaca_base = _sanitize_url(
-            env_base,
-            default="https://paper-api.alpaca.markets",
-        )
-        paper = _determine_paper_mode(alpaca_base)
+    broker = os.getenv("BROKER", "alpaca").strip() or "alpaca"
+    profile = os.getenv("PROFILE", "paper").strip() or "paper"
+    mock_mode = _parse_bool("MOCK_MODE", False)
+    dry_run = _parse_bool("DRY_RUN", False)
 
-        trading_mode = os.getenv("TRADING_MODE", "").strip().lower()
-        if trading_mode == "live":
-            paper = False
-        elif trading_mode == "paper":
-            paper = True
+    api_base = _sanitize_url(
+        os.getenv("API_BASE") or os.getenv("API_BASE_URL"),
+        default="http://127.0.0.1:8000",
+    )
+    api_port = _coerce_int(os.getenv("API_PORT"), 8000)
+    ui_port = _coerce_int(os.getenv("UI_PORT"), 8501)
 
-        alpaca_key = os.getenv("ALPACA_KEY_ID") or os.getenv("ALPACA_API_KEY_ID")
-        if not alpaca_key:
-            alpaca_key = os.getenv("APCA_API_KEY_ID") or os.getenv("ALPACA_API_KEY")
+    env_base = os.getenv("ALPACA_BASE_URL") or os.getenv("APCA_API_BASE_URL")
+    alpaca_base = _sanitize_url(
+        env_base,
+        default="https://paper-api.alpaca.markets",
+    )
 
-        alpaca_secret = os.getenv("ALPACA_SECRET_KEY") or os.getenv("ALPACA_API_SECRET_KEY")
-        if not alpaca_secret:
-            alpaca_secret = os.getenv("APCA_API_SECRET_KEY") or os.getenv("ALPACA_API_SECRET")
+    paper_trading = _determine_paper_mode(alpaca_base)
+    profile_lower = profile.lower()
+    if profile_lower == "live":
+        paper_trading = False
+    elif profile_lower == "paper":
+        paper_trading = True
 
-        auto_restart = parse_bool(os.getenv("AUTO_RESTART"), default=True)
+    trading_mode = os.getenv("TRADING_MODE", "").strip().lower()
+    if trading_mode == "live":
+        paper_trading = False
+    elif trading_mode == "paper":
+        paper_trading = True
 
-        return RuntimeFlags(
-            mock_mode=mock_mode,
-            broker=broker,
-            dry_run=dry_run,
-            auto_restart=auto_restart,
-            paper_trading=paper,
-            api_base_url=api_base,
-            api_port=api_port,
-            ui_port=ui_port,
-            alpaca_base_url=alpaca_base,
-            alpaca_key=alpaca_key,
-            alpaca_secret=alpaca_secret,
-        )
+    alpaca_key = (
+        os.getenv("ALPACA_KEY_ID")
+        or os.getenv("ALPACA_API_KEY_ID")
+        or os.getenv("APCA_API_KEY_ID")
+        or os.getenv("ALPACA_API_KEY")
+    )
+    alpaca_secret = (
+        os.getenv("ALPACA_SECRET_KEY")
+        or os.getenv("ALPACA_API_SECRET_KEY")
+        or os.getenv("APCA_API_SECRET_KEY")
+        or os.getenv("ALPACA_API_SECRET")
+    )
+
+    auto_restart = parse_bool(os.getenv("AUTO_RESTART"), default=True)
+
+    # Normalise broker setting – if mock_mode is forced we always report mock.
+    broker_normalized: Broker = "alpaca"
+    lowered = broker.lower()
+    if mock_mode or lowered == "mock":
+        broker_normalized = "mock"
+        mock_mode = True
+    elif lowered == "alpaca":
+        broker_normalized = "alpaca"
+
+    return RuntimeFlags(
+        broker=broker_normalized,
+        profile=profile,
+        mock_mode=mock_mode,
+        dry_run=dry_run,
+        auto_restart=auto_restart,
+        paper_trading=paper_trading,
+        api_base_url=api_base,
+        api_port=api_port,
+        ui_port=ui_port,
+        alpaca_base_url=alpaca_base,
+        alpaca_key=alpaca_key,
+        alpaca_secret=alpaca_secret,
+    )
+
+
+def get_runtime_flags() -> RuntimeFlags:
+    return runtime_flags_from_env()
+
+
+def refresh_runtime_flags() -> RuntimeFlags:
+    return runtime_flags_from_env()
 
 
 def require_alpaca_keys() -> None:
@@ -159,25 +191,6 @@ def require_alpaca_keys() -> None:
         )
 
 
-@lru_cache(maxsize=1)
-def _get_runtime_flags_cached() -> RuntimeFlags:
-    return RuntimeFlags.from_env()
-
-
-def get_runtime_flags() -> RuntimeFlags:
-    if parse_bool(os.getenv("GIGATRADER_DISABLE_RUNTIME_FLAGS_CACHE")):
-        return RuntimeFlags.from_env()
-    return _get_runtime_flags_cached()
-
-
-get_runtime_flags.cache_clear = _get_runtime_flags_cached.cache_clear  # type: ignore[attr-defined]
-
-
-def refresh_runtime_flags() -> RuntimeFlags:
-    _get_runtime_flags_cached.cache_clear()  # type: ignore[attr-defined]
-    return _get_runtime_flags_cached()
-
-
 __all__ = [
     "Broker",
     "RuntimeFlags",
@@ -185,4 +198,5 @@ __all__ = [
     "parse_bool",
     "refresh_runtime_flags",
     "require_alpaca_keys",
+    "runtime_flags_from_env",
 ]

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from core.runtime_flags import RuntimeFlags, get_runtime_flags, parse_bool, refresh_runtime_flags
+from core.runtime_flags import (
+    RuntimeFlags,
+    get_runtime_flags,
+    parse_bool,
+    refresh_runtime_flags,
+    runtime_flags_from_env,
+)
 
 
 def test_parse_bool_truthy_cases():
@@ -17,13 +23,17 @@ def test_parse_bool_falsey_cases():
 
 
 def test_runtime_flags_from_env(monkeypatch):
-    monkeypatch.setenv("MOCK_MODE", "false")
     monkeypatch.setenv("BROKER", "alpaca")
+    monkeypatch.setenv("PROFILE", "paper")
+    monkeypatch.setenv("MOCK_MODE", "false")
+    monkeypatch.setenv("DRY_RUN", "false")
     monkeypatch.setenv("API_BASE", "http://localhost:9999")
     monkeypatch.setenv("UI_PORT", "8601")
-    flags = RuntimeFlags.from_env()
+    flags = runtime_flags_from_env()
     assert flags.mock_mode is False
+    assert flags.dry_run is False
     assert flags.broker == "alpaca"
+    assert flags.profile == "paper"
     assert flags.paper_trading is True
     assert flags.alpaca_base_url == "https://paper-api.alpaca.markets"
     assert flags.api_base_url == "http://localhost:9999"
@@ -32,13 +42,14 @@ def test_runtime_flags_from_env(monkeypatch):
     assert flags.auto_restart is True
 
 
-def test_runtime_flags_cache(monkeypatch):
+def test_runtime_flags_refresh_reads_environment(monkeypatch):
+    monkeypatch.setenv("BROKER", "alpaca")
     monkeypatch.setenv("MOCK_MODE", "true")
-    get_runtime_flags.cache_clear()  # type: ignore[attr-defined]
     first = get_runtime_flags()
-    monkeypatch.setenv("MOCK_MODE", "false")
-    second = get_runtime_flags()
     assert first.mock_mode is True
-    assert second.mock_mode is True
-    refreshed = refresh_runtime_flags()
-    assert refreshed.mock_mode is False
+    monkeypatch.setenv("MOCK_MODE", "false")
+    monkeypatch.setenv("BROKER", "alpaca")
+    second = get_runtime_flags()
+    assert second.mock_mode is False
+    third = refresh_runtime_flags()
+    assert third.mock_mode is False
