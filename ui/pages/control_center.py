@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
+import subprocess
 import time
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
-import psutil
+import psutil  # must be in requirements-core.txt
 import requests
 import streamlit as st
 
@@ -18,7 +18,7 @@ from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
 from ui.services.backend import BrokerAPI
-from ui.services.healthcheck import wait_for_backend_health
+from ui.services.healthcheck import probe_backend
 
 _TESTING = "PYTEST_CURRENT_TEST" in os.environ
 REFRESH_INTERVAL_SEC = 5
@@ -31,9 +31,11 @@ STRATEGY_LABELS: Dict[str, str] = {
     "swing_breakout": "Swing Breakout",
 }
 BACKEND_URL = "http://127.0.0.1:8000"
+LOG_DIR = "logs"
+LOG_FILE = os.path.join(LOG_DIR, "backend_autostart.log")
 
 
-def _pid_is_alive(pid: int) -> bool:
+def _pid_alive(pid: int) -> bool:
     try:
         p = psutil.Process(pid)
         return p.is_running() and p.status() != psutil.STATUS_ZOMBIE
@@ -57,28 +59,31 @@ def _kill_pid_tree(pid: int) -> None:
         pass
 
 
-def _read_tail(path: str, limit_lines: int = 50) -> str:
+def _read_tail(path: str, limit_lines: int = 80) -> str:
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             lines = fh.read().splitlines()
     except FileNotFoundError:
-        return "(no log output)"
+        return "(no backend_autostart.log yet)"
     return "\n".join(lines[-limit_lines:])
 
 
-def _launch_backend_if_needed() -> None:
+def _spawn_backend_if_needed() -> None:
     """
-    If the backend is not reachable AND we don't have a live pid, spawn it.
-    Then wait for /health. If it never becomes healthy, stash an error for UI.
+    Start backend.api:app on 127.0.0.1:8000 in a detached subprocess if it's not already up.
     """
-
     pid = st.session_state.get("backend.pid")
-    if pid and _pid_is_alive(pid):
-        return
+    if pid and _pid_alive(pid):
+        return  # already running
 
-    if pid and not _pid_is_alive(pid):
+    # clean stale pid
+    if pid and not _pid_alive(pid):
         st.session_state.pop("backend.pid", None)
 
+    # Make sure logs dir exists
+    os.makedirs(LOG_DIR, exist_ok=True)
+
+    # Launch scripts/start_backend.py with the SAME interpreter Streamlit is using
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     proc = subprocess.Popen(
         [sys.executable, "-u", "scripts/start_backend.py"],
@@ -92,32 +97,14 @@ def _launch_backend_if_needed() -> None:
 
     st.session_state["backend.pid"] = proc.pid
 
-    healthy = wait_for_backend_health(BACKEND_URL, timeout_sec=10.0)
-    if not healthy:
-        st.session_state["backend.error"] = (
-            "Backend failed to start on 127.0.0.1:8000.\n"
-            "Check your credentials / .env, then open logs.\n"
-        )
-        if not _pid_is_alive(proc.pid):
-            st.session_state.pop("backend.pid", None)
-    else:
-        st.session_state.pop("backend.error", None)
-
 
 def _stop_backend() -> None:
     pid = st.session_state.get("backend.pid")
     if pid:
         _kill_pid_tree(pid)
     st.session_state.pop("backend.pid", None)
+    st.session_state.pop("backend.health", None)
     st.session_state.pop("backend.error", None)
-
-
-def _backend_up() -> bool:
-    try:
-        r = requests.get(f"{BACKEND_URL}/health", timeout=1.0)
-        return r.status_code == 200
-    except Exception:
-        return False
 def _fmt_money(value: Any, digits: int = 2) -> str:
     try:
         return fmt_currency(to_float(value), digits=digits)
@@ -878,12 +865,38 @@ def render(
     col_start, col_stop = st.columns([1, 1])
     with col_start:
         if st.button("Start Trading System"):
-            _launch_backend_if_needed()
-            _schedule_status_poll()
+            _spawn_backend_if_needed()
+
     with col_stop:
         if st.button("Stop Trading System"):
             _stop_backend()
-            _schedule_status_poll()
+
+    # Sync session_state pid with reality
+    pid = st.session_state.get("backend.pid")
+    if pid and not _pid_alive(pid):
+        st.session_state.pop("backend.pid", None)
+
+    # Probe backend: we require /health AND /broker/status to both succeed.
+    is_up, health_info, err_msg = probe_backend(BACKEND_URL, timeout_sec=4.0)
+
+    if not is_up:
+        # backend either isn't running, or it crashed immediately, or it's missing keys, etc.
+        st.error(
+            "Backend is NOT reachable on 127.0.0.1:8000.\n\n"
+            "Orders cannot be submitted, Alpaca account cannot be queried."
+        )
+
+        # Show captured error from the probe
+        if err_msg:
+            st.warning(f"Health probe error: {err_msg}")
+
+        # Show PID + tail of backend_autostart.log so the user can debug creds / crashes
+        st.write("Process PID:", st.session_state.get("backend.pid", "(none / dead)"))
+        st.code(_read_tail(LOG_FILE), language="text")
+
+        st.stop()
+
+    st.session_state["backend.health"] = health_info
 
     st.session_state.setdefault("telemetry.autorefresh", False)
     auto_enabled = st.toggle(
@@ -892,39 +905,14 @@ def render(
         help="Refresh KPIs and tables every few seconds.",
     )
 
-    pid = st.session_state.get("backend.pid")
-    if pid and not _pid_is_alive(pid):
-        st.session_state.pop("backend.pid", None)
+    profile = health_info.get("profile", "unknown")
+    broker_name = health_info.get("broker", "unknown")
+    run_state = health_info.get("orchestrator_state", "unknown")
+    stream_src = health_info.get("stream_source", "unknown")
+    kill_switch = health_info.get("kill_switch", "unknown")
 
-    backend_running = _backend_up()
-
-    if not backend_running:
-        st.error(
-            f"Backend is not reachable. Start FastAPI on {BACKEND_URL} "
-            "or click 'Start Trading System' above."
-        )
-
-        if "backend.error" in st.session_state:
-            st.code(st.session_state["backend.error"])
-
-        st.stop()
-
-    try:
-        health_response = requests.get(f"{BACKEND_URL}/health", timeout=2.0)
-        health = health_response.json()
-    except Exception:
-        health = {}
-    if not isinstance(health, dict):
-        health = {}
-
-    profile = health.get("profile", "Unknown")
-    broker_name = health.get("broker", "Unknown")
-    run_state = health.get("orchestrator_state", "Unknown")
-    stream_src = health.get("stream_source", "Unknown")
-    kill_switch = health.get("kill_switch", "Unknown")
-
-    if str(stream_src or "").lower().find("mock") != -1:
-        st.success("MOCK MODE — no live orders will be sent.")
+    if "mock" in str(stream_src).lower():
+        st.warning("MOCK MODE — backend running in mock mode. Live orders will NOT be sent.")
     else:
         st.success("PAPER MODE — connected to Alpaca paper.")
 
@@ -933,8 +921,18 @@ def render(
     st.write("Run State:", run_state)
     st.write("Stream Source:", stream_src)
     st.write("Kill Switch:", kill_switch)
+    st.write(
+        "Runtime mode:",
+        f"{broker_name} adapter "
+        f"(profile={profile}, dry_run={health_info.get('dry_run', 'unknown')})",
+    )
 
-    health_payload = health
+    # From here on, NOW it's valid to call /broker/positions, /orders, /pnl/summary, etc.
+    # Those calls should NOT raise WinError 10061 anymore because the backend is confirmed alive.
+
+    health_payload = health_info
+
+    backend_running = True
 
     data = _load_remote_state(api, backend_running, health_payload)
     backend_up = backend_running
