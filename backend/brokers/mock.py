@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import logging
+from typing import Mapping
+
 from app.execution.adapters import MockBrokerAdapter as _MockBrokerAdapter
+
+
+logger = logging.getLogger(__name__)
 
 
 class MockBrokerAdapter(_MockBrokerAdapter):
@@ -24,3 +30,16 @@ class MockBrokerAdapter(_MockBrokerAdapter):
 
     def fetch_orders(self, *, status: str = "all", limit: int = 50):  # pragma: no cover
         return self.list_orders(status=status, limit=limit)
+
+    def place_order(self, payload: Mapping[str, object]):  # type: ignore[override]
+        logger.info(
+            "broker.order.submit",
+            extra={
+                "symbol": payload.get("symbol"),
+                "side": payload.get("side"),
+                "qty": payload.get("qty"),
+                "dry_run": True,
+                "profile": getattr(self, "profile", "mock"),
+            },
+        )
+        return super().place_order(payload)

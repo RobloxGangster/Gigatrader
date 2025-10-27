@@ -46,12 +46,42 @@ else:  # pragma: no cover - executed in production
     try_load_risk_config = _try_load_risk_config
 
 
+_BROKER_ADAPTER: Any | None = None
+_BROKER_SIGNATURE: tuple[str, ...] | None = None
+_BROKER_LOCK = threading.Lock()
+
+
+def _build_broker_signature(flags) -> tuple[str, ...]:
+    return (
+        str(getattr(flags, "broker", "")),
+        str(getattr(flags, "mock_mode", False)),
+        str(getattr(flags, "dry_run", False)),
+        str(getattr(flags, "profile", "")),
+        str(getattr(flags, "alpaca_base_url", "")),
+        str(getattr(flags, "alpaca_key", "")),
+        str(getattr(flags, "alpaca_secret", "")),
+    )
+
+
+def get_broker_adapter() -> Any:
+    """Return the singleton broker adapter for the current runtime flags."""
+
+    global _BROKER_ADAPTER, _BROKER_SIGNATURE
+    flags = get_runtime_flags()
+    signature = _build_broker_signature(flags)
+    with _BROKER_LOCK:
+        if _BROKER_ADAPTER is None or signature != _BROKER_SIGNATURE:
+            _BROKER_ADAPTER = make_broker_adapter(flags)
+            _BROKER_SIGNATURE = signature
+        return _BROKER_ADAPTER
+
+
 class BrokerService:
     """Thin wrapper exposing broker helpers expected by the routers."""
 
-    def __init__(self) -> None:
-        self._flags = get_runtime_flags()
-        self._adapter = make_broker_adapter(self._flags)
+    def __init__(self, adapter: Any | None = None, *, flags=None) -> None:
+        self._flags = flags or get_runtime_flags()
+        self._adapter = adapter or make_broker_adapter(self._flags)
 
     @property
     def adapter(self):
@@ -453,7 +483,9 @@ def get_kill_switch() -> KillSwitch:
 
 
 def get_broker() -> BrokerService:
-    return BrokerService()
+    flags = get_runtime_flags()
+    adapter = get_broker_adapter()
+    return BrokerService(adapter=adapter, flags=flags)
 
 
 def get_stream_manager() -> StreamService:

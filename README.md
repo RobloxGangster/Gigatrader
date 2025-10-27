@@ -32,6 +32,16 @@ pytest -q
 See `.env.example` for required vars. Paper vs live is controlled by `ALPACA_PAPER=true|false`
 and `TRADING_MODE=paper|live` (defaults favour paper).
 
+## Local launch (backend + orchestrator)
+1. Copy `.env.example` to `.env` and fill in your Alpaca paper API keys.
+2. Run `python scripts/run_trader.py` to bring up the FastAPI backend and orchestrator.
+   - The script writes logs to `logs/backend.*.log` and `logs/orchestrator.*.log`.
+3. Start the UI: `streamlit run ui/Home.py`.
+4. Open the "Control Center" page and click **Start Trading System** if it is not already running.
+5. A green banner should read `PAPER MODE — connected to Alpaca paper.` when keys are valid.
+6. The "Recent Activity" section shows live orders/positions pulled from Alpaca paper; a yellow banner
+   indicates configuration issues surfaced by `/health`.
+
 ## Safety
 This step only uses paper endpoints by default. Live trading requires explicit env changes in later steps.
 

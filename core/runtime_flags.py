@@ -55,6 +55,9 @@ def _sanitize_url(value: str | None, *, default: str) -> str:
 
 
 def _determine_paper_mode(base_url: str) -> bool:
+    use_paper_override = os.getenv("ALPACA_USE_PAPER")
+    if use_paper_override is not None:
+        return parse_bool(use_paper_override, default=True)
     lowered = base_url.lower()
     if "paper-api.alpaca.markets" in lowered:
         return True
@@ -108,6 +111,7 @@ _SIGNATURE_KEYS = (
     "APCA_API_SECRET_KEY",
     "ALPACA_API_KEY",
     "ALPACA_API_SECRET",
+    "ALPACA_USE_PAPER",
     "AUTO_RESTART",
     "TRADING_MODE",
     "ALPACA_PAPER",

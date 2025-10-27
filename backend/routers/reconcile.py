@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.routers.deps import BrokerService, get_broker
+from backend.routers.deps import BrokerService, get_broker, get_broker_adapter
 
 router = APIRouter(prefix="/reconcile", tags=["reconcile"])
 
 
 @router.post("/cancel_all")
-def cancel_all(broker: BrokerService = Depends(get_broker)) -> dict[str, str]:
+def cancel_all(
+    broker: BrokerService = Depends(get_broker),
+    _adapter: Any = Depends(get_broker_adapter),
+) -> dict[str, str]:
     try:
         broker.cancel_all_orders()
         return {"status": "ok"}
@@ -19,7 +24,10 @@ def cancel_all(broker: BrokerService = Depends(get_broker)) -> dict[str, str]:
 
 
 @router.post("/sync")
-def sync(broker: BrokerService = Depends(get_broker)):
+def sync(
+    broker: BrokerService = Depends(get_broker),
+    _adapter: Any = Depends(get_broker_adapter),
+):
     """Trigger broker reconciliation and return the adapter response."""
 
     try:

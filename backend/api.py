@@ -37,9 +37,9 @@ from backend.routers.deps import (
 )
 from backend.services import reconcile
 from backend.services.alpaca_client import get_trading_client
-from backend.services.stream_factory import StreamService, make_stream_service
+from backend.services.stream_factory import StreamService
 from core.broker_config import is_mock
-from core.runtime_flags import RuntimeFlags, get_runtime_flags
+from core.runtime_flags import RuntimeFlags, get_runtime_flags, parse_bool
 from core.settings import get_settings
 
 load_dotenv()
@@ -157,91 +157,71 @@ def _register_compat_route(
 
 @root_router.get("/health")
 async def health(
-    stream: StreamService = Depends(make_stream_service),
+    stream: StreamService = Depends(get_stream_manager),
     broker: BrokerService = Depends(get_broker),
     orchestrator: Any = Depends(get_orchestrator),
+    kill_switch: Any = Depends(get_kill_switch),
 ) -> JSONResponse:
     flags = get_runtime_flags()
-    status: str = "ok"
-    orchestrator_snapshot: Dict[str, Any] = {}
+    broker_adapter = getattr(broker, "adapter", None)
+    broker_name = "unknown"
+    broker_impl = None
+    broker_error: str | None = None
+    if broker_adapter is not None:
+        broker_impl = type(broker_adapter).__name__
+        broker_name = getattr(broker_adapter, "name", broker_impl)
+    try:
+        if broker_adapter is not None and hasattr(broker_adapter, "ping"):
+            await _maybe_await(broker_adapter.ping())
+    except Exception as exc:  # pragma: no cover - defensive ping guard
+        broker_error = str(exc)
+
     try:
         orchestrator_snapshot = await _maybe_await(orchestrator.status())
     except Exception as exc:  # pragma: no cover - defensive snapshot guard
-        status = "degraded"
         orchestrator_snapshot = {"running": False, "last_error": str(exc)}
-    orchestrator_snapshot.setdefault("state", "stopped")
+    orchestrator_state = "Running" if orchestrator_snapshot.get("running") else "Stopped"
 
     try:
         stream_status_raw = await _maybe_await(stream.status())
     except Exception as exc:  # pragma: no cover - defensive
-        status = "degraded"
         stream_status_raw = {"ok": False, "error": str(exc), "source": "mock"}
 
-    stream_details: Dict[str, Any] = {}
+    stream_info: Dict[str, Any] = {}
     stream_source = getattr(stream, "source_name", None) or (
         "mock" if flags.mock_mode else "alpaca"
     )
     stream_ok = True
-    stream_running = True
-    stream_last_heartbeat: str | None = None
     if isinstance(stream_status_raw, dict):
-        stream_details = dict(stream_status_raw)
-        stream_source = str(stream_details.get("source") or stream_source)
-        stream_running = bool(stream_details.get("running", True))
-        stream_ok = bool(stream_details.get("ok", stream_running))
-        stream_last_heartbeat = stream_details.get("last_heartbeat")
-    elif isinstance(stream_status_raw, bool):
-        stream_ok = stream_status_raw
-        stream_running = stream_status_raw
-    if not stream_ok or not stream_running:
-        status = "degraded"
+        stream_info = dict(stream_status_raw)
+        stream_source = str(stream_info.get("source") or stream_source)
+        stream_ok = bool(stream_info.get("ok", True))
+    else:
+        stream_ok = bool(stream_status_raw)
 
-    broker_source = "mock" if flags.mock_mode else "alpaca"
-    broker_status: Dict[str, Any] = {
-        "source": broker_source,
-        "paper": flags.paper_trading,
-        "mode": "mock"
-        if flags.mock_mode
-        else ("paper" if flags.paper_trading else "live"),
-        "base_url": flags.alpaca_base_url,
-        "ok": True,
-    }
+    kill_engaged = kill_switch.engaged_sync()
+    kill_label = "Triggered" if kill_engaged else "Standby"
 
-    try:
-        if hasattr(broker, "ping"):
-            await _maybe_await(broker.ping())
-    except Exception as exc:  # pragma: no cover - defensive ping guard
-        broker_status["ok"] = False
-        broker_status["ping_error"] = str(exc)
-        status = "degraded"
-
-    if broker_source == "alpaca" and not (
-        flags.alpaca_key and flags.alpaca_secret and flags.alpaca_base_url
-    ):
-        broker_status["ok"] = False
-        broker_status.setdefault("ping_error", "alpaca_credentials_missing")
-        status = "degraded"
-
+    alpaca_use_paper = parse_bool(os.getenv("ALPACA_USE_PAPER"), default=True)
     payload = {
-        "status": status,
-        "ok": status == "ok",
-        "mock_mode": flags.mock_mode,
-        "paper_mode": flags.paper_trading,
-        "dry_run": flags.dry_run,
-        "profile": "paper" if flags.paper_trading else "live",
-        "broker": broker_source,
-        "broker_details": broker_status,
-        "stream": stream_source,
-        "stream_running": stream_running,
-        "stream_last_heartbeat": stream_last_heartbeat,
-        "stream_details": stream_details or stream_status_raw,
+        "ok": broker_error is None and stream_ok and not kill_engaged,
+        "broker": broker_name,
+        "broker_impl": broker_impl,
+        "error": broker_error,
+        "stream_source": stream_source,
+        "stream": stream_info,
+        "orchestrator_state": orchestrator_state,
         "orchestrator": orchestrator_snapshot,
+        "kill_switch": kill_label,
+        "kill_switch_engaged": kill_engaged,
+        "mock_mode": bool(flags.mock_mode),
+        "dry_run": bool(flags.dry_run),
+        "profile": getattr(flags, "profile", "paper"),
+        "paper_mode": bool(flags.paper_trading),
+        "alpaca_use_paper": alpaca_use_paper,
     }
 
-    if status != "ok":
-        payload.setdefault("error", "degraded")
-
-    return JSONResponse(payload, status_code=200)
+    return JSONResponse(payload)
 
 
 @root_router.get("/debug/runtime", response_model=RuntimeFlags)

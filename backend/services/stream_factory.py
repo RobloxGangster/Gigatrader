@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol
 
 from core.runtime_flags import RuntimeFlags, get_runtime_flags
 
@@ -23,7 +23,7 @@ class StreamService(Protocol):
     @property
     def source_name(self) -> str: ...
 
-    def status(self) -> Dict[str, Any]: ...
+    async def status(self) -> Dict[str, Any]: ...
 
     def start(self, loop: Any | None = None) -> None: ...
 
@@ -32,10 +32,21 @@ class StreamService(Protocol):
 
 class BaseStreamService:
     def __init__(self, source: str) -> None:
+        # The `source` string is surfaced directly to the UI badges and controls.
+        # It must accurately reflect the market data feed that is currently in use
+        # (e.g. "mock", "alpaca", "alpaca/paper"). Do not lie here — other
+        # services rely on this to decide whether the system is operating against
+        # live infrastructure or simulated data.
         self.source = source
         self.running: bool = False
         self.last_error: Optional[str] = None
         self._last_heartbeat: Optional[str] = None
+        self._rpm: float = 0.0
+        self._backoff_events: int = 0
+        self._retries: int = 0
+        self._max_rpm: float = 0.0
+        self._window_seconds: float = 60.0
+        self._history: List[Dict[str, Any]] = []
 
     @property
     def last_heartbeat(self) -> Optional[str]:
@@ -58,7 +69,7 @@ class BaseStreamService:
         self.running = False
         self._mark_heartbeat()
 
-    def status(self) -> Dict[str, Any]:
+    async def status(self) -> Dict[str, Any]:
         heartbeat = self._mark_heartbeat()
         payload: Dict[str, Any] = {
             "source": self.source,
@@ -66,9 +77,25 @@ class BaseStreamService:
             "last_heartbeat": heartbeat,
             "status": "online" if self.running and not self.last_error else "degraded",
             "ok": self.running and not self.last_error,
+            "rpm": self._rpm,
+            "backoff_events": self._backoff_events,
+            "retries": self._retries,
+            "max_rpm": self._max_rpm or self._rpm,
+            "window_seconds": self._window_seconds,
         }
         if self.last_error:
             payload["last_error"] = self.last_error
+        self._history.append(
+            {
+                "ts": heartbeat,
+                "ok": payload["ok"],
+                "running": self.running,
+                "error": self.last_error,
+            }
+        )
+        if len(self._history) > 100:
+            del self._history[:-100]
+        payload["history"] = list(self._history[-20:])
         return payload
 
 
@@ -77,8 +104,8 @@ class MockStreamService(BaseStreamService):
         super().__init__("mock")
         self.start()
 
-    def status(self) -> Dict[str, Any]:
-        return super().status()
+    async def status(self) -> Dict[str, Any]:
+        return await super().status()
 
 
 def _alpaca_env_health() -> tuple[bool, Optional[str]]:
@@ -92,23 +119,20 @@ def _alpaca_env_health() -> tuple[bool, Optional[str]]:
 
 class AlpacaStreamService(BaseStreamService):
     def __init__(self, *, profile: str = "paper") -> None:
-        super().__init__("alpaca")
-        self.profile = profile
+        normalized = (profile or "paper").strip().lower() or "paper"
+        source = "alpaca/live" if normalized == "live" else "alpaca/paper"
+        super().__init__(source)
+        self.profile = normalized
         self.running = True
         self._mark_heartbeat()
 
-    def status(self) -> Dict[str, Any]:
+    async def status(self) -> Dict[str, Any]:
         healthy, err = _alpaca_env_health()
         self.last_error = err
-        heartbeat = self._mark_heartbeat()
-        payload: Dict[str, Any] = {
-            "source": self.source,
-            "running": self.running,
-            "profile": self.profile,
-            "last_heartbeat": heartbeat,
-            "ok": healthy,
-            "status": "online" if healthy else "degraded",
-        }
+        payload = await super().status()
+        payload["profile"] = self.profile
+        payload["ok"] = healthy
+        payload["status"] = "online" if healthy else "degraded"
         if err:
             payload["last_error"] = err
         return payload
@@ -122,9 +146,10 @@ def make_stream_service(flags: RuntimeFlags | None = None) -> StreamService:
         log.info("Stream source selected: mock")
         return MockStreamService()
 
-    if source == "alpaca":
-        log.info("Stream source selected: alpaca (profile=%s)", getattr(cfg, "profile", "paper"))
-        return AlpacaStreamService(profile=getattr(cfg, "profile", "paper"))
+    if source.startswith("alpaca"):
+        profile = getattr(cfg, "profile", "paper")
+        log.info("Stream source selected: alpaca (profile=%s)", profile)
+        return AlpacaStreamService(profile=profile)
 
     log.warning("Unknown market_data_source %s, defaulting to mock", source)
     return MockStreamService()

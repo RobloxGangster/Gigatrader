@@ -98,7 +98,8 @@ def test_health_and_metrics_report_breaker_state(monkeypatch, tmp_path):
     assert server.breakers is breakers
 
     health = server.health()
-    assert health["kill_switch"] is True
+    assert health["kill_switch"] == "Triggered"
+    assert health.get("kill_switch_engaged") is True
     assert "reject_spike" in health["breakers"]["current"]
     assert health["ok"] is False
 

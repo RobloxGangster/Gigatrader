@@ -6,6 +6,23 @@ from backend.brokers import AlpacaBrokerAdapter, MockBrokerAdapter
 from core.runtime_flags import RuntimeFlags, get_runtime_flags
 
 
+def _validate_alpaca_flags(flags: RuntimeFlags) -> None:
+    missing: list[str] = []
+    if not (flags.alpaca_key or "").strip():
+        missing.append("ALPACA_KEY_ID")
+    if not (flags.alpaca_secret or "").strip():
+        missing.append("ALPACA_SECRET_KEY")
+    base_url = (flags.alpaca_base_url or "").strip()
+    if not base_url:
+        missing.append("ALPACA_BASE_URL")
+    if missing:
+        joined = ", ".join(missing)
+        raise RuntimeError(
+            "Alpaca configuration invalid: missing keys or base URL"
+            f" ({joined})."
+        )
+
+
 def make_broker_adapter(flags: RuntimeFlags | None = None) -> Any:
     """Return the appropriate broker adapter based on runtime flags."""
 
@@ -13,13 +30,18 @@ def make_broker_adapter(flags: RuntimeFlags | None = None) -> Any:
     broker = (cfg.broker or "alpaca").lower()
 
     if broker == "alpaca" and not cfg.mock_mode:
-        adapter = AlpacaBrokerAdapter.from_runtime_flags(cfg)
+        _validate_alpaca_flags(cfg)
+        try:
+            adapter = AlpacaBrokerAdapter.from_runtime_flags(cfg)
+        except Exception as exc:  # pragma: no cover - configuration errors
+            raise RuntimeError("Alpaca configuration invalid: missing keys or base URL") from exc
         return adapter
 
     if cfg.mock_mode or broker == "mock":
         adapter = MockBrokerAdapter()
         setattr(adapter, "dry_run", bool(cfg.dry_run))
         setattr(adapter, "profile", getattr(cfg, "profile", "mock"))
+        setattr(adapter, "name", "mock")
         return adapter
 
     raise ValueError(

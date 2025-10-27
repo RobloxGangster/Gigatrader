@@ -107,7 +107,25 @@ def test_broker_orders_route_returns_normalised(
                 }
             ]
 
-    app.dependency_overrides[broker.alpaca] = lambda: StubAdapter()
+    stub_adapter = StubAdapter()
+
+    class StubService:
+        def __init__(self) -> None:
+            self.adapter = stub_adapter
+            self.flags = type(
+                "Flags",
+                (),
+                {"broker": "alpaca", "mock_mode": False, "dry_run": False},
+            )()
+
+        def get_orders(self, status: str = "all", limit: int = 50):
+            return stub_adapter.list_orders(status=status, limit=limit)
+
+        def last_headers(self):
+            return {}
+
+    app.dependency_overrides[broker.get_broker_adapter] = lambda: stub_adapter
+    app.dependency_overrides[broker.get_broker] = lambda: StubService()
 
     response = client.get("/broker/orders")
     assert response.status_code == 200
