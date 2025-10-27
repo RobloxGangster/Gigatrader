@@ -163,39 +163,80 @@ def _emit_config_warnings(section: str, payload: Dict[str, Any]) -> None:
 
 
 def _render_status_header(
-    status: Dict[str, Any], stream: Dict[str, Any], orchestrator: Dict[str, Any]
+    status: Dict[str, Any],
+    stream: Dict[str, Any],
+    orchestrator: Dict[str, Any],
+    orchestrator_debug: Dict[str, Any],
 ) -> None:
-    profile_label = "Paper" if status.get("paper_mode", True) else "Live"
-    broker_label = str(status.get("broker", "alpaca")).title()
-    run_state = str(orchestrator.get("state", "stopped")).title()
+    orch_status = orchestrator_debug.get("status", orchestrator)
+    profile_value = orch_status.get("profile", status.get("profile"))
+    profile_label = "Paper" if str(profile_value or "paper").lower() != "live" else "Live"
+    broker_label = str(orch_status.get("broker_impl") or status.get("broker", "alpaca")).title()
+    run_state = str(orch_status.get("state", orchestrator.get("state", "stopped"))).title()
+    kill_switch_label = orch_status.get("kill_switch") or (
+        "Engaged" if orchestrator.get("kill_switch") else "Standby"
+    )
+    kill_switch_engaged = bool(
+        orch_status.get("kill_switch_engaged", orchestrator.get("kill_switch"))
+    )
 
     cols = st.columns(4)
     cols[0].metric("Profile", profile_label)
     cols[1].metric("Broker", broker_label)
     cols[2].metric("Run State", run_state)
-    cols[3].metric(
-        "Kill Switch", "Engaged" if orchestrator.get("kill_switch") else "Standby"
-    )
+    cols[3].metric("Kill Switch", kill_switch_label)
 
-    running = bool(stream.get("running"))
+    stream_details = {}
+    details_raw = status.get("stream_details")
+    if isinstance(details_raw, dict):
+        stream_details = details_raw
+    elif isinstance(stream, dict):
+        stream_details = stream
+    stream_source = stream_details.get("source") or status.get("stream")
+    running = bool(stream_details.get("running", stream.get("running")))
     stream_label = "Running" if running else "Stopped"
     status_pill("Stream", stream_label, variant="positive" if running else "warning")
-    if stream.get("source"):
-        st.caption(f"Market data feed: {stream['source']}")
-    if stream.get("last_heartbeat"):
-        st.caption(f"Last stream heartbeat: {stream['last_heartbeat']}")
-    if stream.get("last_error"):
-        st.caption(f"Stream error: {stream['last_error']}")
+    if stream_source:
+        st.caption(f"Market data feed: {stream_source}")
+    heartbeat = (
+        stream_details.get("last_heartbeat")
+        or status.get("stream_last_heartbeat")
+        or stream.get("last_heartbeat")
+    )
+    if heartbeat:
+        st.caption(f"Last stream heartbeat: {heartbeat}")
+    if stream_details.get("last_error"):
+        st.caption(f"Stream error: {stream_details['last_error']}")
 
-    if orchestrator.get("last_error"):
+    if orch_status.get("last_error"):
         with st.expander("Last orchestrator error", expanded=False):
-            st.code(str(orchestrator.get("last_error")))
+            st.code(str(orch_status.get("last_error")))
 
-    if orchestrator.get("last_heartbeat"):
-        st.caption(f"Last orchestrator heartbeat: {orchestrator['last_heartbeat']}")
-    if orchestrator.get("uptime_secs"):
-        uptime_hours = float(orchestrator.get("uptime_secs", 0.0)) / 3600.0
-        st.caption(f"Orchestrator uptime: {uptime_hours:.2f}h")
+    if orch_status.get("last_heartbeat"):
+        st.caption(f"Last orchestrator heartbeat: {orch_status['last_heartbeat']}")
+    uptime = orch_status.get("uptime")
+    if uptime:
+        st.caption(f"Orchestrator uptime: {uptime}")
+
+    last_attempt = orchestrator_debug.get("last_order_attempt", {})
+    if last_attempt.get("ts"):
+        symbol = last_attempt.get("symbol") or "—"
+        side = last_attempt.get("side") or "—"
+        qty = last_attempt.get("qty")
+        qty_label = qty if qty is not None else "—"
+        status_parts = []
+        status_parts.append("sent" if last_attempt.get("sent") else "skipped")
+        status_parts.append("accepted" if last_attempt.get("accepted") else "not accepted")
+        if last_attempt.get("reason"):
+            status_parts.append(str(last_attempt["reason"]))
+        broker_impl = last_attempt.get("broker_impl") or broker_label
+        st.caption(
+            f"Last order attempt ({last_attempt['ts']}): "
+            f"{symbol} {side} × {qty_label} — {' / '.join(status_parts)} via {broker_impl}."
+        )
+
+    if kill_switch_engaged:
+        st.warning("KILL SWITCH ACTIVE — trading disabled until reset.")
 
 
 def _render_metrics(
@@ -580,6 +621,12 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
         data["orchestrator"] = {}
 
     try:
+        data["orchestrator_debug"] = api.orchestrator_debug()
+    except Exception as exc:  # noqa: BLE001
+        data["orchestrator_debug_error"] = str(exc)
+        data["orchestrator_debug"] = {}
+
+    try:
         data["strategy"] = api.strategy_config()
     except Exception as exc:  # noqa: BLE001
         data["strategy_error"] = str(exc)
@@ -711,6 +758,10 @@ def render(
         st.warning(f"Orders unavailable: {data['orders_error']}")
     if data.get("stream_error"):
         st.warning(f"Stream status unavailable: {data['stream_error']}")
+    if data.get("orchestrator_debug_error"):
+        st.warning(
+            f"Orchestrator debug unavailable: {data['orchestrator_debug_error']}"
+        )
     if data.get("strategy_error"):
         st.warning(f"Strategy configuration unavailable: {data['strategy_error']}")
     if data.get("risk_error"):
@@ -727,7 +778,10 @@ def render(
     _emit_config_warnings("Risk", data.get("risk", {}))
 
     _render_status_header(
-        data.get("health", {}), data.get("stream", {}), data.get("orchestrator", {})
+        data.get("health", {}),
+        data.get("stream", {}),
+        data.get("orchestrator", {}),
+        data.get("orchestrator_debug", {}),
     )
     _render_metrics(
         data.get("account", {}), data.get("pnl", {}), data.get("exposure", {})

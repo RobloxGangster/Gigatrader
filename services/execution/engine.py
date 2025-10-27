@@ -3,10 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import os
 import uuid
 from typing import Any, Dict, Optional
+
+from core.runtime_flags import runtime_flags_from_env
+
+try:  # pragma: no cover - backend optional in pure services tests
+    from backend.services.orchestrator import can_execute_trade, record_order_attempt
+except Exception:  # pragma: no cover - fallback when backend unavailable
+    def record_order_attempt(**_: Any) -> None:  # type: ignore[override]
+        return None
+
+    def can_execute_trade(flags: Any, kill_switch_engaged: bool) -> tuple[bool, str | None]:
+        if kill_switch_engaged or getattr(flags, "dry_run", False):
+            return False, "execution_disabled"
+        return True, None
 
 from services.execution.adapter_alpaca import AlpacaAdapter
 from services.execution.types import ExecIntent, ExecResult
@@ -45,6 +59,7 @@ class ExecutionEngine:
         adapter: Optional[AlpacaAdapter] = None,
         updates: Optional[UpdateBus] = None,
     ) -> None:
+        self.log = logging.getLogger("gigatrader.execution")
         self.risk = risk
         self.state = state
         self.adapter = adapter or AlpacaAdapter()
@@ -92,6 +107,32 @@ class ExecutionEngine:
                 payload["stop_loss"] = {"stop_price": sl}
         return payload
 
+    async def _forget_intent(self, key: str) -> None:
+        async with self._intent_lock:
+            self._seen_intents.pop(key, None)
+
+    def _record_attempt(
+        self,
+        intent: ExecIntent,
+        *,
+        sent: bool,
+        accepted: bool,
+        reason: str,
+    ) -> None:
+        broker_impl = type(self.adapter).__name__ if self.adapter else "UnknownAdapter"
+        try:
+            record_order_attempt(
+                symbol=intent.symbol,
+                qty=intent.qty,
+                side=intent.side,
+                sent=sent,
+                accepted=accepted,
+                reason=reason,
+                broker_impl=broker_impl,
+            )
+        except Exception:  # pragma: no cover - telemetry best effort
+            pass
+
     async def submit(self, intent: ExecIntent) -> ExecResult:
         """Submit a validated intent after re-running risk checks."""
 
@@ -100,14 +141,50 @@ class ExecutionEngine:
             existing = self._seen_intents.get(key)
             if existing is not None:
                 metrics.inc_order_reject("duplicate_intent")
-                return ExecResult(
+                result = ExecResult(
                     accepted=False,
                     reason="duplicate_intent",
                     client_order_id=existing,
                 )
+                self._record_attempt(intent, sent=False, accepted=False, reason=result.reason)
+                self.log.info(
+                    "execution.duplicate_intent",
+                    extra={"symbol": intent.symbol, "side": intent.side, "qty": intent.qty},
+                )
+                return result
             client_order_id = intent.client_tag or str(uuid.uuid4())
             # Pre-populate with the generated client order id so in-flight duplicates see it.
             self._seen_intents[key] = client_order_id
+
+        flags = runtime_flags_from_env()
+        kill_switch_obj = getattr(self.risk, "kill_switch", None)
+        kill_switch_engaged = False
+        if kill_switch_obj is not None:
+            try:
+                kill_switch_engaged = bool(kill_switch_obj.engaged_sync())
+            except Exception:  # pragma: no cover - defensive
+                kill_switch_engaged = False
+        allowed, guard_reason = can_execute_trade(flags, kill_switch_engaged)
+        if not allowed:
+            await self._forget_intent(key)
+            reason_code = guard_reason or "execution_guard"
+            metrics.inc_order_reject(f"guard_{reason_code}")
+            self.log.info(
+                "execution.guard_block",
+                extra={
+                    "symbol": intent.symbol,
+                    "side": intent.side,
+                    "qty": intent.qty,
+                    "reason": reason_code,
+                },
+            )
+            result = ExecResult(
+                accepted=False,
+                reason=reason_code,
+                client_order_id=client_order_id,
+            )
+            self._record_attempt(intent, sent=False, accepted=False, reason=result.reason)
+            return result
         proposal = Proposal(
             symbol=intent.symbol,
             side=intent.side,
@@ -120,11 +197,23 @@ class ExecutionEngine:
             metrics.inc_order_reject(f"risk_denied_{decision.reason or 'unknown'}")
             async with self._intent_lock:
                 self._seen_intents.pop(key, None)
-            return ExecResult(
+            reason = f"risk_denied:{decision.reason}"
+            self.log.info(
+                "execution.risk_denied",
+                extra={
+                    "symbol": intent.symbol,
+                    "side": intent.side,
+                    "qty": intent.qty,
+                    "reason": decision.reason,
+                },
+            )
+            result = ExecResult(
                 accepted=False,
-                reason=f"risk_denied:{decision.reason}",
+                reason=reason,
                 client_order_id=client_order_id,
             )
+            self._record_attempt(intent, sent=False, accepted=False, reason=result.reason)
+            return result
 
         payload = self._intent_to_payload(intent, client_order_id)
         if isinstance(payload, dict):
@@ -140,11 +229,23 @@ class ExecutionEngine:
             metrics.inc_order_reject(f"submit_failed_{exc.__class__.__name__}")
             async with self._intent_lock:
                 self._seen_intents.pop(key, None)
-            return ExecResult(
+            reason = f"submit_failed:{exc}"
+            self.log.warning(
+                "execution.submit_failed",
+                extra={
+                    "symbol": intent.symbol,
+                    "side": intent.side,
+                    "qty": intent.qty,
+                    "error": str(exc),
+                },
+            )
+            result = ExecResult(
                 accepted=False,
-                reason=f"submit_failed:{exc}",
+                reason=reason,
                 client_order_id=client_order_id,
             )
+            self._record_attempt(intent, sent=True, accepted=False, reason=result.reason)
+            return result
 
         order_id: Optional[str] = None
         status: str = "pending"
@@ -173,12 +274,24 @@ class ExecutionEngine:
                 self.state.mark_trade(intent.symbol, when=timestamp)
             except TypeError:
                 self.state.mark_trade(intent.symbol)  # type: ignore[arg-type]
-        return ExecResult(
+        result = ExecResult(
             accepted=True,
             reason="accepted",
             client_order_id=client_order_id,
             order_id=order_id,
         )
+        self.log.info(
+            "execution.submit_success",
+            extra={
+                "symbol": intent.symbol,
+                "side": intent.side,
+                "qty": intent.qty,
+                "status": status,
+                "order_id": order_id,
+            },
+        )
+        self._record_attempt(intent, sent=True, accepted=True, reason=status)
+        return result
 
     async def cancel(self, client_order_id: str) -> bool:
         order = self._orders.get(client_order_id)
