@@ -8,6 +8,7 @@ python-dotenv
 pandas
 pyarrow
 psycopg2-binary
+psutil
 fastapi
 uvicorn
 streamlit

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import signal
 import subprocess
 import sys
@@ -21,6 +22,7 @@ from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
 from ui.services.backend import BrokerAPI
+from scripts.proc_utils import kill_pid_tree, pid_is_alive
 
 _TESTING = "PYTEST_CURRENT_TEST" in os.environ
 REFRESH_INTERVAL_SEC = 5
@@ -35,46 +37,48 @@ STRATEGY_LABELS: Dict[str, str] = {
 LAUNCHER_PATH = Path(__file__).resolve().parents[2] / "scripts" / "run_trader.py"
 
 
+def _read_tail(path: str, limit_lines: int = 50) -> str:
+    log_path = pathlib.Path(path)
+    if not log_path.exists():
+        return "(no log output)"
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if not lines:
+        return "(no log output)"
+    return "\n".join(lines[-limit_lines:])
+
+
 def _launcher_exists() -> bool:
     return LAUNCHER_PATH.exists()
 
-
-def _is_process_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:  # pragma: no cover - Windows oddities
-        return True
-    except OSError:
-        return False
-    return True
-
-
 def _sync_launcher_state() -> None:
-    proc = st.session_state.get("trader.process")
     pid = st.session_state.get("trader.pid")
-    if isinstance(proc, subprocess.Popen):
-        if proc.poll() is not None:
-            st.session_state.pop("trader.process", None)
-            if pid == proc.pid:
-                st.session_state.pop("trader.pid", None)
-    elif isinstance(pid, int) and pid > 0:
-        if not _is_process_alive(pid):
+    if isinstance(pid, int) and pid > 0:
+        if not pid_is_alive(pid):
             st.session_state.pop("trader.pid", None)
+            st.session_state["trader.error"] = (
+                "Trading system exited unexpectedly. See logs/trader_launcher.err.log."
+            )
 
 
 def _start_trading_system() -> bool:
+    existing_pid = st.session_state.get("trader.pid")
+    if isinstance(existing_pid, int) and existing_pid > 0:
+        if pid_is_alive(existing_pid):
+            return True
+        st.session_state.pop("trader.pid", None)
+
+    st.session_state.pop("trader.error", None)
+
     if not _launcher_exists():
-        st.error("Launcher script missing: scripts/run_trader.py")
+        st.session_state["trader.error"] = "Launcher script missing: scripts/run_trader.py"
+        st.error(st.session_state["trader.error"])
         return False
-    creationflags = 0
-    if os.name == "nt":  # pragma: no cover - Windows specific
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     env = os.environ.copy()
     try:
         proc = subprocess.Popen(  # noqa: S603 - trusted launcher
-            [sys.executable, str(LAUNCHER_PATH)],
+            [sys.executable, "-u", "scripts/run_trader.py"],
             cwd=str(LAUNCHER_PATH.parent.parent),
             env=env,
             stdout=subprocess.DEVNULL,
@@ -82,73 +86,89 @@ def _start_trading_system() -> bool:
             creationflags=creationflags,
         )
     except Exception as exc:  # noqa: BLE001 - display to user
-        st.error(f"Failed to start trading system: {exc}")
+        st.session_state["trader.error"] = f"Failed to start trading system: {exc}"
+        st.error(st.session_state["trader.error"])
         return False
-    st.session_state["trader.pid"] = proc.pid
-    st.session_state["trader.process"] = proc
-    st.session_state["trader.launch_ts"] = time.time()
-    return True
+
+    deadline = time.time() + 10.0
+    last_error: str | None = None
+    health_payload: Dict[str, Any] | None = None
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            last_error = f"launcher exited with code {proc.returncode}"
+            break
+        try:
+            response = requests.get("http://127.0.0.1:8000/health", timeout=1.5)
+        except requests.RequestException as exc:
+            last_error = str(exc)
+            time.sleep(0.5)
+            continue
+        if response.status_code != 200:
+            last_error = f"HTTP {response.status_code}"
+            time.sleep(0.5)
+            continue
+        try:
+            health_payload = response.json()
+        except ValueError as exc:
+            last_error = f"invalid JSON: {exc}"
+            time.sleep(0.5)
+            continue
+        if isinstance(health_payload, dict):
+            break
+        health_payload = {}
+        break
+
+    if isinstance(health_payload, dict):
+        st.session_state["trader.pid"] = proc.pid
+        return True
+
+    log_tail = _read_tail("logs/trader_launcher.err.log", 50)
+    st.session_state["trader.error"] = log_tail if log_tail else (last_error or "Launcher failed")
+    kill_pid_tree(proc.pid)
+    try:
+        proc.wait(timeout=5)
+    except Exception:  # pragma: no cover - defensive
+        pass
+    return False
 
 
 def _stop_trading_system() -> bool:
     pid = st.session_state.get("trader.pid")
-    proc = st.session_state.get("trader.process")
-    stopped = False
-    target_pid = None
-    if isinstance(proc, subprocess.Popen):
-        target_pid = proc.pid
-        if proc.poll() is None:
-            if os.name == "nt":  # pragma: no cover - Windows specific
-                with suppress(Exception):
-                    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], check=False)
-            else:
-                with suppress(Exception):
-                    os.kill(proc.pid, signal.SIGTERM)
-            with suppress(Exception):
-                proc.wait(timeout=10)
-        stopped = True
-    if isinstance(pid, int) and pid > 0 and pid != target_pid:
-        if os.name == "nt":  # pragma: no cover - Windows specific
-            with suppress(Exception):
-                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False)
-        else:
-            with suppress(Exception):
-                os.kill(pid, signal.SIGTERM)
-        stopped = True
-    for key in ("trader.pid", "trader.process", "trader.launch_ts"):
-        st.session_state.pop(key, None)
-    return stopped
+    if isinstance(pid, int) and pid > 0:
+        kill_pid_tree(pid)
+    st.session_state.pop("trader.pid", None)
+    st.session_state.pop("trader.error", None)
+    return True
 
 
-def _render_backend_banner(base_url: str, payload: Mapping[str, Any], *, unreachable: str | None) -> None:
-    if unreachable:
+def _render_backend_banner(backend_up: bool, payload: Mapping[str, Any] | None) -> None:
+    if not backend_up:
         st.error(
-            f"Backend not reachable at {base_url}. Is trading system running?"
+            "Backend is NOT reachable at http://127.0.0.1:8000. Trading system is NOT running."
         )
+        error_tail = st.session_state.get("trader.error")
+        if error_tail:
+            st.code(str(error_tail), language="text")
         return
-    if not isinstance(payload, Mapping) or not payload:
-        st.warning("Backend health unavailable.")
+
+    payload = payload or {}
+    if bool(payload.get("ok")):
+        stream_source = str(payload.get("stream_source") or "").lower()
+        broker_impl = str(payload.get("broker_impl") or payload.get("broker") or "")
+        if "mock" in stream_source or broker_impl.lower().startswith("mock"):
+            st.success("MOCK MODE — no live orders will be sent.")
+        else:
+            st.success("PAPER MODE — connected to Alpaca paper.")
         return
-    broker_label = str(payload.get("broker") or payload.get("broker_impl") or "unknown")
+
+    warning_lines = ["Broker misconfigured or degraded."]
+    broker_name = payload.get("broker")
     error_text = payload.get("error")
-    mock_mode = bool(payload.get("mock_mode"))
-    broker_env = str(broker_label).lower()
-    dry_run = bool(payload.get("dry_run"))
-    profile = str(payload.get("profile", "paper")).lower()
-    ok = bool(payload.get("ok", False))
-    if mock_mode:
-        st.info("MOCK MODE — no live orders will be sent.")
-        return
-    if ok and broker_env.startswith("alpaca") and not dry_run and profile == "paper":
-        st.success("PAPER MODE — connected to Alpaca paper.")
-        return
-    if ok:
-        st.success("Backend reachable and responding.")
-        return
-    warning = f"Backend degraded — broker={broker_label}"
+    if broker_name is not None:
+        warning_lines.append(f"broker: {broker_name}")
     if error_text:
-        warning = f"Backend degraded — {error_text}"
-    st.warning(warning)
+        warning_lines.append(f"error: {error_text}")
+    st.warning("\n".join(warning_lines))
 def _fmt_money(value: Any, digits: int = 2) -> str:
     try:
         return fmt_currency(to_float(value), digits=digits)
@@ -289,22 +309,43 @@ def _render_status_header(
     orchestrator_debug: Dict[str, Any],
     runtime_flags: Dict[str, Any],
     execution_tail: Dict[str, Any],
+    *,
+    backend_up: bool,
+    env_profile: str,
+    env_broker: str,
 ) -> None:
     orch_status = orchestrator_debug.get("status", orchestrator)
-    runtime_profile = runtime_flags.get("profile") if isinstance(runtime_flags, dict) else None
-    profile_value = runtime_profile or health.get("profile") or orch_status.get("profile")
-    profile_label = "Paper" if str(profile_value or "paper").lower() != "live" else "Live"
-    runtime_broker = (runtime_flags or {}).get("broker") if isinstance(runtime_flags, dict) else None
-    broker_label = runtime_broker or health.get("broker") or orch_status.get("broker_impl")
-    broker_label = str(broker_label or "unknown").title()
-    run_state = str(health.get("orchestrator_state") or orch_status.get("state") or "Unknown")
-    stream_source = str(health.get("stream_source") or stream.get("source") or "unknown")
-    kill_switch_label = health.get("kill_switch") or orch_status.get("kill_switch") or (
-        "Engaged" if orchestrator.get("kill_switch") else "Standby"
-    )
-    kill_switch_engaged = bool(
-        orch_status.get("kill_switch_engaged", orchestrator.get("kill_switch"))
-    )
+    if not isinstance(orch_status, dict):
+        orch_status = orchestrator
+
+    profile_label = env_profile.title()
+    broker_label = str(env_broker or "unknown").title()
+    run_state = "Stopped"
+    stream_source = "offline"
+    kill_switch_label = "Unknown"
+    kill_switch_engaged = False
+
+    if backend_up:
+        runtime_profile = runtime_flags.get("profile") if isinstance(runtime_flags, dict) else None
+        profile_value = runtime_profile or health.get("profile") or orch_status.get("profile")
+        if isinstance(profile_value, str) and profile_value:
+            profile_label = ("Live" if profile_value.lower() == "live" else "Paper")
+        runtime_broker = runtime_flags.get("broker") if isinstance(runtime_flags, dict) else None
+        broker_value = runtime_broker or health.get("broker") or orch_status.get("broker_impl")
+        if broker_value is not None:
+            broker_label = str(broker_value).title()
+        run_state = str(
+            health.get("orchestrator_state") or orch_status.get("state") or "Unknown"
+        )
+        stream_source = str(health.get("stream_source") or stream.get("source") or "unknown")
+        kill_switch_label = (
+            health.get("kill_switch")
+            or orch_status.get("kill_switch")
+            or ("Engaged" if orchestrator.get("kill_switch") else "Standby")
+        )
+        kill_switch_engaged = bool(
+            orch_status.get("kill_switch_engaged", orchestrator.get("kill_switch"))
+        )
 
     cols = st.columns(5)
     cols[0].metric("Profile", profile_label)
@@ -312,6 +353,12 @@ def _render_status_header(
     cols[2].metric("Run State", run_state)
     cols[3].metric("Stream Source", stream_source)
     cols[4].metric("Kill Switch", kill_switch_label)
+
+    if not backend_up:
+        status_pill("Stream", "Offline", variant="warning")
+        status_pill("Execution", "Offline", variant="warning")
+        st.caption("Execution adapter offline while backend is stopped.")
+        return
 
     stream_details = {}
     details_raw = health.get("stream_details")
@@ -728,17 +775,19 @@ def _schedule_status_poll(window: float = STATUS_POLL_WINDOW) -> None:
         st.session_state["__cc_status_poll_until__"] = time.time() + STATUS_POLL_WINDOW
 
 
-def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
+def _load_remote_state(
+    api: ApiClient, backend_up: bool, health_payload: Mapping[str, Any] | None
+) -> Dict[str, Any]:
     data: Dict[str, Any] = {}
-    try:
-        data["health"] = api.health()
-    except requests.RequestException as exc:  # pragma: no cover - network guard
-        data["health_error"] = str(exc)
-        data["health_unreachable"] = str(exc)
+    if isinstance(health_payload, Mapping):
+        data["health"] = dict(health_payload)
+    else:
         data["health"] = {}
-    except Exception as exc:  # noqa: BLE001
-        data["health_error"] = str(exc)
-        data["health"] = {}
+
+    if not backend_up:
+        data["health_unreachable"] = True
+        return data
+
     try:
         data["status"] = api.status()
     except Exception as exc:  # noqa: BLE001
@@ -858,8 +907,8 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         data["logs_error"] = str(exc)
         data["logs"] = []
-    data.setdefault("pacing", {})
 
+    data.setdefault("pacing", {})
     return data
 
 
@@ -892,12 +941,10 @@ def render(
             disabled=launcher_running,
         ):
             if _start_trading_system():
-                try:
-                    st.session_state["__cc_last_health__"] = api.health()
-                except Exception as exc:  # noqa: BLE001
-                    st.warning(f"Health check failed: {exc}")
                 _schedule_status_poll()
-            launcher_running = True
+                launcher_running = True
+            else:
+                launcher_running = isinstance(st.session_state.get("trader.pid"), int)
     with action_cols[2]:
         if st.button(
             "Stop Trading System",
@@ -915,41 +962,86 @@ def render(
         help="Refresh KPIs and tables every few seconds.",
     )
 
-    data = _load_remote_state(api)
+    backend_up = False
+    health_payload: Dict[str, Any] | None = None
+    try:
+        health_response = requests.get("http://127.0.0.1:8000/health", timeout=1.5)
+    except requests.RequestException:
+        health_response = None
+    if health_response is not None and health_response.status_code == 200:
+        try:
+            parsed = health_response.json()
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            health_payload = parsed
+            backend_up = True
+
+    data = _load_remote_state(api, backend_up, health_payload)
 
     health_snapshot = data.get("health", {}) if isinstance(data, dict) else {}
     status_snapshot = data.get("status", {}) if isinstance(data, dict) else {}
     runtime_snapshot = data.get("runtime_flags", {}) if isinstance(data, dict) else {}
-    broker_snapshot = data.get("broker", {})
+    broker_snapshot = data.get("broker", {}) if isinstance(data, dict) else {}
 
     _render_backend_banner(
-        resolved_base,
-        health_snapshot if isinstance(health_snapshot, Mapping) else {},
-        unreachable=data.get("health_unreachable"),
+        backend_up,
+        health_snapshot if isinstance(health_snapshot, Mapping) else None,
     )
 
-    broker_label = status_snapshot.get("broker", "alpaca")
-    dry_run_label = status_snapshot.get("dry_run", False)
-    profile_label = status_snapshot.get("profile", "paper")
-    mock_mode_flag = bool(health_snapshot.get("mock_mode"))
+    truthy = {"1", "true", "yes", "on"}
+    env_profile_raw = os.environ.get("PROFILE") or os.environ.get("TRADING_MODE") or "paper"
+    env_profile = "live" if str(env_profile_raw).lower() == "live" else "paper"
+    env_broker = os.environ.get("BROKER") or os.environ.get("TRADING_BROKER") or "alpaca"
+    env_dry_run_flag = str(os.environ.get("DRY_RUN") or "").strip().lower() in truthy
+    env_mock_flag = (
+        str(os.environ.get("MOCK_MODE") or os.environ.get("MOCK_MARKET") or "")
+        .strip()
+        .lower()
+        in truthy
+    )
 
-    if isinstance(runtime_snapshot, Mapping) and runtime_snapshot:
-        broker_label = runtime_snapshot.get("broker", broker_label)
-        dry_run_label = runtime_snapshot.get("dry_run", dry_run_label)
-        profile_label = runtime_snapshot.get("profile", profile_label)
-        mock_mode_flag = bool(runtime_snapshot.get("mock_mode", mock_mode_flag))
+    broker_label: str = str(env_broker)
+    profile_label: str = str(env_profile)
+    dry_run_label: bool = bool(env_dry_run_flag)
+    mock_mode_flag: bool = bool(env_mock_flag)
 
-    if isinstance(health_snapshot, dict):
-        dry_run_label = health_snapshot.get("dry_run", dry_run_label)
-        profile_label = (
-            "paper" if health_snapshot.get("paper_mode", profile_label != "live") else "live"
-        )
-        broker_label = health_snapshot.get("broker", broker_label)
+    if backend_up and isinstance(status_snapshot, Mapping):
+        broker_label = str(status_snapshot.get("broker", broker_label))
+        dry_run_label = bool(status_snapshot.get("dry_run", dry_run_label))
+        profile_candidate = status_snapshot.get("profile")
+        if isinstance(profile_candidate, str) and profile_candidate:
+            profile_label = profile_candidate
 
-    if isinstance(broker_snapshot, Mapping):
-        broker_label = broker_snapshot.get("impl", broker_label)
-        dry_run_label = broker_snapshot.get("dry_run", dry_run_label)
-        profile_label = broker_snapshot.get("profile", profile_label)
+    if backend_up and isinstance(runtime_snapshot, Mapping):
+        broker_label = str(runtime_snapshot.get("broker", broker_label))
+        dry_run_label = bool(runtime_snapshot.get("dry_run", dry_run_label))
+        profile_candidate = runtime_snapshot.get("profile")
+        if isinstance(profile_candidate, str) and profile_candidate:
+            profile_label = profile_candidate
+        if "mock_mode" in runtime_snapshot:
+            mock_mode_flag = bool(runtime_snapshot.get("mock_mode"))
+
+    if backend_up and isinstance(health_snapshot, Mapping):
+        broker_label = str(health_snapshot.get("broker", broker_label))
+        if "dry_run" in health_snapshot:
+            dry_run_label = bool(health_snapshot.get("dry_run"))
+        paper_mode = health_snapshot.get("paper_mode")
+        if paper_mode is not None:
+            profile_label = "paper" if bool(paper_mode) else "live"
+        profile_candidate = health_snapshot.get("profile")
+        if isinstance(profile_candidate, str) and profile_candidate:
+            profile_label = profile_candidate
+        if "mock_mode" in health_snapshot:
+            mock_mode_flag = bool(health_snapshot.get("mock_mode"))
+
+    if backend_up and isinstance(broker_snapshot, Mapping):
+        broker_label = str(broker_snapshot.get("impl", broker_label))
+        if "dry_run" in broker_snapshot:
+            dry_run_label = bool(broker_snapshot.get("dry_run"))
+        profile_candidate = broker_snapshot.get("profile")
+        if isinstance(profile_candidate, str) and profile_candidate:
+            profile_label = profile_candidate
 
     if mock_mode_flag:
         st.sidebar.info("Mock mode enabled")
@@ -1015,6 +1107,9 @@ def render(
         data.get("orchestrator_debug", {}),
         data.get("runtime_flags", {}),
         data.get("execution_tail", {}),
+        backend_up=backend_up,
+        env_profile=env_profile,
+        env_broker=env_broker,
     )
     _render_metrics(
         data.get("account", {}), data.get("pnl", {}), data.get("exposure", {})

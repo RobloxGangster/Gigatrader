@@ -1,34 +1,15 @@
 #!/usr/bin/env python3
-"""Unified launcher for the Gigatrader backend and orchestrator.
-
-This script is now the canonical way to bring the entire trading stack online
-locally. It starts the FastAPI backend (uvicorn) and the orchestrator loop and
-keeps them running together. The Streamlit Control Center "Start Trading
-System" button invokes this launcher, but it can also be executed manually for
-local testing or automation.
-
-Responsibilities:
-
-* Load environment variables from ``.env`` without clobbering values that are
-  already present in the shell environment.
-* Spawn the FastAPI backend under ``uvicorn`` and capture stdout/stderr to the
-  ``logs/`` directory so diagnostics can be inspected after shutdown.
-* Poll the backend ``/health`` endpoint until it returns JSON. The endpoint must
-  always respond with HTTP 200 — even degraded states surface an ``ok: false``
-  JSON payload rather than an exception.
-* Once the backend is reachable, start the orchestrator process.
-* Keep both processes alive until interrupted and ensure they are stopped
-  cleanly when the user presses Ctrl+C (or when either process exits
-  unexpectedly).
-"""
+"""Launcher that keeps the backend API and orchestrator running together."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import subprocess
 import sys
 import time
+import traceback
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Dict
@@ -36,161 +17,191 @@ from typing import Any, Dict
 import requests
 from dotenv import load_dotenv
 
-from core.runtime_flags import get_runtime_flags, parse_bool
+from scripts.proc_utils import kill_pid_tree
 
 LOG_DIR = Path("logs")
-LOG_DIR.mkdir(exist_ok=True)
-
-BACKEND_LOG = LOG_DIR / "backend.out.log"
-BACKEND_ERR_LOG = LOG_DIR / "backend.err.log"
-ORCH_LOG = LOG_DIR / "orchestrator.out.log"
-ORCH_ERR_LOG = LOG_DIR / "orchestrator.err.log"
-
-HEALTH_URL = "http://127.0.0.1:{port}/health"
-DEFAULT_BACKEND_HOST = "127.0.0.1"
-DEFAULT_BACKEND_PORT = 8000
+BACKEND_STDOUT = LOG_DIR / "backend.out.log"
+BACKEND_STDERR = LOG_DIR / "backend.err.log"
+LAUNCHER_ERR = LOG_DIR / "trader_launcher.err.log"
+HEALTH_URL = "http://127.0.0.1:8000/health"
+POLL_INTERVAL_SEC = 0.5
+HEALTH_TIMEOUT_SEC = 10.0
 
 
-def _start_subprocess(cmd: list[str], *, env: dict[str, str], stdout_path: Path, stderr_path: Path) -> subprocess.Popen:
-    stdout_handle = stdout_path.open("w", encoding="utf-8")
-    stderr_handle = stderr_path.open("w", encoding="utf-8")
-    creationflags = 0
-    if os.name == "nt":  # pragma: no cover - Windows specific
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-    proc = subprocess.Popen(
+def _ensure_logs() -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _open_backend_logs() -> tuple[Any, Any]:
+    stdout_handle = BACKEND_STDOUT.open("ab", buffering=0)
+    stderr_handle = BACKEND_STDERR.open("ab", buffering=0)
+    return stdout_handle, stderr_handle
+
+
+def _open_launcher_log() -> Any:
+    return LAUNCHER_ERR.open("a", encoding="utf-8")
+
+
+def _log(launcher_log: Any, message: str) -> None:
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{timestamp}] {message}"
+    print(line, flush=True)
+    try:
+        launcher_log.write(line + "\n")
+        launcher_log.flush()
+    except Exception:  # pragma: no cover - best effort logging
+        pass
+
+
+def _start_backend(stdout_handle: Any, stderr_handle: Any, launcher_log: Any) -> subprocess.Popen[Any]:
+    env = os.environ.copy()
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    cmd = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "backend.api:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+    ]
+    _log(launcher_log, "[run_trader] launching uvicorn backend")
+    return subprocess.Popen(
         cmd,
         stdout=stdout_handle,
         stderr=stderr_handle,
         env=env,
         creationflags=creationflags,
     )
-    proc._stdout_handle = stdout_handle  # type: ignore[attr-defined]
-    proc._stderr_handle = stderr_handle  # type: ignore[attr-defined]
-    return proc
 
 
-def _close_handles(proc: subprocess.Popen) -> None:
-    for attr in ("_stdout_handle", "_stderr_handle"):
-        handle = getattr(proc, attr, None)
-        if handle:
-            with suppress(Exception):
-                handle.close()
-
-
-def _poll_health(url: str, *, timeout: float = 10.0) -> Dict[str, Any] | None:
-    deadline = time.time() + timeout
+def _wait_for_backend(launcher_log: Any) -> Dict[str, Any] | None:
+    deadline = time.time() + HEALTH_TIMEOUT_SEC
     last_error: str | None = None
     while time.time() < deadline:
         try:
-            resp = requests.get(url, timeout=1.5)
-        except requests.RequestException as exc:  # pragma: no cover - network variance
+            response = requests.get(HEALTH_URL, timeout=1.5)
+        except requests.RequestException as exc:
             last_error = str(exc)
-            time.sleep(0.5)
+            time.sleep(POLL_INTERVAL_SEC)
             continue
-        if resp.status_code == 200:
-            try:
-                return resp.json()
-            except ValueError:
-                return {"ok": False, "error": "invalid json"}
-        last_error = f"HTTP {resp.status_code}"
-        time.sleep(0.5)
+        if response.status_code != 200:
+            last_error = f"HTTP {response.status_code}"
+            time.sleep(POLL_INTERVAL_SEC)
+            continue
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            last_error = f"invalid JSON: {exc}"
+            time.sleep(POLL_INTERVAL_SEC)
+            continue
+        return payload if isinstance(payload, dict) else {}
     if last_error:
-        print(f"Health check failed: {last_error}")
+        _log(launcher_log, f"[run_trader] backend health check failed: {last_error}")
+    else:  # pragma: no cover - defensive
+        _log(launcher_log, "[run_trader] backend health check failed: unknown error")
     return None
+
+
+async def _orchestrator_loop(backend_proc: subprocess.Popen[Any], launcher_log: Any) -> None:
+    from backend.routers.deps import get_kill_switch, get_orchestrator
+
+    orchestrator = get_orchestrator()
+    await orchestrator.start()
+    _log(launcher_log, "[run_trader] orchestrator supervisor started")
+    try:
+        while True:
+            if backend_proc.poll() is not None:
+                raise RuntimeError(
+                    f"uvicorn exited unexpectedly with code {backend_proc.returncode}"
+                )
+            await asyncio.sleep(POLL_INTERVAL_SEC)
+    except asyncio.CancelledError:  # pragma: no cover - cancellation path
+        raise
+    finally:
+        with suppress(Exception):
+            get_kill_switch().engage_sync()
+        with suppress(Exception):
+            await orchestrator.stop()
+        _log(launcher_log, "[run_trader] orchestrator supervisor stopped")
+
+
+def _log_env_snapshot(launcher_log: Any) -> None:
+    profile = os.environ.get("PROFILE") or os.environ.get("TRADING_MODE") or "unknown"
+    broker = os.environ.get("BROKER") or os.environ.get("TRADING_BROKER") or "unknown"
+    mock_mode = os.environ.get("MOCK_MODE") or os.environ.get("MOCK_MARKET") or "false"
+    dry_run = os.environ.get("DRY_RUN") or "false"
+    message = (
+        f"[run_trader] starting orchestrator with PROFILE={profile}, "
+        f"BROKER={broker}, MOCK_MODE={mock_mode}, DRY_RUN={dry_run}"
+    )
+    _log(launcher_log, message)
+
+
+def _shutdown_backend(proc: subprocess.Popen[Any], launcher_log: Any) -> None:
+    if proc.poll() is None:
+        _log(launcher_log, "[run_trader] stopping uvicorn backend")
+        kill_pid_tree(proc.pid)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _log(launcher_log, "[run_trader] uvicorn did not exit after terminate; killing")
+            with suppress(Exception):
+                proc.kill()
+            with suppress(Exception):
+                proc.wait(timeout=5)
+    else:
+        _log(
+            launcher_log,
+            f"[run_trader] uvicorn already exited with code {proc.returncode}",
+        )
 
 
 def main() -> int:
     load_dotenv(override=False)
-    env = os.environ.copy()
-    flags = get_runtime_flags()
-    backend_port = int(env.get("API_PORT") or DEFAULT_BACKEND_PORT)
-    backend_host = env.get("API_HOST", DEFAULT_BACKEND_HOST)
-    health_url = HEALTH_URL.format(port=backend_port)
+    _ensure_logs()
 
-    uvicorn_cmd = [
-        sys.executable,
-        "-m",
-        "uvicorn",
-        "backend.api:app",
-        "--host",
-        backend_host,
-        "--port",
-        str(backend_port),
-    ]
+    with _open_launcher_log() as launcher_log:
+        backend_stdout, backend_stderr = _open_backend_logs()
+        backend_proc = None
+        try:
+            backend_proc = _start_backend(backend_stdout, backend_stderr, launcher_log)
+            health_payload = _wait_for_backend(launcher_log)
+            if health_payload is None:
+                _log(
+                    launcher_log,
+                    "[run_trader] backend failed to start; see backend.err.log",
+                )
+                if backend_proc is not None:
+                    _shutdown_backend(backend_proc, launcher_log)
+                return 1
 
-    print("Starting FastAPI backend…")
-    backend_proc = _start_subprocess(
-        uvicorn_cmd,
-        env=env,
-        stdout_path=BACKEND_LOG,
-        stderr_path=BACKEND_ERR_LOG,
-    )
+            _log(launcher_log, "[run_trader] backend is reachable and returned health JSON")
+            _log_env_snapshot(launcher_log)
 
-    backend_ready = _poll_health(health_url)
-    if backend_ready is None:
-        print("Backend did not become healthy. Check logs/backend.err.log")
-        backend_proc.terminate()
-        with suppress(ProcessLookupError):
-            backend_proc.wait(timeout=5)
-        _close_handles(backend_proc)
-        return 1
-
-    ok_flag = backend_ready.get("ok") if isinstance(backend_ready, dict) else None
-    print(f"Backend up ✅ {health_url}")
-    if ok_flag is False:
-        error_detail = backend_ready.get("error") if isinstance(backend_ready, dict) else None
-        if error_detail:
-            print(f"Backend reported degraded state: {error_detail}")
-
-    orchestrator_cmd = [sys.executable, "-m", "services.runtime.runner"]
-    print("Starting orchestrator…")
-    orchestrator_proc = _start_subprocess(
-        orchestrator_cmd,
-        env=env,
-        stdout_path=ORCH_LOG,
-        stderr_path=ORCH_ERR_LOG,
-    )
-
-    runtime_mode = "mock" if flags.mock_mode else "paper" if flags.paper_trading else "live"
-    dry_run = parse_bool(env.get("DRY_RUN"), default=flags.dry_run)
-    print(
-        "Orchestrator running ✅ (broker=%s, dry_run=%s, mock_mode=%s)"
-        % (flags.broker, dry_run, flags.mock_mode)
-    )
-    if flags.mock_mode:
-        print("⚠ MOCK MODE: no live orders will be sent to Alpaca.")
-    elif runtime_mode == "paper" and not dry_run:
-        print("PAPER MODE — connected to Alpaca paper.")
-
-    try:
-        while True:
-            time.sleep(1.0)
-            if backend_proc.poll() is not None:
-                print("Backend process exited unexpectedly. Stopping orchestrator…")
-                break
-            if orchestrator_proc.poll() is not None:
-                print("Orchestrator exited. Stopping backend…")
-                break
-    except KeyboardInterrupt:
-        print("Received Ctrl+C — shutting down…")
-    finally:
-        for proc in (orchestrator_proc, backend_proc):
-            if proc.poll() is None:
-                if os.name == "nt":  # pragma: no cover - Windows
-                    with suppress(Exception):
-                        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], check=False)
-                else:
-                    with suppress(Exception):
-                        os.kill(proc.pid, signal.SIGTERM)
-        with suppress(Exception):
-            orchestrator_proc.wait(timeout=10)
-        with suppress(Exception):
-            backend_proc.wait(timeout=10)
-        _close_handles(orchestrator_proc)
-        _close_handles(backend_proc)
-        print("Shutdown complete.")
+            try:
+                asyncio.run(_orchestrator_loop(backend_proc, launcher_log))
+            except KeyboardInterrupt:
+                _log(launcher_log, "[run_trader] KeyboardInterrupt received; shutting down")
+                return 0
+            except Exception as exc:  # noqa: BLE001 - log traceback for operators
+                tb = traceback.format_exc()
+                _log(
+                    launcher_log,
+                    f"[run_trader] orchestrator loop crashed: {exc}\n{tb}",
+                )
+                return 1
+            finally:
+                if backend_proc is not None:
+                    _shutdown_backend(backend_proc, launcher_log)
+        finally:
+            with suppress(Exception):
+                backend_stdout.close()
+            with suppress(Exception):
+                backend_stderr.close()
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover - manual entry point
+if __name__ == "__main__":  # pragma: no cover - manual execution
     raise SystemExit(main())
