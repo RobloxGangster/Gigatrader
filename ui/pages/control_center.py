@@ -1,28 +1,24 @@
 from __future__ import annotations
 
 import os
-import pathlib
-import signal
 import subprocess
 import sys
 import time
-from contextlib import suppress
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
-import streamlit as st
+import psutil
 import requests
+import streamlit as st
 
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
 from ui.lib.api_client import ApiClient
-from ui.lib.page_guard import require_backend
 from ui.lib.st_compat import auto_refresh
 from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
 from ui.services.backend import BrokerAPI
-from scripts.proc_utils import kill_pid_tree, pid_is_alive
+from ui.services.healthcheck import wait_for_backend_health
 
 _TESTING = "PYTEST_CURRENT_TEST" in os.environ
 REFRESH_INTERVAL_SEC = 5
@@ -34,141 +30,94 @@ STRATEGY_LABELS: Dict[str, str] = {
     "intraday_revert": "Intraday Mean Reversion",
     "swing_breakout": "Swing Breakout",
 }
-LAUNCHER_PATH = Path(__file__).resolve().parents[2] / "scripts" / "run_trader.py"
+BACKEND_URL = "http://127.0.0.1:8000"
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        p = psutil.Process(pid)
+        return p.is_running() and p.status() != psutil.STATUS_ZOMBIE
+    except psutil.Error:
+        return False
+
+
+def _kill_pid_tree(pid: int) -> None:
+    try:
+        p = psutil.Process(pid)
+    except psutil.Error:
+        return
+    for c in p.children(recursive=True):
+        try:
+            c.terminate()
+        except psutil.Error:
+            pass
+    try:
+        p.terminate()
+    except psutil.Error:
+        pass
 
 
 def _read_tail(path: str, limit_lines: int = 50) -> str:
-    log_path = pathlib.Path(path)
-    if not log_path.exists():
-        return "(no log output)"
-    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    if not lines:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except FileNotFoundError:
         return "(no log output)"
     return "\n".join(lines[-limit_lines:])
 
 
-def _launcher_exists() -> bool:
-    return LAUNCHER_PATH.exists()
+def _launch_backend_if_needed() -> None:
+    """
+    If the backend is not reachable AND we don't have a live pid, spawn it.
+    Then wait for /health. If it never becomes healthy, stash an error for UI.
+    """
 
-def _sync_launcher_state() -> None:
-    pid = st.session_state.get("trader.pid")
-    if isinstance(pid, int) and pid > 0:
-        if not pid_is_alive(pid):
-            st.session_state.pop("trader.pid", None)
-            st.session_state["trader.error"] = (
-                "Trading system exited unexpectedly. See logs/trader_launcher.err.log."
-            )
+    pid = st.session_state.get("backend.pid")
+    if pid and _pid_is_alive(pid):
+        return
 
-
-def _start_trading_system() -> bool:
-    existing_pid = st.session_state.get("trader.pid")
-    if isinstance(existing_pid, int) and existing_pid > 0:
-        if pid_is_alive(existing_pid):
-            return True
-        st.session_state.pop("trader.pid", None)
-
-    st.session_state.pop("trader.error", None)
-
-    if not _launcher_exists():
-        st.session_state["trader.error"] = "Launcher script missing: scripts/run_trader.py"
-        st.error(st.session_state["trader.error"])
-        return False
+    if pid and not _pid_is_alive(pid):
+        st.session_state.pop("backend.pid", None)
 
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    env = os.environ.copy()
-    try:
-        proc = subprocess.Popen(  # noqa: S603 - trusted launcher
-            [sys.executable, "-u", "scripts/run_trader.py"],
-            cwd=str(LAUNCHER_PATH.parent.parent),
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=creationflags,
+    proc = subprocess.Popen(
+        [sys.executable, "-u", "scripts/start_backend.py"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        creationflags=creationflags,
+        cwd=os.getcwd(),
+        env=os.environ.copy(),
+    )
+
+    st.session_state["backend.pid"] = proc.pid
+
+    healthy = wait_for_backend_health(BACKEND_URL, timeout_sec=10.0)
+    if not healthy:
+        st.session_state["backend.error"] = (
+            "Backend failed to start on 127.0.0.1:8000.\n"
+            "Check your credentials / .env, then open logs.\n"
         )
-    except Exception as exc:  # noqa: BLE001 - display to user
-        st.session_state["trader.error"] = f"Failed to start trading system: {exc}"
-        st.error(st.session_state["trader.error"])
+        if not _pid_is_alive(proc.pid):
+            st.session_state.pop("backend.pid", None)
+    else:
+        st.session_state.pop("backend.error", None)
+
+
+def _stop_backend() -> None:
+    pid = st.session_state.get("backend.pid")
+    if pid:
+        _kill_pid_tree(pid)
+    st.session_state.pop("backend.pid", None)
+    st.session_state.pop("backend.error", None)
+
+
+def _backend_up() -> bool:
+    try:
+        r = requests.get(f"{BACKEND_URL}/health", timeout=1.0)
+        return r.status_code == 200
+    except Exception:
         return False
-
-    deadline = time.time() + 10.0
-    last_error: str | None = None
-    health_payload: Dict[str, Any] | None = None
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            last_error = f"launcher exited with code {proc.returncode}"
-            break
-        try:
-            response = requests.get("http://127.0.0.1:8000/health", timeout=1.5)
-        except requests.RequestException as exc:
-            last_error = str(exc)
-            time.sleep(0.5)
-            continue
-        if response.status_code != 200:
-            last_error = f"HTTP {response.status_code}"
-            time.sleep(0.5)
-            continue
-        try:
-            health_payload = response.json()
-        except ValueError as exc:
-            last_error = f"invalid JSON: {exc}"
-            time.sleep(0.5)
-            continue
-        if isinstance(health_payload, dict):
-            break
-        health_payload = {}
-        break
-
-    if isinstance(health_payload, dict):
-        st.session_state["trader.pid"] = proc.pid
-        return True
-
-    log_tail = _read_tail("logs/trader_launcher.err.log", 50)
-    st.session_state["trader.error"] = log_tail if log_tail else (last_error or "Launcher failed")
-    kill_pid_tree(proc.pid)
-    try:
-        proc.wait(timeout=5)
-    except Exception:  # pragma: no cover - defensive
-        pass
-    return False
-
-
-def _stop_trading_system() -> bool:
-    pid = st.session_state.get("trader.pid")
-    if isinstance(pid, int) and pid > 0:
-        kill_pid_tree(pid)
-    st.session_state.pop("trader.pid", None)
-    st.session_state.pop("trader.error", None)
-    return True
-
-
-def _render_backend_banner(backend_up: bool, payload: Mapping[str, Any] | None) -> None:
-    if not backend_up:
-        st.error(
-            "Backend is NOT reachable at http://127.0.0.1:8000. Trading system is NOT running."
-        )
-        error_tail = st.session_state.get("trader.error")
-        if error_tail:
-            st.code(str(error_tail), language="text")
-        return
-
-    payload = payload or {}
-    if bool(payload.get("ok")):
-        stream_source = str(payload.get("stream_source") or "").lower()
-        broker_impl = str(payload.get("broker_impl") or payload.get("broker") or "")
-        if "mock" in stream_source or broker_impl.lower().startswith("mock"):
-            st.success("MOCK MODE — no live orders will be sent.")
-        else:
-            st.success("PAPER MODE — connected to Alpaca paper.")
-        return
-
-    warning_lines = ["Broker misconfigured or degraded."]
-    broker_name = payload.get("broker")
-    error_text = payload.get("error")
-    if broker_name is not None:
-        warning_lines.append(f"broker: {broker_name}")
-    if error_text:
-        warning_lines.append(f"error: {error_text}")
-    st.warning("\n".join(warning_lines))
 def _fmt_money(value: Any, digits: int = 2) -> str:
     try:
         return fmt_currency(to_float(value), digits=digits)
@@ -923,37 +872,18 @@ def render(
     resolved_base = api.base()
     st.caption(f"Resolved API: {resolved_base}")
     st.sidebar.caption(f"Resolved API: {resolved_base}")
-    if not require_backend(api):
-        return
+    if st.button("Refresh", key="cc_manual_refresh"):
+        st.session_state["__cc_manual_refresh_ts__"] = time.time()
 
-    _sync_launcher_state()
-    launcher_pid = st.session_state.get("trader.pid")
-    launcher_running = isinstance(launcher_pid, int) and launcher_pid > 0
-
-    action_cols = st.columns([1, 1, 1])
-    with action_cols[0]:
-        if st.button("Refresh", key="cc_manual_refresh"):
-            st.session_state["__cc_manual_refresh_ts__"] = time.time()
-    with action_cols[1]:
-        if st.button(
-            "Start Trading System",
-            key="cc_trading_system_start",
-            disabled=launcher_running,
-        ):
-            if _start_trading_system():
-                _schedule_status_poll()
-                launcher_running = True
-            else:
-                launcher_running = isinstance(st.session_state.get("trader.pid"), int)
-    with action_cols[2]:
-        if st.button(
-            "Stop Trading System",
-            key="cc_trading_system_stop",
-            disabled=not launcher_running,
-        ):
-            if _stop_trading_system():
-                _schedule_status_poll()
-            launcher_running = False
+    col_start, col_stop = st.columns([1, 1])
+    with col_start:
+        if st.button("Start Trading System"):
+            _launch_backend_if_needed()
+            _schedule_status_poll()
+    with col_stop:
+        if st.button("Stop Trading System"):
+            _stop_backend()
+            _schedule_status_poll()
 
     st.session_state.setdefault("telemetry.autorefresh", False)
     auto_enabled = st.toggle(
@@ -962,32 +892,57 @@ def render(
         help="Refresh KPIs and tables every few seconds.",
     )
 
-    backend_up = False
-    health_payload: Dict[str, Any] | None = None
-    try:
-        health_response = requests.get("http://127.0.0.1:8000/health", timeout=1.5)
-    except requests.RequestException:
-        health_response = None
-    if health_response is not None and health_response.status_code == 200:
-        try:
-            parsed = health_response.json()
-        except ValueError:
-            parsed = None
-        if isinstance(parsed, dict):
-            health_payload = parsed
-            backend_up = True
+    pid = st.session_state.get("backend.pid")
+    if pid and not _pid_is_alive(pid):
+        st.session_state.pop("backend.pid", None)
 
-    data = _load_remote_state(api, backend_up, health_payload)
+    backend_running = _backend_up()
+
+    if not backend_running:
+        st.error(
+            f"Backend is not reachable. Start FastAPI on {BACKEND_URL} "
+            "or click 'Start Trading System' above."
+        )
+
+        if "backend.error" in st.session_state:
+            st.code(st.session_state["backend.error"])
+
+        st.stop()
+
+    try:
+        health_response = requests.get(f"{BACKEND_URL}/health", timeout=2.0)
+        health = health_response.json()
+    except Exception:
+        health = {}
+    if not isinstance(health, dict):
+        health = {}
+
+    profile = health.get("profile", "Unknown")
+    broker_name = health.get("broker", "Unknown")
+    run_state = health.get("orchestrator_state", "Unknown")
+    stream_src = health.get("stream_source", "Unknown")
+    kill_switch = health.get("kill_switch", "Unknown")
+
+    if str(stream_src or "").lower().find("mock") != -1:
+        st.success("MOCK MODE — no live orders will be sent.")
+    else:
+        st.success("PAPER MODE — connected to Alpaca paper.")
+
+    st.write("Profile:", profile)
+    st.write("Broker:", broker_name)
+    st.write("Run State:", run_state)
+    st.write("Stream Source:", stream_src)
+    st.write("Kill Switch:", kill_switch)
+
+    health_payload = health
+
+    data = _load_remote_state(api, backend_running, health_payload)
+    backend_up = backend_running
 
     health_snapshot = data.get("health", {}) if isinstance(data, dict) else {}
     status_snapshot = data.get("status", {}) if isinstance(data, dict) else {}
     runtime_snapshot = data.get("runtime_flags", {}) if isinstance(data, dict) else {}
     broker_snapshot = data.get("broker", {}) if isinstance(data, dict) else {}
-
-    _render_backend_banner(
-        backend_up,
-        health_snapshot if isinstance(health_snapshot, Mapping) else None,
-    )
 
     truthy = {"1", "true", "yes", "on"}
     env_profile_raw = os.environ.get("PROFILE") or os.environ.get("TRADING_MODE") or "paper"
