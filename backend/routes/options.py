@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from typing import Optional, Dict, Any
-import os
 import pandas as pd
+
+from core.runtime_flags import get_runtime_flags
 
 router = APIRouter(prefix="/options", tags=["options"])
 
@@ -47,7 +48,7 @@ def options_chain(symbol: str, expiry: Optional[str] = None) -> Dict[str, Any]:
       symbol, expiry, strike, type ('call'|'put'), iv, oi, volume, bid, ask
     Shape matches ui/services/models.OptionChain expectation.
     """
-    mock_mode = os.getenv("MOCK_MODE", "false").lower() == "true"
+    mock_mode = get_runtime_flags().mock_mode
     df = None
     if not mock_mode:
         try:

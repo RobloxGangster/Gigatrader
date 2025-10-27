@@ -14,6 +14,7 @@ from typing import Any
 import pandas as pd
 
 from core.config import MOCK_MODE
+from core.runtime_flags import get_runtime_flags
 
 MIN_OPEN_INTEREST = 25
 """Minimum open interest required for a contract to be considered liquid."""
@@ -87,9 +88,12 @@ def _filter_liquidity(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _mock_mode_enabled() -> bool:
-    env = os.getenv("MOCK_MODE")
-    if env is not None:
-        return env.lower() in ("1", "true", "yes", "on")
+    try:
+        return bool(get_runtime_flags().mock_mode)
+    except Exception:
+        env = os.getenv("MOCK_MODE")
+        if env is not None:
+            return env.lower() in ("1", "true", "yes", "on")
     return bool(MOCK_MODE)
 
 

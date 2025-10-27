@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 from core.kill_switch import KillSwitch
-from core.runtime_flags import runtime_flags_from_env
+from core.runtime_flags import get_runtime_flags
 
 
 _CURRENT_SUPERVISOR: "OrchestratorSupervisor" | None = None
@@ -203,7 +203,7 @@ def get_orchestrator_status() -> Dict[str, Any]:
             snapshot = supervisor.status()
         except Exception:  # pragma: no cover - defensive snapshot guard
             snapshot = {}
-    flags = runtime_flags_from_env()
+    flags = get_runtime_flags()
     kill_switch_engaged = False
     if supervisor is not None:
         try:

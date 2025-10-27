@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
-import os
-
 import streamlit as st
 
 from ui.lib.api_client import ApiClient
+from ui.utils.runtime import get_runtime_flags
 
 
 def require_backend(api: ApiClient) -> bool:
     """Render a banner if the backend is unreachable."""
 
-    mock_mode = bool(
-        st.session_state.get("__mock_mode__")
-        or os.getenv("MOCK_MODE", "").strip().lower() in {"1", "true", "yes"}
-    )
+    mock_state = st.session_state.get("__mock_mode__")
+    if isinstance(mock_state, bool):
+        mock_mode = mock_state
+    else:
+        try:
+            flags = get_runtime_flags(api)
+            mock_mode = bool(flags.mock_mode)
+        except Exception:
+            mock_mode = False
+        st.session_state["__mock_mode__"] = mock_mode
     if mock_mode:
         return True
 

@@ -10,14 +10,14 @@ from fastapi import APIRouter, Depends
 
 from backend.routers.deps import BrokerService, get_broker
 from backend.services.stream_factory import StreamService, make_stream_service
+from core.runtime_flags import get_runtime_flags
 
 
 router = APIRouter(tags=["health"])
 
 
 def _is_mock() -> bool:
-    v = os.getenv("MOCK_MODE")
-    return v is not None and v.strip().lower() in ("1", "true", "yes", "on")
+    return get_runtime_flags().mock_mode
 
 
 async def _maybe_await(value: Any) -> Any:

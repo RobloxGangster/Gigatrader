@@ -263,6 +263,26 @@ class ApiClient:
                 return self.post("/reconcile")
             raise
 
+    def debug_runtime(self) -> Dict[str, Any]:
+        payload = self.get("/debug/runtime")
+        if isinstance(payload, dict):
+            return payload
+        return {"raw": payload}
+
+    def execution_tail(self, limit: int = 50) -> Dict[str, Any]:
+        try:
+            payload = self.get("/debug/execution_tail", limit=limit)
+        except HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                return {"path": None, "lines": []}
+            raise
+        if isinstance(payload, dict):
+            lines = payload.get("lines")
+            if isinstance(lines, list):
+                payload["lines"] = [str(line) for line in lines]
+            return payload
+        return {"path": None, "lines": []}
+
     def strategy_config(self) -> Any:
         return self.get("/strategy/config")
 

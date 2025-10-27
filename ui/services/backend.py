@@ -335,13 +335,13 @@ class RealAPI:
             request_kwargs["json"] = json_payload
 
         try:
-            result = self.client._request(method.upper(), clean_path, **request_kwargs)
+            response = self.client._request(method.upper(), clean_path, **request_kwargs)
         except Exception as exc:  # noqa: BLE001 - defensive network guard
             raise BackendError(str(exc)) from exc
-
-        if isinstance(result, bytes):
-            return result.decode("utf-8", "ignore")
-        return result
+        parsed = self.client._parse_response(response)
+        if isinstance(parsed, bytes):
+            return parsed.decode("utf-8", "ignore")
+        return parsed
 
     def broker_status(self) -> Dict[str, Any]:
         payload = self._request("GET", "/broker/status")

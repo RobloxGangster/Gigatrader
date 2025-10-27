@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field
 
 
-load_dotenv()
+_FLAGS_CACHE: "RuntimeFlags | None" = None
+_FLAGS_SIGNATURE: tuple[tuple[str, str | None], ...] | None = None
+_CACHE_LOCK = threading.Lock()
 
 _FALSEY = {"0", "false", "no", "off", "f", "n"}
 _TRUEY = {"1", "true", "yes", "on", "t", "y"}
@@ -85,14 +88,43 @@ class RuntimeFlags(BaseModel):
         return "paper" if self.paper_trading else "live"
 
 
-def runtime_flags_from_env() -> RuntimeFlags:
-    """Build :class:`RuntimeFlags` from the current process environment."""
+_SIGNATURE_KEYS = (
+    "BROKER",
+    "PROFILE",
+    "MOCK_MODE",
+    "DRY_RUN",
+    "MARKET_DATA_SOURCE",
+    "API_BASE",
+    "API_BASE_URL",
+    "API_PORT",
+    "UI_PORT",
+    "ALPACA_BASE_URL",
+    "APCA_API_BASE_URL",
+    "ALPACA_KEY_ID",
+    "ALPACA_API_KEY_ID",
+    "APCA_API_KEY_ID",
+    "ALPACA_SECRET_KEY",
+    "ALPACA_API_SECRET_KEY",
+    "APCA_API_SECRET_KEY",
+    "ALPACA_API_KEY",
+    "ALPACA_API_SECRET",
+    "AUTO_RESTART",
+    "TRADING_MODE",
+    "ALPACA_PAPER",
+)
+
+
+def _env_signature() -> tuple[tuple[str, str | None], ...]:
+    return tuple((name, os.getenv(name)) for name in _SIGNATURE_KEYS)
+
+
+def _build_runtime_flags() -> RuntimeFlags:
+    """Internal helper to hydrate :class:`RuntimeFlags` from the environment."""
+
+    load_dotenv(override=False)
 
     def _parse_bool(name: str, default: bool) -> bool:
-        raw = os.getenv(name)
-        if raw is None:
-            return default
-        return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+        return parse_bool(os.getenv(name), default=default)
 
     broker = os.getenv("BROKER", "alpaca").strip() or "alpaca"
     profile = os.getenv("PROFILE", "paper").strip() or "paper"
@@ -187,12 +219,28 @@ def runtime_flags_from_env() -> RuntimeFlags:
     )
 
 
+def runtime_flags_from_env() -> RuntimeFlags:
+    """Build :class:`RuntimeFlags` from environment variables without caching."""
+
+    return _build_runtime_flags()
+
+
 def get_runtime_flags() -> RuntimeFlags:
-    return runtime_flags_from_env()
+    global _FLAGS_CACHE, _FLAGS_SIGNATURE
+    signature = _env_signature()
+    with _CACHE_LOCK:
+        if _FLAGS_CACHE is None or signature != _FLAGS_SIGNATURE:
+            _FLAGS_CACHE = _build_runtime_flags()
+            _FLAGS_SIGNATURE = signature
+        return _FLAGS_CACHE
 
 
 def refresh_runtime_flags() -> RuntimeFlags:
-    return runtime_flags_from_env()
+    global _FLAGS_CACHE, _FLAGS_SIGNATURE
+    with _CACHE_LOCK:
+        _FLAGS_CACHE = _build_runtime_flags()
+        _FLAGS_SIGNATURE = _env_signature()
+        return _FLAGS_CACHE
 
 
 def require_alpaca_keys() -> None:

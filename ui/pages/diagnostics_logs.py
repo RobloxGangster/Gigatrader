@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
-import zipfile
 
 import pandas as pd
 import streamlit as st
 
-from ui.lib.st_compat import auto_refresh
-
 from ui.lib.api_client import ApiClient, build_url
+from ui.lib.ui_compat import safe_rerun
 
 STATE_KEY = "__diagnostics_state__"
 DEFAULT_LINES = 200
@@ -70,6 +70,8 @@ def _get_state() -> Dict[str, Any]:
             "last_refresh_token": 0,
             "last_diagnostics_at": None,
             "last_logs_at": None,
+            "execution_tail": {"lines": []},
+            "execution_error": None,
         },
     )
 
@@ -95,6 +97,7 @@ def render() -> None:
             type="primary",
             help="Fetch /health, /pacing, and the latest log tail.",
         )
+    st.session_state.setdefault("diag.autorefresh", False)
     previous_auto = bool(state.get("auto_enabled", False))
     with controls[1]:
         auto_enabled = st.toggle(
@@ -120,13 +123,8 @@ def render() -> None:
         )
 
     state["auto_enabled"] = auto_enabled
+    st.session_state["diag.autorefresh"] = auto_enabled
     state["filter"] = filter_text
-
-    refresh_token = 0
-    if auto_enabled:
-        refresh_token = auto_refresh(interval_ms=REFRESH_INTERVAL_MS, key="diagnostics.logs.refresh")
-    else:
-        state["last_refresh_token"] = 0
 
     state_limit = state.get("limit", DEFAULT_LINES)
     if state_limit != limit:
@@ -134,17 +132,23 @@ def render() -> None:
         if state.get("log_entries"):
             _fetch_logs(client, state, limit)
 
+    interval_sec = REFRESH_INTERVAL_MS / 1000.0
+    now = time.time()
     if run_clicked:
         _run_full_diagnostics(client, state, limit)
-    elif auto_enabled and refresh_token != state.get("last_refresh_token"):
-        state["last_refresh_token"] = refresh_token
-        _fetch_logs(client, state, limit)
-    elif auto_enabled and not previous_auto:
-        _fetch_logs(client, state, limit)
+    elif auto_enabled:
+        last_auto = float(state.get("last_auto_refresh", 0.0) or 0.0)
+        if not previous_auto or now - last_auto >= interval_sec:
+            state["last_auto_refresh"] = now
+            _fetch_logs(client, state, limit)
+            _fetch_execution_tail(client, state, limit)
+    elif previous_auto and not auto_enabled:
+        state["last_auto_refresh"] = 0.0
 
     health_error = state.get("health_error")
     pacing_error = state.get("pacing_error")
     logs_error = state.get("logs_error")
+    execution_error = state.get("execution_error")
 
     if health_error:
         _render_failure(health_error, client)
@@ -152,6 +156,8 @@ def render() -> None:
         _render_failure(pacing_error, client)
     if logs_error:
         _render_failure(logs_error, client)
+    if execution_error:
+        _render_failure(execution_error, client)
 
     health = state.get("health", {})
     pacing = state.get("pacing", {}) if isinstance(state.get("pacing"), dict) else {}
@@ -184,6 +190,16 @@ def render() -> None:
 
     st.code(export_text or "No log lines fetched yet.", language="text")
 
+    exec_tail = state.get("execution_tail", {})
+    exec_lines = []
+    if isinstance(exec_tail, dict):
+        exec_lines = exec_tail.get("lines") or []
+    st.subheader("Execution Debug Tail")
+    if exec_lines:
+        st.code("\n".join(str(line) for line in exec_lines), language="text")
+    else:
+        st.info("No execution debug lines fetched yet.")
+
     diagnostics_ts = state.get("last_diagnostics_at")
     logs_ts = state.get("last_logs_at")
     status_parts = []
@@ -193,6 +209,10 @@ def render() -> None:
         status_parts.append(f"Logs updated @ {logs_ts}")
     status_parts.append(f"Endpoint: {client.base()}")
     st.caption(" · ".join(status_parts))
+
+    if auto_enabled and "PYTEST_CURRENT_TEST" not in os.environ:
+        time.sleep(interval_sec)
+        safe_rerun()
 
 
 def _render_failure(payload: Dict[str, Any], client: ApiClient) -> None:
@@ -221,6 +241,7 @@ def _run_full_diagnostics(client: ApiClient, state: Dict[str, Any], limit: int) 
     _fetch_health(client, state)
     _fetch_pacing(client, state)
     _fetch_logs(client, state, limit)
+    _fetch_execution_tail(client, state, limit)
     state["last_diagnostics_at"] = _format_timestamp(datetime.now(timezone.utc))
 
 
@@ -254,6 +275,16 @@ def _fetch_logs(client: ApiClient, state: Dict[str, Any], limit: int) -> None:
         state["logs_error"] = {"path": "/logs/recent", "error": str(exc)}
     finally:
         state["last_logs_at"] = _format_timestamp(datetime.now(timezone.utc))
+
+
+def _fetch_execution_tail(client: ApiClient, state: Dict[str, Any], limit: int) -> None:
+    try:
+        payload = client.execution_tail(limit=limit)
+        state["execution_tail"] = payload if isinstance(payload, dict) else {"lines": []}
+        state["execution_error"] = None
+    except Exception as exc:  # noqa: BLE001
+        state["execution_tail"] = {"lines": []}
+        state["execution_error"] = {"path": "/debug/execution_tail", "error": str(exc)}
 
 
 def _normalize_logs(payload: Any) -> List[Dict[str, Any]]:

@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 from backend.brokers import AlpacaBrokerAdapter, MockBrokerAdapter
-from core.runtime_flags import RuntimeFlags, runtime_flags_from_env
+from core.runtime_flags import RuntimeFlags, get_runtime_flags
 
 
 def make_broker_adapter(flags: RuntimeFlags | None = None) -> Any:
     """Return the appropriate broker adapter based on runtime flags."""
 
-    cfg = flags or runtime_flags_from_env()
+    cfg = flags or get_runtime_flags()
     broker = (cfg.broker or "alpaca").lower()
 
     if broker == "alpaca" and not cfg.mock_mode:

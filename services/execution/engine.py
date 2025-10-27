@@ -7,9 +7,11 @@ import logging
 import math
 import os
 import uuid
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any, Dict, Optional
 
-from core.runtime_flags import runtime_flags_from_env
+from core.runtime_flags import get_runtime_flags
 
 try:  # pragma: no cover - backend optional in pure services tests
     from backend.services.orchestrator import can_execute_trade, record_order_attempt
@@ -28,6 +30,36 @@ from services.execution.updates import UpdateBus
 from services.risk.engine import Proposal, RiskManager
 from services.risk.state import Position, StateProvider
 from services.telemetry import metrics
+
+
+EXECUTION_LOG_PATH = Path("logs/execution_debug.log")
+
+
+def _ensure_debug_logger() -> logging.Logger:
+    logger = logging.getLogger("gigatrader.execution.debug")
+    if not getattr(logger, "_gigatrader_configured", False):  # type: ignore[attr-defined]
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        try:
+            EXECUTION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:  # pragma: no cover - filesystem guard
+            pass
+        marker_present = any(getattr(handler, "_gigatrader_marker", False) for handler in logger.handlers)
+        if not marker_present:
+            handler = RotatingFileHandler(
+                EXECUTION_LOG_PATH,
+                maxBytes=1_000_000,
+                backupCount=5,
+                encoding="utf-8",
+            )
+            handler._gigatrader_marker = True  # type: ignore[attr-defined]
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+            logger.addHandler(handler)
+        logger._gigatrader_configured = True  # type: ignore[attr-defined]
+    return logger
+
+
+EXEC_DEBUG_LOG = _ensure_debug_logger()
 
 
 def _bracket_prices(side: str, px: float, tp_pct: float, sl_pct: float) -> tuple[float, float]:
@@ -60,6 +92,7 @@ class ExecutionEngine:
         updates: Optional[UpdateBus] = None,
     ) -> None:
         self.log = logging.getLogger("gigatrader.execution")
+        self.debug_log = EXEC_DEBUG_LOG
         self.risk = risk
         self.state = state
         self.adapter = adapter or AlpacaAdapter()
@@ -132,6 +165,22 @@ class ExecutionEngine:
             )
         except Exception:  # pragma: no cover - telemetry best effort
             pass
+        try:
+            self.debug_log.info(
+                "execution.attempt",
+                extra={
+                    "symbol": intent.symbol,
+                    "side": intent.side,
+                    "qty": intent.qty,
+                    "sent": sent,
+                    "accepted": accepted,
+                    "reason": reason,
+                    "broker": broker_impl,
+                    "dry_run": getattr(self.adapter, "dry_run", None),
+                },
+            )
+        except Exception:  # pragma: no cover - logging guard
+            pass
 
     async def submit(self, intent: ExecIntent) -> ExecResult:
         """Submit a validated intent after re-running risk checks."""
@@ -156,7 +205,7 @@ class ExecutionEngine:
             # Pre-populate with the generated client order id so in-flight duplicates see it.
             self._seen_intents[key] = client_order_id
 
-        flags = runtime_flags_from_env()
+        flags = get_runtime_flags()
         kill_switch_obj = getattr(self.risk, "kill_switch", None)
         kill_switch_engaged = False
         if kill_switch_obj is not None:
@@ -169,15 +218,17 @@ class ExecutionEngine:
             await self._forget_intent(key)
             reason_code = guard_reason or "execution_guard"
             metrics.inc_order_reject(f"guard_{reason_code}")
-            self.log.info(
-                "execution.guard_block",
-                extra={
-                    "symbol": intent.symbol,
-                    "side": intent.side,
-                    "qty": intent.qty,
-                    "reason": reason_code,
-                },
-            )
+            context = {
+                "symbol": intent.symbol,
+                "side": intent.side,
+                "qty": intent.qty,
+                "reason": reason_code,
+            }
+            self.log.info("execution.guard_block", extra=context)
+            try:
+                self.debug_log.info("execution.guard_block", extra=context)
+            except Exception:  # pragma: no cover - logging guard
+                pass
             result = ExecResult(
                 accepted=False,
                 reason=reason_code,
@@ -198,15 +249,17 @@ class ExecutionEngine:
             async with self._intent_lock:
                 self._seen_intents.pop(key, None)
             reason = f"risk_denied:{decision.reason}"
-            self.log.info(
-                "execution.risk_denied",
-                extra={
-                    "symbol": intent.symbol,
-                    "side": intent.side,
-                    "qty": intent.qty,
-                    "reason": decision.reason,
-                },
-            )
+            context = {
+                "symbol": intent.symbol,
+                "side": intent.side,
+                "qty": intent.qty,
+                "reason": decision.reason,
+            }
+            self.log.info("execution.risk_denied", extra=context)
+            try:
+                self.debug_log.info("execution.risk_denied", extra=context)
+            except Exception:  # pragma: no cover - logging guard
+                pass
             result = ExecResult(
                 accepted=False,
                 reason=reason,
@@ -230,15 +283,17 @@ class ExecutionEngine:
             async with self._intent_lock:
                 self._seen_intents.pop(key, None)
             reason = f"submit_failed:{exc}"
-            self.log.warning(
-                "execution.submit_failed",
-                extra={
-                    "symbol": intent.symbol,
-                    "side": intent.side,
-                    "qty": intent.qty,
-                    "error": str(exc),
-                },
-            )
+            context = {
+                "symbol": intent.symbol,
+                "side": intent.side,
+                "qty": intent.qty,
+                "error": str(exc),
+            }
+            self.log.warning("execution.submit_failed", extra=context)
+            try:
+                self.debug_log.error("execution.submit_failed", extra=context)
+            except Exception:  # pragma: no cover - logging guard
+                pass
             result = ExecResult(
                 accepted=False,
                 reason=reason,
@@ -290,6 +345,19 @@ class ExecutionEngine:
                 "order_id": order_id,
             },
         )
+        try:
+            self.debug_log.info(
+                "execution.submit_success",
+                extra={
+                    "symbol": intent.symbol,
+                    "side": intent.side,
+                    "qty": intent.qty,
+                    "status": status,
+                    "order_id": order_id,
+                },
+            )
+        except Exception:  # pragma: no cover - logging guard
+            pass
         self._record_attempt(intent, sent=True, accepted=True, reason=status)
         return result
 

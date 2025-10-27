@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from enum import Enum
 from typing import Any, Dict, List, Literal
 
@@ -24,6 +23,7 @@ except ImportError:  # pragma: no cover - executed in newer alpaca-py
 from alpaca.trading.requests import GetOrdersRequest
 
 from core.broker_config import is_mock
+from core.runtime_flags import get_runtime_flags
 
 from .alpaca_client import get_trading_client
 
@@ -56,12 +56,12 @@ def pull_account() -> Dict[str, Any]:
 
 # no-op stubs if MOCK
 def pull_all_if_live() -> Dict[str, Any]:
-    mock_env = os.getenv("MOCK_MODE", "").strip().lower()
-    if is_mock() or mock_env in {"1", "true", "yes", "on"}:
+    flags = get_runtime_flags()
+    if is_mock() or flags.mock_mode:
         return {"mode": "mock", "orders": [], "positions": [], "account": {}}
     try:
         return {
-            "mode": "paper",
+            "mode": "paper" if flags.paper_trading else "live",
             "orders": pull_orders(),
             "positions": pull_positions(),
             "account": pull_account(),
@@ -136,7 +136,7 @@ def reconcile_run(request: Request) -> Dict[str, Any]:
 def reconcile_now(request: Request) -> Dict[str, Any]:
     """Compatibility endpoint mirroring the historic root POST behaviour."""
 
-    if os.getenv("MOCK_MODE", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if get_runtime_flags().mock_mode:
         snapshot = pull_all_if_live()
         return {"ok": True, "snapshot": snapshot}
     return reconcile_run(request)
@@ -151,12 +151,8 @@ def reconcile_sync(
         summary = reconciler.sync_once(status_scope=status)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if os.getenv("MOCK_MODE", "true").lower() in {
-        "1",
-        "true",
-        "on",
-        "yes",
-    }:
+    flags = get_runtime_flags()
+    if flags.mock_mode:
         try:
             reconciler.seed_mock_order()
         except Exception:  # pragma: no cover - defensive
