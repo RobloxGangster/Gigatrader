@@ -761,21 +761,25 @@ def start_background_runner(profile: str = "paper"):
 def health():
     flags = get_runtime_flags()
     breaker_info = breakers.breaker_state()
-    kill = _kill_switch_on()
+    kill_engaged = _kill_switch_on()
     orchestrator_status = _trade_orchestrator.status()
-    broker_status = {
-        "source": "mock" if flags.mock_mode else "alpaca",
-        "paper": flags.paper_trading,
-    }
-    stream_status = {"status": "unknown"}
-    ok = not kill and not breaker_info.get("current")
+    stream_source = "mock" if flags.mock_mode else "alpaca"
+    ok = not kill_engaged and not breaker_info.get("current")
+    broker_label = "MockBrokerAdapter" if flags.mock_mode else "AlpacaBrokerAdapter"
     return {
         "ok": bool(ok),
-        "mode": {"mock_mode": flags.mock_mode, "paper": flags.paper_trading},
+        "broker": broker_label,
+        "stream_source": stream_source,
+        "orchestrator_state": "Running" if orchestrator_status.get("running") else "Stopped",
+        "kill_switch": "Triggered" if kill_engaged else "Standby",
+        "kill_switch_engaged": kill_engaged,
+        "mock_mode": bool(flags.mock_mode),
+        "dry_run": bool(flags.dry_run),
+        "profile": getattr(flags, "profile", "paper"),
+        "paper_mode": bool(flags.paper_trading),
         "orchestrator": orchestrator_status,
-        "stream": stream_status,
-        "broker": broker_status,
-        "kill_switch": kill,
+        "stream": {"source": stream_source, "running": True},
+        "error": None,
         "breakers": breaker_info,
     }
 

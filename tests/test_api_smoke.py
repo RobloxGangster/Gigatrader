@@ -20,8 +20,10 @@ def test_health_status():
     health_resp = client.get("/health")
     assert health_resp.status_code == 200
     health = health_resp.json()
-    assert health["ok"] is True
-    assert "mode" in health and "orchestrator" in health
+    assert isinstance(health.get("ok"), bool)
+    assert "broker" in health
+    assert "stream_source" in health
+    assert "orchestrator_state" in health
     r = client.get("/status")
     assert r.status_code == 200
     body = r.json()

@@ -8,8 +8,9 @@ def test_health_ok():
     r = requests.get(f"{API}/health", timeout=10)
     assert r.status_code == 200
     j = r.json()
-    assert "status" in j
-    assert "mock_mode" in j  # backend exposes this in /health
+    assert "ok" in j
+    assert "stream_source" in j
+    assert "broker" in j
 
 
 @pytest.mark.usefixtures("server_stack")

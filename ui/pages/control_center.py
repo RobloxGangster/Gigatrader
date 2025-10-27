@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import os
+import signal
+import subprocess
+import sys
 import time
+from contextlib import suppress
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 import streamlit as st
+import requests
 
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
@@ -26,6 +32,123 @@ STRATEGY_LABELS: Dict[str, str] = {
     "intraday_revert": "Intraday Mean Reversion",
     "swing_breakout": "Swing Breakout",
 }
+LAUNCHER_PATH = Path(__file__).resolve().parents[2] / "scripts" / "run_trader.py"
+
+
+def _launcher_exists() -> bool:
+    return LAUNCHER_PATH.exists()
+
+
+def _is_process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # pragma: no cover - Windows oddities
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _sync_launcher_state() -> None:
+    proc = st.session_state.get("trader.process")
+    pid = st.session_state.get("trader.pid")
+    if isinstance(proc, subprocess.Popen):
+        if proc.poll() is not None:
+            st.session_state.pop("trader.process", None)
+            if pid == proc.pid:
+                st.session_state.pop("trader.pid", None)
+    elif isinstance(pid, int) and pid > 0:
+        if not _is_process_alive(pid):
+            st.session_state.pop("trader.pid", None)
+
+
+def _start_trading_system() -> bool:
+    if not _launcher_exists():
+        st.error("Launcher script missing: scripts/run_trader.py")
+        return False
+    creationflags = 0
+    if os.name == "nt":  # pragma: no cover - Windows specific
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+    env = os.environ.copy()
+    try:
+        proc = subprocess.Popen(  # noqa: S603 - trusted launcher
+            [sys.executable, str(LAUNCHER_PATH)],
+            cwd=str(LAUNCHER_PATH.parent.parent),
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+    except Exception as exc:  # noqa: BLE001 - display to user
+        st.error(f"Failed to start trading system: {exc}")
+        return False
+    st.session_state["trader.pid"] = proc.pid
+    st.session_state["trader.process"] = proc
+    st.session_state["trader.launch_ts"] = time.time()
+    return True
+
+
+def _stop_trading_system() -> bool:
+    pid = st.session_state.get("trader.pid")
+    proc = st.session_state.get("trader.process")
+    stopped = False
+    target_pid = None
+    if isinstance(proc, subprocess.Popen):
+        target_pid = proc.pid
+        if proc.poll() is None:
+            if os.name == "nt":  # pragma: no cover - Windows specific
+                with suppress(Exception):
+                    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], check=False)
+            else:
+                with suppress(Exception):
+                    os.kill(proc.pid, signal.SIGTERM)
+            with suppress(Exception):
+                proc.wait(timeout=10)
+        stopped = True
+    if isinstance(pid, int) and pid > 0 and pid != target_pid:
+        if os.name == "nt":  # pragma: no cover - Windows specific
+            with suppress(Exception):
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False)
+        else:
+            with suppress(Exception):
+                os.kill(pid, signal.SIGTERM)
+        stopped = True
+    for key in ("trader.pid", "trader.process", "trader.launch_ts"):
+        st.session_state.pop(key, None)
+    return stopped
+
+
+def _render_backend_banner(base_url: str, payload: Mapping[str, Any], *, unreachable: str | None) -> None:
+    if unreachable:
+        st.error(
+            f"Backend not reachable at {base_url}. Is trading system running?"
+        )
+        return
+    if not isinstance(payload, Mapping) or not payload:
+        st.warning("Backend health unavailable.")
+        return
+    broker_label = str(payload.get("broker") or payload.get("broker_impl") or "unknown")
+    error_text = payload.get("error")
+    mock_mode = bool(payload.get("mock_mode"))
+    broker_env = str(broker_label).lower()
+    dry_run = bool(payload.get("dry_run"))
+    profile = str(payload.get("profile", "paper")).lower()
+    ok = bool(payload.get("ok", False))
+    if mock_mode:
+        st.info("MOCK MODE — no live orders will be sent.")
+        return
+    if ok and broker_env.startswith("alpaca") and not dry_run and profile == "paper":
+        st.success("PAPER MODE — connected to Alpaca paper.")
+        return
+    if ok:
+        st.success("Backend reachable and responding.")
+        return
+    warning = f"Backend degraded — broker={broker_label}"
+    if error_text:
+        warning = f"Backend degraded — {error_text}"
+    st.warning(warning)
 def _fmt_money(value: Any, digits: int = 2) -> str:
     try:
         return fmt_currency(to_float(value), digits=digits)
@@ -115,9 +238,6 @@ def _render_connection_badge(
 def _trim_orders(raw: Iterable[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for order in raw or []:
-        status = str(order.get("status") or "").strip().lower()
-        if status != "filled":
-            continue
         rows.append(
             {
                 "symbol": order.get("symbol"),
@@ -163,7 +283,7 @@ def _emit_config_warnings(section: str, payload: Dict[str, Any]) -> None:
 
 
 def _render_status_header(
-    status: Dict[str, Any],
+    health: Dict[str, Any],
     stream: Dict[str, Any],
     orchestrator: Dict[str, Any],
     orchestrator_debug: Dict[str, Any],
@@ -172,43 +292,48 @@ def _render_status_header(
 ) -> None:
     orch_status = orchestrator_debug.get("status", orchestrator)
     runtime_profile = runtime_flags.get("profile") if isinstance(runtime_flags, dict) else None
-    profile_value = runtime_profile or orch_status.get("profile", status.get("profile"))
+    profile_value = runtime_profile or health.get("profile") or orch_status.get("profile")
     profile_label = "Paper" if str(profile_value or "paper").lower() != "live" else "Live"
     runtime_broker = (runtime_flags or {}).get("broker") if isinstance(runtime_flags, dict) else None
-    broker_label = str(
-        runtime_broker or orch_status.get("broker_impl") or status.get("broker", "alpaca")
-    ).title()
-    run_state = str(orch_status.get("state", orchestrator.get("state", "stopped"))).title()
-    kill_switch_label = orch_status.get("kill_switch") or (
+    broker_label = runtime_broker or health.get("broker") or orch_status.get("broker_impl")
+    broker_label = str(broker_label or "unknown").title()
+    run_state = str(health.get("orchestrator_state") or orch_status.get("state") or "Unknown")
+    stream_source = str(health.get("stream_source") or stream.get("source") or "unknown")
+    kill_switch_label = health.get("kill_switch") or orch_status.get("kill_switch") or (
         "Engaged" if orchestrator.get("kill_switch") else "Standby"
     )
     kill_switch_engaged = bool(
         orch_status.get("kill_switch_engaged", orchestrator.get("kill_switch"))
     )
 
-    cols = st.columns(4)
+    cols = st.columns(5)
     cols[0].metric("Profile", profile_label)
     cols[1].metric("Broker", broker_label)
     cols[2].metric("Run State", run_state)
-    cols[3].metric("Kill Switch", kill_switch_label)
+    cols[3].metric("Stream Source", stream_source)
+    cols[4].metric("Kill Switch", kill_switch_label)
 
     stream_details = {}
-    details_raw = status.get("stream_details")
+    details_raw = health.get("stream_details")
     if isinstance(details_raw, dict):
         stream_details = details_raw
     elif isinstance(stream, dict):
         stream_details = stream
-    stream_source = stream_details.get("source") or status.get("stream")
+    stream_source_detail = (
+        health.get("stream_source")
+        or stream_details.get("source")
+        or stream.get("source")
+    )
     if isinstance(runtime_flags, dict) and runtime_flags.get("market_data_source"):
-        stream_source = runtime_flags.get("market_data_source")
+        stream_source_detail = runtime_flags.get("market_data_source")
     running = bool(stream_details.get("running", stream.get("running")))
     stream_label = "Running" if running else "Stopped"
     status_pill("Stream", stream_label, variant="positive" if running else "warning")
-    if stream_source:
-        st.caption(f"Market data feed: {stream_source}")
+    if stream_source_detail:
+        st.caption(f"Market data feed: {stream_source_detail}")
     heartbeat = (
         stream_details.get("last_heartbeat")
-        or status.get("stream_last_heartbeat")
+        or health.get("stream_last_heartbeat")
         or stream.get("last_heartbeat")
     )
     if heartbeat:
@@ -562,18 +687,21 @@ def _render_tables(
     orders: List[Dict[str, Any]],
     orders_source: str,
 ) -> None:
-    st.subheader("Open Positions")
-    if positions:
-        render_table("control_center_positions", positions, page_size=10)
-    else:
-        st.caption("No open positions.")
-
-    st.subheader("Recent Orders")
-    if orders:
-        render_table("control_center_orders", orders, page_size=10)
-        st.caption(f"Orders from Alpaca via {orders_source}")
-    else:
-        st.caption("No recent orders.")
+    st.subheader("Recent Activity")
+    cols = st.columns(2)
+    with cols[0]:
+        st.markdown("##### Open Positions")
+        if positions:
+            render_table("control_center_positions", positions, page_size=10)
+        else:
+            st.caption("No open positions.")
+    with cols[1]:
+        st.markdown("##### Recent Orders")
+        if orders:
+            render_table("control_center_orders", orders, page_size=10)
+            st.caption(f"Orders from broker via {orders_source}")
+        else:
+            st.caption("No recent orders.")
 
 
 def _render_logs(log_lines: List[str], pacing: Dict[str, Any]) -> None:
@@ -604,6 +732,10 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
     data: Dict[str, Any] = {}
     try:
         data["health"] = api.health()
+    except requests.RequestException as exc:  # pragma: no cover - network guard
+        data["health_error"] = str(exc)
+        data["health_unreachable"] = str(exc)
+        data["health"] = {}
     except Exception as exc:  # noqa: BLE001
         data["health_error"] = str(exc)
         data["health"] = {}
@@ -635,6 +767,12 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
     try:
         positions = api.positions()
         data["positions"] = positions if isinstance(positions, list) else []
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if getattr(exc, "response", None) else None
+        data["positions_error"] = str(exc)
+        if status in {401, 403}:
+            data["positions_auth_error"] = True
+        data["positions"] = []
     except Exception as exc:  # noqa: BLE001
         data["positions_error"] = str(exc)
         data["positions"] = []
@@ -642,6 +780,12 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
     try:
         orders = api.orders(status="closed", limit=50)
         data["orders"] = orders if isinstance(orders, list) else []
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if getattr(exc, "response", None) else None
+        data["orders_error"] = str(exc)
+        if status in {401, 403}:
+            data["orders_auth_error"] = True
+        data["orders"] = []
     except Exception as exc:  # noqa: BLE001
         data["orders_error"] = str(exc)
         data["orders"] = []
@@ -733,26 +877,36 @@ def render(
     if not require_backend(api):
         return
 
+    _sync_launcher_state()
+    launcher_pid = st.session_state.get("trader.pid")
+    launcher_running = isinstance(launcher_pid, int) and launcher_pid > 0
+
     action_cols = st.columns([1, 1, 1])
     with action_cols[0]:
         if st.button("Refresh", key="cc_manual_refresh"):
             st.session_state["__cc_manual_refresh_ts__"] = time.time()
     with action_cols[1]:
-        if st.button("Start Orchestrator", key="cc_orchestrator_start_button"):
-            try:
-                api.orchestrator_start()
-            except Exception as exc:  # noqa: BLE001 - surface to UI
-                st.warning(f"Start failed: {exc}")
-            else:
+        if st.button(
+            "Start Trading System",
+            key="cc_trading_system_start",
+            disabled=launcher_running,
+        ):
+            if _start_trading_system():
+                try:
+                    st.session_state["__cc_last_health__"] = api.health()
+                except Exception as exc:  # noqa: BLE001
+                    st.warning(f"Health check failed: {exc}")
                 _schedule_status_poll()
+            launcher_running = True
     with action_cols[2]:
-        if st.button("Stop Orchestrator", key="cc_orchestrator_stop_button"):
-            try:
-                api.orchestrator_stop()
-            except Exception as exc:  # noqa: BLE001 - surface to UI
-                st.warning(f"Stop failed: {exc}")
-            else:
+        if st.button(
+            "Stop Trading System",
+            key="cc_trading_system_stop",
+            disabled=not launcher_running,
+        ):
+            if _stop_trading_system():
                 _schedule_status_poll()
+            launcher_running = False
 
     st.session_state.setdefault("telemetry.autorefresh", False)
     auto_enabled = st.toggle(
@@ -767,6 +921,12 @@ def render(
     status_snapshot = data.get("status", {}) if isinstance(data, dict) else {}
     runtime_snapshot = data.get("runtime_flags", {}) if isinstance(data, dict) else {}
     broker_snapshot = data.get("broker", {})
+
+    _render_backend_banner(
+        resolved_base,
+        health_snapshot if isinstance(health_snapshot, Mapping) else {},
+        unreachable=data.get("health_unreachable"),
+    )
 
     broker_label = status_snapshot.get("broker", "alpaca")
     dry_run_label = status_snapshot.get("dry_run", False)
@@ -800,10 +960,6 @@ def render(
 
     if data.get("runtime_flags_error"):
         st.warning(f"Runtime flags unavailable: {data['runtime_flags_error']}")
-    if data.get("health_error"):
-        st.warning(f"Health check failed: {data['health_error']}")
-    elif data.get("health"):
-        st.caption("Backend health: OK")
     if data.get("broker_error"):
         st.warning(f"Broker status unavailable: {data['broker_error']}")
 
@@ -813,6 +969,11 @@ def render(
         data.get("broker", {}),
         data.get("account_error"),
     )
+
+    if data.get("orders_auth_error") or data.get("positions_auth_error"):
+        st.error(
+            "Broker rejected credentials. Check ALPACA_KEY_ID / ALPACA_SECRET_KEY / ALPACA_USE_PAPER in .env."
+        )
 
     update_session_state(last_trace_id=data.get("orchestrator", {}).get("last_heartbeat"))
 
