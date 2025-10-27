@@ -167,11 +167,17 @@ def _render_status_header(
     stream: Dict[str, Any],
     orchestrator: Dict[str, Any],
     orchestrator_debug: Dict[str, Any],
+    runtime_flags: Dict[str, Any],
+    execution_tail: Dict[str, Any],
 ) -> None:
     orch_status = orchestrator_debug.get("status", orchestrator)
-    profile_value = orch_status.get("profile", status.get("profile"))
+    runtime_profile = runtime_flags.get("profile") if isinstance(runtime_flags, dict) else None
+    profile_value = runtime_profile or orch_status.get("profile", status.get("profile"))
     profile_label = "Paper" if str(profile_value or "paper").lower() != "live" else "Live"
-    broker_label = str(orch_status.get("broker_impl") or status.get("broker", "alpaca")).title()
+    runtime_broker = (runtime_flags or {}).get("broker") if isinstance(runtime_flags, dict) else None
+    broker_label = str(
+        runtime_broker or orch_status.get("broker_impl") or status.get("broker", "alpaca")
+    ).title()
     run_state = str(orch_status.get("state", orchestrator.get("state", "stopped"))).title()
     kill_switch_label = orch_status.get("kill_switch") or (
         "Engaged" if orchestrator.get("kill_switch") else "Standby"
@@ -193,6 +199,8 @@ def _render_status_header(
     elif isinstance(stream, dict):
         stream_details = stream
     stream_source = stream_details.get("source") or status.get("stream")
+    if isinstance(runtime_flags, dict) and runtime_flags.get("market_data_source"):
+        stream_source = runtime_flags.get("market_data_source")
     running = bool(stream_details.get("running", stream.get("running")))
     stream_label = "Running" if running else "Stopped"
     status_pill("Stream", stream_label, variant="positive" if running else "warning")
@@ -218,6 +226,12 @@ def _render_status_header(
     if uptime:
         st.caption(f"Orchestrator uptime: {uptime}")
 
+    runtime_dry_run = False
+    runtime_mock = False
+    if isinstance(runtime_flags, dict):
+        runtime_dry_run = bool(runtime_flags.get("dry_run"))
+        runtime_mock = bool(runtime_flags.get("mock_mode"))
+
     last_attempt = orchestrator_debug.get("last_order_attempt", {})
     if last_attempt.get("ts"):
         symbol = last_attempt.get("symbol") or "—"
@@ -234,6 +248,30 @@ def _render_status_header(
             f"Last order attempt ({last_attempt['ts']}): "
             f"{symbol} {side} × {qty_label} — {' / '.join(status_parts)} via {broker_impl}."
         )
+
+    exec_variant = "positive"
+    exec_label = "Active"
+    exec_caption = f"Execution adapter: {broker_label}"
+    if runtime_mock:
+        exec_variant = "warning"
+        exec_label = "Mock"
+        exec_caption += " (mock broker)"
+    elif runtime_dry_run:
+        exec_variant = "warning"
+        exec_label = "Dry Run"
+        exec_caption += " (dry_run=true)"
+    status_pill("Execution", exec_label, variant=exec_variant)
+    st.caption(exec_caption)
+    if runtime_dry_run:
+        st.warning("dry_run is ON — orders will NOT be sent to Alpaca.")
+
+    tail_lines = []
+    if isinstance(execution_tail, dict):
+        tail_lines = execution_tail.get("lines") or []
+    tail_preview = [str(line) for line in tail_lines[-3:]]
+    if tail_preview:
+        with st.expander("Execution debug (tail)", expanded=False):
+            st.code("\n".join(tail_preview) or "No execution debug logs yet.")
 
     if kill_switch_engaged:
         st.warning("KILL SWITCH ACTIVE — trading disabled until reset.")
@@ -627,6 +665,18 @@ def _load_remote_state(api: ApiClient) -> Dict[str, Any]:
         data["orchestrator_debug"] = {}
 
     try:
+        data["runtime_flags"] = api.debug_runtime()
+    except Exception as exc:  # noqa: BLE001
+        data["runtime_flags_error"] = str(exc)
+        data["runtime_flags"] = {}
+
+    try:
+        data["execution_tail"] = api.execution_tail(limit=100)
+    except Exception as exc:  # noqa: BLE001
+        data["execution_tail_error"] = str(exc)
+        data["execution_tail"] = {"lines": []}
+
+    try:
         data["strategy"] = api.strategy_config()
     except Exception as exc:  # noqa: BLE001
         data["strategy_error"] = str(exc)
@@ -715,23 +765,41 @@ def render(
 
     health_snapshot = data.get("health", {}) if isinstance(data, dict) else {}
     status_snapshot = data.get("status", {}) if isinstance(data, dict) else {}
-    if isinstance(health_snapshot, dict) and health_snapshot.get("mock_mode"):
-        st.sidebar.info("Mock mode enabled")
+    runtime_snapshot = data.get("runtime_flags", {}) if isinstance(data, dict) else {}
     broker_snapshot = data.get("broker", {})
-    broker_label = health_snapshot.get("broker", status_snapshot.get("broker", "unknown"))
-    dry_run_label = health_snapshot.get("dry_run", status_snapshot.get("dry_run"))
-    profile_label = (
-        "paper"
-        if health_snapshot.get("paper_mode", status_snapshot.get("paper", True))
-        else "live"
-    )
+
+    broker_label = status_snapshot.get("broker", "alpaca")
+    dry_run_label = status_snapshot.get("dry_run", False)
+    profile_label = status_snapshot.get("profile", "paper")
+    mock_mode_flag = bool(health_snapshot.get("mock_mode"))
+
+    if isinstance(runtime_snapshot, Mapping) and runtime_snapshot:
+        broker_label = runtime_snapshot.get("broker", broker_label)
+        dry_run_label = runtime_snapshot.get("dry_run", dry_run_label)
+        profile_label = runtime_snapshot.get("profile", profile_label)
+        mock_mode_flag = bool(runtime_snapshot.get("mock_mode", mock_mode_flag))
+
+    if isinstance(health_snapshot, dict):
+        dry_run_label = health_snapshot.get("dry_run", dry_run_label)
+        profile_label = (
+            "paper" if health_snapshot.get("paper_mode", profile_label != "live") else "live"
+        )
+        broker_label = health_snapshot.get("broker", broker_label)
+
     if isinstance(broker_snapshot, Mapping):
         broker_label = broker_snapshot.get("impl", broker_label)
         dry_run_label = broker_snapshot.get("dry_run", dry_run_label)
         profile_label = broker_snapshot.get("profile", profile_label)
+
+    if mock_mode_flag:
+        st.sidebar.info("Mock mode enabled")
+
     st.caption(
         f"Runtime mode: {broker_label} (profile={profile_label}, dry_run={dry_run_label})"
     )
+
+    if data.get("runtime_flags_error"):
+        st.warning(f"Runtime flags unavailable: {data['runtime_flags_error']}")
     if data.get("health_error"):
         st.warning(f"Health check failed: {data['health_error']}")
     elif data.get("health"):
@@ -772,6 +840,8 @@ def render(
         st.warning(f"Exposure telemetry unavailable: {data['exposure_error']}")
     if data.get("logs_error"):
         st.warning(f"Log tail unavailable: {data['logs_error']}")
+    if data.get("execution_tail_error"):
+        st.warning(f"Execution debug unavailable: {data['execution_tail_error']}")
 
     _emit_config_warnings("Orchestrator", data.get("orchestrator", {}))
     _emit_config_warnings("Strategy", data.get("strategy", {}))
@@ -782,6 +852,8 @@ def render(
         data.get("stream", {}),
         data.get("orchestrator", {}),
         data.get("orchestrator_debug", {}),
+        data.get("runtime_flags", {}),
+        data.get("execution_tail", {}),
     )
     _render_metrics(
         data.get("account", {}), data.get("pnl", {}), data.get("exposure", {})

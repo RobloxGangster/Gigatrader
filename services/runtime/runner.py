@@ -14,6 +14,7 @@ from typing import Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
+from core.runtime_flags import get_runtime_flags
 from services.execution.engine import ExecutionEngine
 from services.gateway.options import OptionGateway
 from services.market.loop import MarketLoop
@@ -108,8 +109,13 @@ class Runner:
             port = 0
         self.shutdown = asyncio.Event()
         self._env_bool = env_bool
+        flags = get_runtime_flags()
         self.market_enabled = self._env_bool("RUN_MARKET", True)
-        self.mock_market = self._env_bool("MOCK_MARKET", True)
+        override = os.getenv("MOCK_MARKET")
+        if override is None:
+            self.mock_market = bool(flags.mock_mode)
+        else:
+            self.mock_market = self._env_bool("MOCK_MARKET", bool(flags.mock_mode))
         self.sentiment_enabled = self._env_bool("RUN_SENTIMENT", False)
         self.ready_timeout = int(os.getenv("READY_CHECK_TIMEOUT_SEC", "5"))
         self.state = InMemoryState()

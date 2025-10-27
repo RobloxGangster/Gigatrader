@@ -46,7 +46,7 @@ def test_runtime_flags_from_env(monkeypatch):
 def test_runtime_flags_refresh_reads_environment(monkeypatch):
     monkeypatch.setenv("BROKER", "alpaca")
     monkeypatch.setenv("MOCK_MODE", "true")
-    first = get_runtime_flags()
+    first = refresh_runtime_flags()
     assert first.mock_mode is True
     monkeypatch.setenv("MOCK_MODE", "false")
     monkeypatch.setenv("BROKER", "alpaca")

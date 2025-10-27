@@ -3,13 +3,14 @@ import inspect
 import logging
 import os
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -38,7 +39,7 @@ from backend.services import reconcile
 from backend.services.alpaca_client import get_trading_client
 from backend.services.stream_factory import StreamService, make_stream_service
 from core.broker_config import is_mock
-from core.runtime_flags import get_runtime_flags
+from core.runtime_flags import RuntimeFlags, get_runtime_flags
 from core.settings import get_settings
 
 load_dotenv()
@@ -47,8 +48,12 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
+EXECUTION_LOG_PATH = Path("logs/execution_debug.log")
+
+
 def _ensure_log_directories() -> None:
     base_paths = [
+        Path("logs"),
         Path("logs/backend"),
         Path("logs/diagnostics"),
         Path("logs/audit"),
@@ -78,8 +83,7 @@ async def _lifespan(_: FastAPI):
     except Exception:
         pass
 
-    skip_reconcile = os.getenv("MOCK_MODE", "").lower() in ("1", "true", "yes", "on")
-    if not skip_reconcile:
+    if not flags.mock_mode:
         try:
             from backend.services.reconcile import pull_all_if_live
 
@@ -174,7 +178,9 @@ async def health(
         stream_status_raw = {"ok": False, "error": str(exc), "source": "mock"}
 
     stream_details: Dict[str, Any] = {}
-    stream_source = "mock" if flags.mock_mode else "alpaca"
+    stream_source = getattr(stream, "source_name", None) or (
+        "mock" if flags.mock_mode else "alpaca"
+    )
     stream_ok = True
     stream_running = True
     stream_last_heartbeat: str | None = None
@@ -236,6 +242,29 @@ async def health(
         payload.setdefault("error", "degraded")
 
     return JSONResponse(payload, status_code=200)
+
+
+@root_router.get("/debug/runtime", response_model=RuntimeFlags)
+async def debug_runtime(flags: RuntimeFlags = Depends(get_runtime_flags)) -> RuntimeFlags:
+    return flags
+
+
+def _tail_file(path: Path, limit: int) -> list[str]:
+    if limit <= 0:
+        return []
+    if not path.exists() or not path.is_file():
+        return []
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            return list(deque(handle, maxlen=limit))
+    except Exception:  # pragma: no cover - defensive file guard
+        return []
+
+
+@root_router.get("/debug/execution_tail")
+async def execution_tail(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+    lines = _tail_file(EXECUTION_LOG_PATH, limit)
+    return {"path": str(EXECUTION_LOG_PATH), "lines": [line.rstrip("\n") for line in lines]}
 
 
 @app.get("/version")

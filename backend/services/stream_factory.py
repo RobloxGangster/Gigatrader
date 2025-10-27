@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Protocol
 
-from core.runtime_flags import RuntimeFlags, runtime_flags_from_env
+from core.runtime_flags import RuntimeFlags, get_runtime_flags
 
 
 log = logging.getLogger(__name__)
@@ -20,7 +20,10 @@ class StreamService(Protocol):
     running: bool
     last_error: Optional[str]
 
-    async def status(self) -> Dict[str, Any]: ...
+    @property
+    def source_name(self) -> str: ...
+
+    def status(self) -> Dict[str, Any]: ...
 
     def start(self, loop: Any | None = None) -> None: ...
 
@@ -43,6 +46,10 @@ class BaseStreamService:
         self._last_heartbeat = ts
         return ts
 
+    @property
+    def source_name(self) -> str:
+        return self.source
+
     def start(self, loop: Any | None = None) -> None:
         self.running = True
         self._mark_heartbeat()
@@ -51,7 +58,7 @@ class BaseStreamService:
         self.running = False
         self._mark_heartbeat()
 
-    async def status(self) -> Dict[str, Any]:
+    def status(self) -> Dict[str, Any]:
         heartbeat = self._mark_heartbeat()
         payload: Dict[str, Any] = {
             "source": self.source,
@@ -70,8 +77,8 @@ class MockStreamService(BaseStreamService):
         super().__init__("mock")
         self.start()
 
-    async def status(self) -> Dict[str, Any]:
-        return await super().status()
+    def status(self) -> Dict[str, Any]:
+        return super().status()
 
 
 def _alpaca_env_health() -> tuple[bool, Optional[str]]:
@@ -90,7 +97,7 @@ class AlpacaStreamService(BaseStreamService):
         self.running = True
         self._mark_heartbeat()
 
-    async def status(self) -> Dict[str, Any]:
+    def status(self) -> Dict[str, Any]:
         healthy, err = _alpaca_env_health()
         self.last_error = err
         heartbeat = self._mark_heartbeat()
@@ -108,10 +115,10 @@ class AlpacaStreamService(BaseStreamService):
 
 
 def make_stream_service(flags: RuntimeFlags | None = None) -> StreamService:
-    cfg = flags or runtime_flags_from_env()
+    cfg = flags or get_runtime_flags()
     source = (cfg.market_data_source or "mock").lower()
 
-    if source == "mock":
+    if cfg.mock_mode or source == "mock":
         log.info("Stream source selected: mock")
         return MockStreamService()
 
