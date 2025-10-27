@@ -68,6 +68,7 @@ class RuntimeFlags(BaseModel):
     profile: str = Field(default="paper")
     mock_mode: bool = Field(default=False)
     dry_run: bool = Field(default=False)
+    market_data_source: str = Field(default="alpaca")
     auto_restart: bool = Field(default=True)
     paper_trading: bool = Field(default=True)
     api_base_url: str = Field(default="http://127.0.0.1:8000")
@@ -97,6 +98,17 @@ def runtime_flags_from_env() -> RuntimeFlags:
     profile = os.getenv("PROFILE", "paper").strip() or "paper"
     mock_mode = _parse_bool("MOCK_MODE", False)
     dry_run = _parse_bool("DRY_RUN", False)
+
+    mds_env = os.getenv("MARKET_DATA_SOURCE")
+    if mds_env:
+        market_data_source = mds_env.strip().lower() or "mock"
+    else:
+        if mock_mode:
+            market_data_source = "mock"
+        elif broker.strip().lower() == "alpaca":
+            market_data_source = "alpaca"
+        else:
+            market_data_source = "mock"
 
     api_base = _sanitize_url(
         os.getenv("API_BASE") or os.getenv("API_BASE_URL"),
@@ -148,11 +160,22 @@ def runtime_flags_from_env() -> RuntimeFlags:
     elif lowered == "alpaca":
         broker_normalized = "alpaca"
 
+    if mds_env:
+        market_data_source = mds_env.strip().lower() or market_data_source
+    else:
+        if mock_mode:
+            market_data_source = "mock"
+        elif broker_normalized == "alpaca":
+            market_data_source = "alpaca"
+        else:
+            market_data_source = "mock"
+
     return RuntimeFlags(
         broker=broker_normalized,
         profile=profile,
         mock_mode=mock_mode,
         dry_run=dry_run,
+        market_data_source=market_data_source,
         auto_restart=auto_restart,
         paper_trading=paper_trading,
         api_base_url=api_base,

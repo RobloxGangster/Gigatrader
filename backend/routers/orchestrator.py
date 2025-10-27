@@ -8,6 +8,11 @@ from pydantic import BaseModel, ConfigDict
 
 from core.runtime_flags import get_runtime_flags, require_alpaca_keys
 
+from backend.services.orchestrator import (
+    get_last_order_attempt,
+    get_orchestrator_status,
+)
+
 from .deps import get_orchestrator
 
 router = APIRouter()
@@ -84,3 +89,11 @@ async def orchestrator_stop() -> OrchestratorStatus:
         return _build_status(snapshot)
     except Exception as exc:  # noqa: BLE001 - surfaced to client
         raise HTTPException(status_code=500, detail=f"orchestrator_stop: {exc}") from exc
+
+
+@router.get("/debug")
+async def orchestrator_debug() -> dict:
+    return {
+        "status": get_orchestrator_status(),
+        "last_order_attempt": get_last_order_attempt(),
+    }

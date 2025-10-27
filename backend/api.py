@@ -173,18 +173,21 @@ async def health(
         status = "degraded"
         stream_status_raw = {"ok": False, "error": str(exc), "source": "mock"}
 
+    stream_details: Dict[str, Any] = {}
     stream_source = "mock" if flags.mock_mode else "alpaca"
     stream_ok = True
+    stream_running = True
+    stream_last_heartbeat: str | None = None
     if isinstance(stream_status_raw, dict):
-        stream_source = str(stream_status_raw.get("source") or stream_source)
-        stream_ok = bool(
-            stream_status_raw.get("ok")
-            or stream_status_raw.get("healthy")
-            or stream_status_raw.get("online")
-        )
+        stream_details = dict(stream_status_raw)
+        stream_source = str(stream_details.get("source") or stream_source)
+        stream_running = bool(stream_details.get("running", True))
+        stream_ok = bool(stream_details.get("ok", stream_running))
+        stream_last_heartbeat = stream_details.get("last_heartbeat")
     elif isinstance(stream_status_raw, bool):
         stream_ok = stream_status_raw
-    if not stream_ok:
+        stream_running = stream_status_raw
+    if not stream_ok or not stream_running:
         status = "degraded"
 
     broker_source = "mock" if flags.mock_mode else "alpaca"
@@ -223,7 +226,9 @@ async def health(
         "broker": broker_source,
         "broker_details": broker_status,
         "stream": stream_source,
-        "stream_details": stream_status_raw,
+        "stream_running": stream_running,
+        "stream_last_heartbeat": stream_last_heartbeat,
+        "stream_details": stream_details or stream_status_raw,
         "orchestrator": orchestrator_snapshot,
     }
 

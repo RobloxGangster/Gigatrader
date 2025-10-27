@@ -5,9 +5,70 @@ import logging
 import traceback
 from contextlib import suppress
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict
 
 from core.kill_switch import KillSwitch
+from core.runtime_flags import runtime_flags_from_env
+
+
+_CURRENT_SUPERVISOR: "OrchestratorSupervisor" | None = None
+_last_order_attempt: Dict[str, Any] = {
+    "ts": None,
+    "symbol": None,
+    "qty": None,
+    "side": None,
+    "sent": False,
+    "accepted": False,
+    "reason": None,
+    "broker_impl": None,
+}
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def record_order_attempt(
+    *,
+    symbol: str | None,
+    qty: Any,
+    side: str | None,
+    sent: bool,
+    accepted: bool,
+    reason: str | None,
+    broker_impl: str | None,
+) -> None:
+    global _last_order_attempt
+    _last_order_attempt = {
+        "ts": _iso_now(),
+        "symbol": symbol,
+        "qty": qty,
+        "side": side,
+        "sent": sent,
+        "accepted": accepted,
+        "reason": reason,
+        "broker_impl": broker_impl,
+    }
+
+
+def get_last_order_attempt() -> Dict[str, Any]:
+    return dict(_last_order_attempt)
+
+
+def can_execute_trade(flags, kill_switch_engaged: bool) -> tuple[bool, str | None]:
+    if kill_switch_engaged:
+        return False, "kill_switch_engaged"
+    if getattr(flags, "dry_run", False):
+        return False, "dry_run_enabled"
+    if getattr(flags, "mock_mode", False):
+        return True, None
+    broker = getattr(flags, "broker", "mock")
+    if str(broker).lower() != "alpaca":
+        return False, f"unsupported_broker:{broker}"
+    profile = str(getattr(flags, "profile", "paper")).lower()
+    if profile not in {"paper", "live"}:
+        return False, f"unsupported_profile:{profile}"
+    return True, None
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +87,8 @@ class OrchestratorSupervisor:
         self._last_heartbeat: datetime | None = None
         self._start_time: datetime | None = None
         self._restart_count = 0
+        global _CURRENT_SUPERVISOR
+        _CURRENT_SUPERVISOR = self
 
     def status(self) -> dict[str, Any]:
         """Return a thread-safe status snapshot."""
@@ -132,4 +195,47 @@ class OrchestratorSupervisor:
         self._last_heartbeat = datetime.now(timezone.utc)
 
 
-__all__ = ["OrchestratorSupervisor"]
+def get_orchestrator_status() -> Dict[str, Any]:
+    supervisor = _CURRENT_SUPERVISOR
+    snapshot: Dict[str, Any] = {}
+    if supervisor is not None:
+        try:
+            snapshot = supervisor.status()
+        except Exception:  # pragma: no cover - defensive snapshot guard
+            snapshot = {}
+    flags = runtime_flags_from_env()
+    kill_switch_engaged = False
+    if supervisor is not None:
+        try:
+            kill_switch_engaged = supervisor._kill_switch.engaged_sync()
+        except Exception:  # pragma: no cover - defensive
+            kill_switch_engaged = bool(snapshot.get("kill_switch"))
+    uptime_secs = snapshot.get("uptime_secs")
+    uptime_label: str | None = None
+    if isinstance(uptime_secs, (int, float)):
+        uptime_label = f"{uptime_secs:.2f}s"
+    broker_impl = "MockBrokerAdapter" if getattr(flags, "mock_mode", False) else "AlpacaBrokerAdapter"
+    return {
+        "state": snapshot.get("state", "stopped"),
+        "running": bool(snapshot.get("running")),
+        "last_error": snapshot.get("last_error"),
+        "last_heartbeat": snapshot.get("last_heartbeat"),
+        "uptime": uptime_label,
+        "restart_count": snapshot.get("restart_count"),
+        "kill_switch": "Engaged" if kill_switch_engaged else "Standby",
+        "kill_switch_engaged": kill_switch_engaged,
+        "market_data_source": getattr(flags, "market_data_source", "mock"),
+        "broker_impl": broker_impl,
+        "profile": getattr(flags, "profile", "paper"),
+        "dry_run": getattr(flags, "dry_run", False),
+        "mock_mode": getattr(flags, "mock_mode", False),
+    }
+
+
+__all__ = [
+    "OrchestratorSupervisor",
+    "can_execute_trade",
+    "get_last_order_attempt",
+    "get_orchestrator_status",
+    "record_order_attempt",
+]

@@ -35,6 +35,7 @@ def test_runtime_flags_from_env(monkeypatch):
     assert flags.broker == "alpaca"
     assert flags.profile == "paper"
     assert flags.paper_trading is True
+    assert flags.market_data_source == "alpaca"
     assert flags.alpaca_base_url == "https://paper-api.alpaca.markets"
     assert flags.api_base_url == "http://localhost:9999"
     assert flags.api_port == 8000
@@ -53,3 +54,26 @@ def test_runtime_flags_refresh_reads_environment(monkeypatch):
     assert second.mock_mode is False
     third = refresh_runtime_flags()
     assert third.mock_mode is False
+
+
+def test_market_data_source_defaults_to_alpaca(monkeypatch):
+    monkeypatch.setenv("BROKER", "alpaca")
+    monkeypatch.setenv("MOCK_MODE", "false")
+    monkeypatch.delenv("MARKET_DATA_SOURCE", raising=False)
+    flags = runtime_flags_from_env()
+    assert flags.market_data_source == "alpaca"
+
+
+def test_market_data_source_forced_mock_when_mock_mode(monkeypatch):
+    monkeypatch.setenv("MOCK_MODE", "true")
+    monkeypatch.delenv("MARKET_DATA_SOURCE", raising=False)
+    flags = runtime_flags_from_env()
+    assert flags.market_data_source == "mock"
+
+
+def test_market_data_source_env_override(monkeypatch):
+    monkeypatch.setenv("MOCK_MODE", "false")
+    monkeypatch.setenv("BROKER", "alpaca")
+    monkeypatch.setenv("MARKET_DATA_SOURCE", "mock")
+    flags = runtime_flags_from_env()
+    assert flags.market_data_source == "mock"

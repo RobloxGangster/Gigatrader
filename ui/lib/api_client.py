@@ -231,6 +231,9 @@ class ApiClient:
     def orchestrator_status(self) -> Any:
         return self.get("/orchestrator/status")
 
+    def orchestrator_debug(self) -> Any:
+        return self.get("/orchestrator/debug")
+
     def orchestrator_start(self, preset: Optional[str] = None, mode: Optional[str] = None) -> Any:
         payload: Dict[str, Any] = {}
         if preset is not None:
