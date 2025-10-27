@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 import pandas as pd
+import requests
 import streamlit as st
 
 from ui.lib.api_client import ApiClient, build_url
@@ -72,6 +73,7 @@ def _get_state() -> Dict[str, Any]:
             "last_logs_at": None,
             "execution_tail": {"lines": []},
             "execution_error": None,
+            "backend_up": False,
         },
     )
 
@@ -132,11 +134,43 @@ def render() -> None:
         if state.get("log_entries"):
             _fetch_logs(client, state, limit)
 
+    backend_up = False
+    health_payload: Dict[str, Any] | None = None
+    try:
+        resp = requests.get("http://127.0.0.1:8000/health", timeout=1.5)
+    except requests.RequestException:
+        resp = None
+    if resp is not None and resp.status_code == 200:
+        try:
+            parsed = resp.json()
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            backend_up = True
+            health_payload = parsed
+
+    state["backend_up"] = backend_up
+    if backend_up and isinstance(health_payload, dict):
+        state["health"] = health_payload
+        state["health_error"] = None
+    else:
+        state["health"] = {}
+        state["health_error"] = {
+            "path": "/health",
+            "error": "Backend is NOT reachable at http://127.0.0.1:8000.",
+        }
+        state["pacing"] = {}
+        state["pacing_error"] = None
+        state["log_entries"] = []
+        state["logs_error"] = None
+        state["execution_tail"] = {"lines": []}
+        state["execution_error"] = None
+
     interval_sec = REFRESH_INTERVAL_MS / 1000.0
     now = time.time()
-    if run_clicked:
+    if run_clicked and backend_up:
         _run_full_diagnostics(client, state, limit)
-    elif auto_enabled:
+    elif auto_enabled and backend_up:
         last_auto = float(state.get("last_auto_refresh", 0.0) or 0.0)
         if not previous_auto or now - last_auto >= interval_sec:
             state["last_auto_refresh"] = now
@@ -150,7 +184,11 @@ def render() -> None:
     logs_error = state.get("logs_error")
     execution_error = state.get("execution_error")
 
-    if health_error:
+    if not backend_up:
+        st.error(
+            "Backend is NOT reachable at http://127.0.0.1:8000. Trading system is NOT running."
+        )
+    elif health_error:
         _render_failure(health_error, client)
     if pacing_error:
         _render_failure(pacing_error, client)
@@ -238,6 +276,8 @@ def _render_health_summary(health: Dict[str, Any], pacing: Dict[str, Any]) -> No
 
 
 def _run_full_diagnostics(client: ApiClient, state: Dict[str, Any], limit: int) -> None:
+    if not state.get("backend_up"):
+        return
     _fetch_health(client, state)
     _fetch_pacing(client, state)
     _fetch_logs(client, state, limit)
@@ -265,6 +305,11 @@ def _fetch_pacing(client: ApiClient, state: Dict[str, Any]) -> None:
 
 
 def _fetch_logs(client: ApiClient, state: Dict[str, Any], limit: int) -> None:
+    if not state.get("backend_up"):
+        state["log_entries"] = []
+        state["logs_error"] = None
+        state["last_logs_at"] = _format_timestamp(datetime.now(timezone.utc))
+        return
     try:
         payload = client.logs_recent(limit=limit)
         entries = _normalize_logs(payload)
@@ -278,6 +323,10 @@ def _fetch_logs(client: ApiClient, state: Dict[str, Any], limit: int) -> None:
 
 
 def _fetch_execution_tail(client: ApiClient, state: Dict[str, Any], limit: int) -> None:
+    if not state.get("backend_up"):
+        state["execution_tail"] = {"lines": []}
+        state["execution_error"] = None
+        return
     try:
         payload = client.execution_tail(limit=limit)
         state["execution_tail"] = payload if isinstance(payload, dict) else {"lines": []}
