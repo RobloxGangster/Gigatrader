@@ -4,11 +4,16 @@ import os
 import sys
 import subprocess
 import time
-from typing import Any, Dict, Iterable, List, Mapping, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-import psutil  # must be in requirements-core.txt
 import requests
 import streamlit as st
+
+# try optional psutil for PID liveness check
+try:
+    import psutil  # type: ignore
+except Exception:
+    psutil = None  # we'll handle gracefully
 
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
@@ -31,35 +36,44 @@ STRATEGY_LABELS: Dict[str, str] = {
     "swing_breakout": "Swing Breakout",
 }
 BACKEND_URL = "http://127.0.0.1:8000"
-LOG_DIR = "logs"
-LOG_FILE = os.path.join(LOG_DIR, "backend_autostart.log")
-
-
-def _pid_alive(pid: int) -> bool:
+def _pid_is_alive(pid: Optional[int]) -> bool:
     """
-    Return True if a process with this PID appears to still be running.
-    Cross-platform best effort: on Windows, os.kill may not behave the same,
-    so we fall back to psutil if available. If unsure, treat as dead if any exception.
+    Best-effort cross-platform "is this PID running?" check.
+    Prefer psutil if available. Fallback to os.kill(pid, 0) semantics.
+    If anything looks off, return False.
     """
-    try:
-        # On Windows, this will raise PermissionError if running;
-        # on POSIX, sending signal 0 checks existence.
-        import signal, os
+    if pid is None:
+        return False
 
-        os.kill(pid, 0)
-        return True
-    except Exception:
-        # If os.kill isn't reliable on this platform, try psutil if present.
+    # psutil path
+    if psutil is not None:
         try:
-            import psutil  # type: ignore
-
-            p = psutil.Process(pid)
-            return p.is_running() and (p.status() != psutil.STATUS_ZOMBIE)
+            proc = psutil.Process(pid)
+            if not proc.is_running():
+                return False
+            # Avoid zombie on POSIX
+            if getattr(psutil, "STATUS_ZOMBIE", None) and proc.status() == psutil.STATUS_ZOMBIE:
+                return False
+            return True
         except Exception:
             return False
 
+    # fallback path (no psutil)
+    try:
+        # os.kill(pid, 0) => on Windows may raise PermissionError if running;
+        # treat PermissionError as "alive".
+        import signal
+
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except Exception:
+        return False
 
 def _kill_pid_tree(pid: int) -> None:
+    if psutil is None:
+        return
     try:
         p = psutil.Process(pid)
     except psutil.Error:
@@ -75,50 +89,60 @@ def _kill_pid_tree(pid: int) -> None:
         pass
 
 
-def _read_tail(path: str, limit_lines: int = 80) -> str:
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines()
-    except FileNotFoundError:
+def _read_backend_log_tail(max_lines: int = 200) -> str:
+    """
+    Return the last `max_lines` lines of logs/backend_autostart.log.
+    If file doesn't exist, return a friendly message.
+    """
+    path = os.path.join("logs", "backend_autostart.log")
+    if not os.path.exists(path):
         return "(no backend_autostart.log yet)"
-    return "\n".join(lines[-limit_lines:])
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+        tail = lines[-max_lines:]
+        return "".join(tail).rstrip()
+    except Exception as e:
+        return f"(error reading backend_autostart.log: {e})"
 
 
 def _spawn_backend_if_needed() -> None:
     """
-    Start backend.api:app on 127.0.0.1:8000 in a detached subprocess IF it's not already up.
-    Store the child PID in st.session_state["backend.pid"] so we can probe liveness
-    on subsequent renders.
+    Make sure the FastAPI backend is running. If we don't have a live PID,
+    spawn a detached child that executes scripts/start_backend.py
+    with the SAME Python interpreter Streamlit is using.
     """
-    LOG_DIR = os.path.join("logs")
-    os.makedirs(LOG_DIR, exist_ok=True)
+    log_dir = os.path.join("logs")
+    os.makedirs(log_dir, exist_ok=True)
 
-    pid = st.session_state.get("backend.pid")
+    existing_pid = st.session_state.get("backend.pid")
 
-    # If we think we have a pid, confirm it's alive
-    if pid and _pid_alive(pid):
-        # Backend already running, nothing to do
+    # If we think we have a PID, verify it's alive.
+    if existing_pid and _pid_is_alive(existing_pid):
+        # already running
         return
 
-    # If we had a stale pid, clear it
-    if pid and not _pid_alive(pid):
+    # stale PID? forget it
+    if existing_pid and not _pid_is_alive(existing_pid):
         st.session_state.pop("backend.pid", None)
 
-    # Launch backend as a detached child process running scripts/start_backend.py
+    # launch a brand new backend process
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
     proc = subprocess.Popen(
         [sys.executable, "-u", "scripts/start_backend.py"],
+        cwd=os.getcwd(),
+        env=os.environ.copy(),
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
         creationflags=creationflags,
-        cwd=os.getcwd(),
-        env=os.environ.copy(),  # inherit our env (which now includes .env thanks to Control Center)
     )
 
-    # Record the PID so we can check liveness later
     st.session_state["backend.pid"] = proc.pid
+
+    # tiny grace delay to let python process import modules & start logging
+    time.sleep(0.25)
 
 
 def _stop_backend() -> None:
@@ -896,11 +920,11 @@ def render(
 
     # Sync session_state pid with reality
     pid = st.session_state.get("backend.pid")
-    if pid and not _pid_alive(pid):
+    if pid and not _pid_is_alive(pid):
         st.session_state.pop("backend.pid", None)
 
     # Probe backend: we require /health AND /broker/status to both succeed.
-    is_up, health_info, err_msg = probe_backend(BACKEND_URL, timeout_sec=4.0)
+    is_up, health_info, err_msg = probe_backend(BACKEND_URL, timeout_sec=3.0)
 
     if not is_up:
         # backend either isn't running, or it crashed immediately, or it's missing keys, etc.
@@ -914,8 +938,14 @@ def render(
             st.warning(f"Health probe error: {err_msg}")
 
         # Show PID + tail of backend_autostart.log so the user can debug creds / crashes
-        st.write("Process PID:", st.session_state.get("backend.pid", "(none / dead)"))
-        st.code(_read_tail(LOG_FILE), language="text")
+        pid = st.session_state.get("backend.pid")
+        alive = _pid_is_alive(pid) if pid else False
+        pid_line = f"{pid} ({'alive' if alive else 'dead'})" if pid else "(none)"
+
+        st.write("**Process PID:**", pid_line)
+
+        log_tail = _read_backend_log_tail()
+        st.code(log_tail or "(log empty)", language="text")
 
         st.stop()
 
