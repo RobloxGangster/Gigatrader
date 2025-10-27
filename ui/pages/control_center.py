@@ -36,11 +36,27 @@ LOG_FILE = os.path.join(LOG_DIR, "backend_autostart.log")
 
 
 def _pid_alive(pid: int) -> bool:
+    """
+    Return True if a process with this PID appears to still be running.
+    Cross-platform best effort: on Windows, os.kill may not behave the same,
+    so we fall back to psutil if available. If unsure, treat as dead if any exception.
+    """
     try:
-        p = psutil.Process(pid)
-        return p.is_running() and p.status() != psutil.STATUS_ZOMBIE
-    except psutil.Error:
-        return False
+        # On Windows, this will raise PermissionError if running;
+        # on POSIX, sending signal 0 checks existence.
+        import signal, os
+
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        # If os.kill isn't reliable on this platform, try psutil if present.
+        try:
+            import psutil  # type: ignore
+
+            p = psutil.Process(pid)
+            return p.is_running() and (p.status() != psutil.STATUS_ZOMBIE)
+        except Exception:
+            return False
 
 
 def _kill_pid_tree(pid: int) -> None:
@@ -70,21 +86,27 @@ def _read_tail(path: str, limit_lines: int = 80) -> str:
 
 def _spawn_backend_if_needed() -> None:
     """
-    Start backend.api:app on 127.0.0.1:8000 in a detached subprocess if it's not already up.
+    Start backend.api:app on 127.0.0.1:8000 in a detached subprocess IF it's not already up.
+    Store the child PID in st.session_state["backend.pid"] so we can probe liveness
+    on subsequent renders.
     """
-    pid = st.session_state.get("backend.pid")
-    if pid and _pid_alive(pid):
-        return  # already running
+    LOG_DIR = os.path.join("logs")
+    os.makedirs(LOG_DIR, exist_ok=True)
 
-    # clean stale pid
+    pid = st.session_state.get("backend.pid")
+
+    # If we think we have a pid, confirm it's alive
+    if pid and _pid_alive(pid):
+        # Backend already running, nothing to do
+        return
+
+    # If we had a stale pid, clear it
     if pid and not _pid_alive(pid):
         st.session_state.pop("backend.pid", None)
 
-    # Make sure logs dir exists
-    os.makedirs(LOG_DIR, exist_ok=True)
-
-    # Launch scripts/start_backend.py with the SAME interpreter Streamlit is using
+    # Launch backend as a detached child process running scripts/start_backend.py
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
     proc = subprocess.Popen(
         [sys.executable, "-u", "scripts/start_backend.py"],
         stdout=subprocess.DEVNULL,
@@ -92,9 +114,10 @@ def _spawn_backend_if_needed() -> None:
         stdin=subprocess.DEVNULL,
         creationflags=creationflags,
         cwd=os.getcwd(),
-        env=os.environ.copy(),
+        env=os.environ.copy(),  # inherit our env (which now includes .env thanks to Control Center)
     )
 
+    # Record the PID so we can check liveness later
     st.session_state["backend.pid"] = proc.pid
 
 
