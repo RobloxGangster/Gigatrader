@@ -165,17 +165,26 @@ async def health(
     This must NOT throw.
     """
 
-    profile_value = getattr(settings, "profile", None)
+    try:
+        flags = get_runtime_flags()
+    except Exception:  # pragma: no cover - defensive runtime flag guard
+        flags = None
+
+    profile_value = getattr(flags, "profile", None) or getattr(settings, "profile", None)
     if not profile_value:
         profile_value = getattr(settings.runtime, "profile", "paper")
 
-    broker_name = getattr(settings.runtime, "broker", "Alpaca")
+    broker_name = getattr(flags, "broker", None) or getattr(settings.runtime, "broker", "Alpaca")
     broker_impl = broker_name
     orchestrator_state = "Unknown"
     stream_source = "alpaca/paper"
     kill_label = "Standby"
     ok = True
     error: str | None = None
+
+    dry_run_flag = bool(getattr(flags, "dry_run", getattr(settings.runtime, "dry_run", False)))
+    mock_mode_flag = bool(getattr(flags, "mock_mode", False))
+    paper_mode_flag = bool(getattr(flags, "paper_trading", profile_value != "live"))
 
     try:
         adapter = getattr(broker, "adapter", None)
@@ -207,6 +216,9 @@ async def health(
             if not stream_status_raw.get("ok", True):
                 ok = False
                 error = error or str(stream_status_raw.get("error") or "Stream unavailable")
+            if "mock" in stream_source.lower():
+                mock_mode_flag = True
+            dry_run_flag = bool(stream_status_raw.get("dry_run", dry_run_flag))
         elif stream_status_raw is False:
             ok = False
             error = error or "Stream unavailable"
@@ -236,6 +248,9 @@ async def health(
         "orchestrator_state": orchestrator_state,
         "stream_source": stream_source,
         "kill_switch": kill_label,
+        "dry_run": dry_run_flag,
+        "paper_mode": paper_mode_flag,
+        "mock_mode": mock_mode_flag,
     }
     if error:
         payload["error"] = error
