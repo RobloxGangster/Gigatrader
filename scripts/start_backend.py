@@ -1,13 +1,15 @@
 """
-Gigatrader backend launcher.
+scripts/start_backend.py
 
-This script is spawned by the Streamlit Control Center to boot the FastAPI backend
-(uvicorn backend.api:app on 127.0.0.1:8000). It writes detailed, flushed logs to
-logs/backend_autostart.log so the UI can debug why the backend may not be
-responding at /health.
+Purpose:
+- Clean up any stale uvicorn/FastAPI process still holding port 8000.
+- Launch the backend API (uvicorn backend.api:app --host 127.0.0.1 --port 8000).
+- Stream stdout/stderr into logs/backend.out.log and logs/backend.err.log.
+- Write PID to logs/backend.pid and (if it crashes immediately) an exit code to logs/backend.exitcode.
+- Emit human-readable status lines to logs/backend_autostart.log so the UI can render them.
+
+This script is called by the Streamlit Control Center "Start Trading System" button.
 """
-
-from __future__ import annotations
 
 import os
 import sys
@@ -19,99 +21,165 @@ from datetime import datetime
 ROOT = Path(__file__).resolve().parents[1]
 VENV_PY = Path(sys.executable).resolve()
 LOG_DIR = ROOT / "logs"
-LOG_DIR.mkdir(exist_ok=True, parents=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-AUTOSTART_LOG = LOG_DIR / "backend_autostart.log"
+AUTOSTART_LOG   = LOG_DIR / "backend_autostart.log"
 BACKEND_OUT_LOG = LOG_DIR / "backend.out.log"
 BACKEND_ERR_LOG = LOG_DIR / "backend.err.log"
-PID_FILE = LOG_DIR / "backend.pid"
-EXIT_FILE = LOG_DIR / "backend.exitcode"
+PID_FILE        = LOG_DIR / "backend.pid"
+EXIT_FILE       = LOG_DIR / "backend.exitcode"
+PORT_HOLDER_LOG = LOG_DIR / "backend.portdebug.log"  # optional info for who owned the port
 
 API_MODULE = "backend.api:app"
 HOST = "127.0.0.1"
-PORT = "8000"
-
+PORT = 8000
 
 def _ts() -> str:
     return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
-
-def log(line: str) -> None:
+def _log(line: str) -> None:
     with AUTOSTART_LOG.open("a", encoding="utf-8") as f:
         f.write(f"[{_ts()}] {line}\n")
-        f.flush()
-        os.fsync(f.fileno())
 
+def _note_port_holder(holder_info: str) -> None:
+    with PORT_HOLDER_LOG.open("a", encoding="utf-8") as f:
+        f.write(f"[{_ts()}] {holder_info}\n")
+
+def _ensure_port_free(host: str, port: int) -> None:
+    """
+    On Windows you'll get [Errno 10048] if something is already bound to the port.
+    We use psutil to locate and kill anything already listening on (host, port)
+    before we spawn our real backend.
+    """
+    try:
+        import psutil
+    except Exception as e:  # noqa: BLE001
+        _log(f"psutil import failed ({e!r}); skipping port cleanup.")
+        return
+
+    offenders = []
+    for proc in psutil.process_iter(attrs=["pid", "name"]):
+        try:
+            conns = proc.connections(kind="inet")
+        except Exception:  # noqa: BLE001 - psutil access errors are best-effort
+            continue
+        for c in conns:
+            # c.laddr is local address: (ip, port)
+            if (
+                c.laddr
+                and len(c.laddr) == 2
+                and c.laddr[0] == host
+                and c.laddr[1] == port
+                and c.status == psutil.CONN_LISTEN
+            ):
+                offenders.append((proc.pid, proc.info.get("name", "?")))
+                break
+
+    if not offenders:
+        _log(f"No existing listener detected on {host}:{port}")
+        return
+
+    for pid, name in offenders:
+        msg = f"Found existing listener on {host}:{port} -> PID {pid} ({name}). Attempting terminate..."
+        _log(msg)
+        _note_port_holder(msg)
+        try:
+            p = psutil.Process(pid)
+            p.terminate()
+        except Exception as e:  # noqa: BLE001 - best-effort kill
+            _log(f"Failed .terminate() on {pid}: {e!r}")
+        try:
+            p.wait(timeout=3)
+        except Exception:  # noqa: BLE001 - continue regardless
+            pass
+
+    # second pass: we can force kill if still alive
+    for pid, name in offenders:
+        try:
+            p = psutil.Process(pid)
+            if p.is_running():
+                _log(f"Process {pid} still alive; killing.")
+                try:
+                    p.kill()
+                except Exception as e:  # noqa: BLE001
+                    _log(f"Failed .kill() on {pid}: {e!r}")
+        except Exception:  # noqa: BLE001 - process vanished, continue
+            pass
+
+    _log(f"Port cleanup complete for {host}:{port}")
 
 def main() -> None:
-    log("=== backend_autostart begin ===")
-    log(f"python exe: {VENV_PY}")
-    log(f"cwd: {ROOT}")
-    log(f"Attempting to launch uvicorn for {API_MODULE} on {HOST}:{PORT} ...")
+    _log("=== backend_autostart begin ===")
+    _log(f"python exe: {VENV_PY}")
+    _log(f"cwd: {ROOT}")
 
+    # clear stale pid/exit markers so the UI doesn't show old data
     if PID_FILE.exists():
         PID_FILE.unlink()
     if EXIT_FILE.exists():
         EXIT_FILE.unlink()
 
+    # make sure nothing is already holding 127.0.0.1:8000
+    _ensure_port_free(HOST, PORT)
+
+    # open the new session markers in stdout/stderr logs
     sep = f"\n----- NEW LAUNCH {_ts()} -----\n"
+    out_fh = BACKEND_OUT_LOG.open("a", buffering=1, encoding="utf-8")
+    err_fh = BACKEND_ERR_LOG.open("a", buffering=1, encoding="utf-8")
+    out_fh.write(sep)
+    err_fh.write(sep)
+    out_fh.flush()
+    err_fh.flush()
 
-    with BACKEND_OUT_LOG.open("a", buffering=1, encoding="utf-8") as out_fh, BACKEND_ERR_LOG.open(
-        "a", buffering=1, encoding="utf-8"
-    ) as err_fh:
-        out_fh.write(sep)
-        err_fh.write(sep)
-        out_fh.flush()
+    cmd = [
+        str(VENV_PY),
+        "-m",
+        "uvicorn",
+        API_MODULE,
+        "--host", HOST,
+        "--port", str(PORT),
+        "--log-level", "info",
+    ]
+
+    _log(f"Attempting to launch uvicorn for {API_MODULE} on {HOST}:{PORT} ... cmd={cmd}")
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT),
+            env=os.environ.copy(),
+            stdout=out_fh,
+            stderr=err_fh,
+            stdin=subprocess.DEVNULL,
+            # On Windows, prevent console popups:
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+        )
+    except Exception as e:  # noqa: BLE001 - best effort logging
+        _log(f"FATAL: could not spawn uvicorn: {e!r}")
+        err_fh.write(f"FATAL: could not spawn uvicorn: {e!r}\n")
         err_fh.flush()
+        return
 
-        cmd = [
-            str(VENV_PY),
-            "-m",
-            "uvicorn",
-            API_MODULE,
-            "--host",
-            HOST,
-            "--port",
-            PORT,
-            "--log-level",
-            "info",
-        ]
+    # record PID so UI can show it even if it dies quickly
+    _log(f"Spawned uvicorn PID={proc.pid}")
+    with PID_FILE.open("w", encoding="utf-8") as f:
+        f.write(str(proc.pid))
 
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    # give uvicorn a short grace period to bind the port
+    time.sleep(1.5)
 
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=ROOT,
-                env=os.environ.copy(),
-                stdout=out_fh,
-                stderr=err_fh,
-                stdin=subprocess.DEVNULL,
-                creationflags=creationflags,
-            )
-        except Exception as e:  # noqa: BLE001 - best effort logging
-            log(f"FATAL: could not spawn uvicorn: {e!r}")
-            err_fh.write(f"FATAL: could not spawn uvicorn: {e!r}\n")
-            err_fh.flush()
-            return
-
-        with PID_FILE.open("w", encoding="utf-8") as f:
-            f.write(str(proc.pid))
-        log(f"Spawned uvicorn PID={proc.pid}")
-
-        time.sleep(1.5)
-
-        retcode = proc.poll()
-        if retcode is None:
-            log(f"PID {proc.pid} appears alive after grace period.")
-            return
-
+    retcode = proc.poll()
+    if retcode is None:
+        # still running -> good
+        _log(f"PID {proc.pid} appears alive after grace period.")
+        return
+    else:
+        # crashed instantly; capture exit code
         with EXIT_FILE.open("w", encoding="utf-8") as f:
             f.write(str(retcode))
-        log(f"PID {proc.pid} exited early with code {retcode}")
-        out_fh.flush()
+        _log(f"PID {proc.pid} exited early with code {retcode}")
         err_fh.flush()
-
+        out_fh.flush()
 
 if __name__ == "__main__":
     main()
