@@ -28,7 +28,6 @@ from backend.routers import (
     telemetry,
 )
 from backend.routers.deps import (
-    BrokerService,
     get_broker,
     get_kill_switch,
     get_orchestrator,
@@ -36,7 +35,8 @@ from backend.routers.deps import (
 )
 from backend.services import reconcile
 from backend.services.alpaca_client import get_trading_client
-from backend.services.stream_factory import StreamService
+from backend.services.orchestrator import get_orchestrator_status
+from backend.services.orchestrator_manager import orchestrator_manager
 from core.broker_config import is_mock
 from core.runtime_flags import RuntimeFlags, get_runtime_flags
 from core.settings import get_settings
@@ -155,105 +155,49 @@ def _register_compat_route(
 
 
 @root_router.get("/health")
-async def health(
-    stream: StreamService = Depends(get_stream_manager),
-    broker: BrokerService = Depends(get_broker),
-    orchestrator: Any = Depends(get_orchestrator),
-    kill_switch: Any = Depends(get_kill_switch),
-) -> Dict[str, Any]:
-    """
-    This must NOT throw.
-    """
+async def health() -> Dict[str, Any]:
+    """Return a fast, side-effect free health snapshot."""
 
     try:
         flags = get_runtime_flags()
     except Exception:  # pragma: no cover - defensive runtime flag guard
         flags = None
 
-    profile_value = getattr(flags, "profile", None) or getattr(settings, "profile", None)
-    if not profile_value:
-        profile_value = getattr(settings.runtime, "profile", "paper")
+    orchestrator_snapshot = get_orchestrator_status()
+    manager_snapshot = orchestrator_manager.get_status()
 
-    broker_name = getattr(flags, "broker", None) or getattr(settings.runtime, "broker", "Alpaca")
-    broker_impl = broker_name
-    orchestrator_state = "Unknown"
-    stream_source = "alpaca/paper"
-    kill_label = "Standby"
-    ok = True
-    error: str | None = None
-
+    profile_value = getattr(flags, "profile", None) or getattr(settings.runtime, "profile", "paper")
+    broker_value = getattr(flags, "broker", getattr(settings.runtime, "broker", "alpaca"))
     dry_run_flag = bool(getattr(flags, "dry_run", getattr(settings.runtime, "dry_run", False)))
     mock_mode_flag = bool(getattr(flags, "mock_mode", False))
     paper_mode_flag = bool(getattr(flags, "paper_trading", profile_value != "live"))
 
-    try:
-        adapter = getattr(broker, "adapter", None)
-        if adapter is not None:
-            broker_impl = getattr(adapter, "name", broker_impl) or broker_impl
-            if hasattr(adapter, "ping"):
-                await _maybe_await(adapter.ping())
-    except Exception as exc:  # pragma: no cover - defensive ping guard
-        ok = False
-        error = str(exc)
-
-    try:
-        orchestrator_snapshot = await _maybe_await(orchestrator.status())
-        if isinstance(orchestrator_snapshot, dict):
-            orchestrator_state = str(
-                orchestrator_snapshot.get("state")
-                or ("Running" if orchestrator_snapshot.get("running") else "Stopped")
-                or "Unknown"
-            )
-    except Exception as exc:  # pragma: no cover - defensive snapshot guard
-        orchestrator_state = "Error"
-        ok = False
-        error = error or str(exc)
-
-    try:
-        stream_status_raw = await _maybe_await(stream.status())
-        if isinstance(stream_status_raw, dict):
-            stream_source = str(stream_status_raw.get("source") or stream_source)
-            if not stream_status_raw.get("ok", True):
-                ok = False
-                error = error or str(stream_status_raw.get("error") or "Stream unavailable")
-            if "mock" in stream_source.lower():
-                mock_mode_flag = True
-            dry_run_flag = bool(stream_status_raw.get("dry_run", dry_run_flag))
-        elif stream_status_raw is False:
-            ok = False
-            error = error or "Stream unavailable"
-    except Exception as exc:  # pragma: no cover - defensive stream guard
-        stream_source = "unknown"
-        ok = False
-        error = error or str(exc)
-
-    try:
-        kill_engaged = kill_switch.engaged_sync()
-        kill_label = "Triggered" if kill_engaged else "Standby"
-        if kill_engaged:
-            ok = False
-    except Exception:  # pragma: no cover - defensive kill switch guard
-        kill_label = "Unknown"
-
-    if broker_name.lower() == "alpaca" and (
-        not settings.alpaca.key_id or not settings.alpaca.secret_key
-    ):
-        ok = False
-        error = error or "Missing APCA_KEY_ID"
+    orchestrator_state = str(orchestrator_snapshot.get("state", "stopped"))
+    kill_label = orchestrator_snapshot.get("kill_switch") or (
+        "Triggered" if orchestrator_snapshot.get("kill_switch_engaged") else "Standby"
+    )
 
     payload: Dict[str, Any] = {
-        "ok": ok,
+        "status": "ok",
+        "ok": True,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "profile": profile_value,
-        "broker": broker_impl or broker_name,
+        "broker": broker_value,
         "orchestrator_state": orchestrator_state,
-        "stream_source": stream_source,
         "kill_switch": kill_label,
+        "kill_switch_engaged": bool(orchestrator_snapshot.get("kill_switch_engaged", False)),
         "dry_run": dry_run_flag,
         "paper_mode": paper_mode_flag,
         "mock_mode": mock_mode_flag,
+        "stream_source": orchestrator_snapshot.get("market_data_source", "unknown"),
+        "orchestrator": {**orchestrator_snapshot, "manager": manager_snapshot},
+        "manager": manager_snapshot,
     }
-    if error:
-        payload["error"] = error
+
+    last_error = orchestrator_snapshot.get("last_error") or manager_snapshot.get("last_error")
+    if last_error:
+        payload["error"] = last_error
+
     return payload
 
 
