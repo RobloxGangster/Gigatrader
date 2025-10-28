@@ -3,19 +3,12 @@ from __future__ import annotations
 import os
 import sys
 import time
-import signal
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import requests
 import streamlit as st
-
-# psutil is optional. If it's not available, we'll degrade gracefully.
-try:
-    import psutil  # type: ignore
-except Exception:
-    psutil = None
 
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
@@ -48,190 +41,129 @@ EXIT_FILE = LOG_DIR / "backend.exitcode"
 AUTOSTART_LOG = LOG_DIR / "backend_autostart.log"
 BACKEND_ERR_LOG = LOG_DIR / "backend.err.log"
 BACKEND_OUT_LOG = LOG_DIR / "backend.out.log"
+PORTDEBUG_LOG = LOG_DIR / "backend.portdebug.log"
 
 
-def _pid_is_alive(pid: Optional[int]) -> bool:
-    """
-    Return True if a process with this PID still appears to be running.
-    Prefer psutil if available. Fallback to os.kill semantics.
-    """
-    if not pid:
-        return False
-
-    # psutil path first (most reliable cross-platform)
-    if psutil is not None:
-        try:
-            proc = psutil.Process(pid)
-            if not proc.is_running():
-                return False
-            # Avoid treating zombies as alive on POSIX
-            if getattr(psutil, "STATUS_ZOMBIE", None) and proc.status() == psutil.STATUS_ZOMBIE:
-                return False
-            return True
-        except Exception:
-            return False
-
-    # no psutil? use os.kill probe
-    try:
-        # os.kill(pid, 0) => check signal delivery without killing (POSIX);
-        # on Windows this raises OSError for dead processes.
-        os.kill(pid, 0)
-        return True
-    except PermissionError:
-        # access denied still means "something is there"
-        return True
-    except Exception:
-        return False
-
-
-def _read_text(path: Path, default: str = "") -> str:
+def _read_text(path: Path, fallback: str = "") -> str:
     try:
         return path.read_text(encoding="utf-8", errors="replace")
     except Exception:
-        return default
+        return fallback
 
 
-def _tail_lines(txt: str, n: int = 200) -> str:
+def _tail(txt: str, n: int = 200) -> str:
     lines = txt.splitlines()
-    if not lines:
-        return txt
     return "\n".join(lines[-n:])
 
 
-def _get_pid_status() -> Tuple[Optional[int], bool, Optional[str], str]:
-    pid: Optional[int] = None
+def _get_backend_status():
+    pid_val = None
     if PID_FILE.exists():
-        try:
-            raw = PID_FILE.read_text(encoding="utf-8").strip()
-            if raw:
-                pid = int(raw)
-        except Exception:
-            pid = None
+        raw = _read_text(PID_FILE).strip()
+        if raw:
+            try:
+                pid_val = int(raw)
+            except Exception:  # noqa: BLE001 - keep raw text if it isn't an int
+                pid_val = raw
 
     crashed = False
-    exit_code: Optional[str] = None
+    exit_code = None
     if EXIT_FILE.exists():
         crashed = True
-        try:
-            exit_code = EXIT_FILE.read_text(encoding="utf-8").strip() or None
-        except Exception:
-            exit_code = "?"
+        exit_code = _read_text(EXIT_FILE).strip() or "?"
 
-    alive = False
-    if pid and not crashed:
-        alive = _pid_is_alive(pid)
-
-    status_label = "unknown"
-    if alive and pid:
-        status_label = f"running (PID {pid})"
-    elif crashed and pid:
-        status_label = f"crashed (PID {pid}, exit {exit_code})"
-    elif crashed and not pid:
-        status_label = f"crashed (PID ?, exit {exit_code})"
-    elif pid:
-        status_label = f"not running (stale PID {pid})"
+    if pid_val and not crashed:
+        label = f"running (PID {pid_val})"
+    elif pid_val and crashed:
+        label = f"crashed (PID {pid_val}, exit {exit_code})"
+    elif crashed and not pid_val:
+        label = f"crashed (PID unknown, exit {exit_code})"
     else:
-        status_label = "not running"
+        label = "not running"
 
-    return pid, crashed, exit_code, status_label
+    return label, pid_val, crashed, exit_code
 
 
-def render_backend_process_panel() -> None:
+def render_backend_process_panel():
     st.subheader("Backend Process")
 
-    pid, crashed, exit_code, status_label = _get_pid_status()
-    st.text(f"Status: {status_label}")
-    st.text(f"PID file contents: {pid if pid is not None else '(none)'}")
-    if crashed:
-        st.text(f"Exit code: {exit_code if exit_code is not None else '(unknown)'}")
+    status_label, pid_val, crashed, exit_code = _get_backend_status()
+    st.write(f"Status: {status_label}")
 
+    st.write(f"PID file contents: {pid_val if pid_val else '(none)'}")
+
+    # backend_autostart.log (launcher narration)
     st.caption("backend_autostart.log tail:")
-    auto_tail = _tail_lines(
-        _read_text(AUTOSTART_LOG, default="(no backend_autostart.log found)"),
-        n=200,
-    )
-    st.code(auto_tail or "(empty)", language="text")
+    st.code(_tail(_read_text(AUTOSTART_LOG, fallback="(no backend_autostart.log yet)")), language="text")
 
+    # backend.err.log (uvicorn stderr, includes bind errors / stack traces)
     st.caption("backend.err.log tail (uvicorn stderr):")
-    err_tail = _tail_lines(
-        _read_text(BACKEND_ERR_LOG, default="(no backend.err.log yet)"),
-        n=200,
-    )
-    st.code(err_tail or "(empty)", language="text")
+    st.code(_tail(_read_text(BACKEND_ERR_LOG, fallback="(no backend.err.log yet)")), language="text")
 
+    # optional: show who used the port before cleanup
+    port_tail = _tail(_read_text(PORTDEBUG_LOG, fallback="(no portdebug yet)"))
+    if port_tail.strip():
+        with st.expander("backend.portdebug.log (port 8000 cleanup info)", expanded=False):
+            st.code(port_tail, language="text")
+
+    # backend.out.log (normal uvicorn info logs)
     with st.expander("backend.out.log tail (uvicorn stdout)", expanded=False):
-        out_tail = _tail_lines(
-            _read_text(BACKEND_OUT_LOG, default="(no backend.out.log yet)"),
-            n=200,
+        st.code(_tail(_read_text(BACKEND_OUT_LOG, fallback="(empty)")), language="text")
+
+
+def _spawn_backend_if_needed() -> Optional[int]:
+    """Invoke the backend launcher if we don't already have a running PID."""
+    _, pid_val, crashed, _ = _get_backend_status()
+    if pid_val and not crashed:
+        if isinstance(pid_val, int):
+            st.session_state[_SESSION_PID_KEY] = pid_val
+        return pid_val if isinstance(pid_val, int) else None
+
+    launcher = ROOT / "scripts" / "start_backend.py"
+    try:
+        result = subprocess.run(
+            [sys.executable, "-u", str(launcher)],
+            cwd=str(ROOT),
+            env=os.environ.copy(),
+            check=False,
         )
-        st.code(out_tail or "(empty)", language="text")
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Failed to launch backend starter: {exc}")
+        return None
 
+    if result.returncode not in (0, None):
+        st.warning(f"backend launcher exited with code {result.returncode}")
 
-def _spawn_backend_if_needed() -> int:
-    """
-    Ensure we have one backend launcher process running.
-    If we already have a live PID in st.session_state[_SESSION_PID_KEY], reuse it.
-    Otherwise spawn scripts/start_backend.py in a detached process
-    using this same Python interpreter.
-    Return the PID (either reused or new).
-    """
-    existing_pid = st.session_state.get(_SESSION_PID_KEY)
-    if existing_pid and _pid_is_alive(existing_pid):
-        return existing_pid
+    # Refresh status after invoking the launcher
+    _, pid_val, crashed, _ = _get_backend_status()
+    if pid_val and not crashed and isinstance(pid_val, int):
+        st.session_state[_SESSION_PID_KEY] = pid_val
+        return pid_val
 
-    # PID missing or dead → spawn new one.
-    os.makedirs("logs", exist_ok=True)
-
-    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-
-    proc = subprocess.Popen(
-        [sys.executable, "-u", "scripts/start_backend.py"],
-        cwd=os.getcwd(),
-        env=os.environ.copy(),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=creationflags,
-    )
-
-    new_pid = proc.pid
-    st.session_state[_SESSION_PID_KEY] = new_pid
-
-    # small grace to let python import backend.api, write first log lines, etc.
-    time.sleep(0.25)
-
-    return new_pid
+    return pid_val if isinstance(pid_val, int) else None
 
 
 def _stop_backend() -> None:
-    """
-    Attempt to kill the backend process recorded in session_state.
-    Clear the PID afterwards.
-    """
-    pid = st.session_state.get(_SESSION_PID_KEY)
-    if not pid:
-        return
-
-    # try best-effort graceful kill
+    """Stop the backend process via the helper script."""
+    launcher = ROOT / "scripts" / "stop_backend.py"
     try:
-        if psutil is not None:
-            try:
-                p = psutil.Process(pid)
-                p.terminate()
-            except Exception:
-                pass
-        else:
-            # portable-ish fallback
-            if os.name == "nt":
-                # Windows: TerminateProcess via taskkill is simplest
-                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
-            else:
-                os.kill(pid, signal.SIGTERM)
-    except Exception:
-        pass
-
-    # give it a moment to die
-    time.sleep(0.25)
+        result = subprocess.run(
+            [sys.executable, "-u", str(launcher)],
+            cwd=str(ROOT),
+            env=os.environ.copy(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Failed to stop backend: {exc}")
+    else:
+        if result.stdout.strip():
+            st.info(result.stdout.strip())
+        if result.stderr.strip():
+            st.warning(result.stderr.strip())
+        if result.returncode not in (0, None):
+            st.warning(f"stop_backend exited with code {result.returncode}")
 
     st.session_state[_SESSION_PID_KEY] = None
 
@@ -1002,9 +934,11 @@ def render(
         if st.button("Stop Trading System"):
             _stop_backend()
 
-    # Sync session_state pid with reality
-    pid = st.session_state.get(_SESSION_PID_KEY)
-    if pid and not _pid_is_alive(pid):
+    # Sync session_state PID with files written by the launcher
+    _, pid_val, crashed, _ = _get_backend_status()
+    if isinstance(pid_val, int) and not crashed:
+        st.session_state[_SESSION_PID_KEY] = pid_val
+    else:
         st.session_state.pop(_SESSION_PID_KEY, None)
 
     render_backend_process_panel()
