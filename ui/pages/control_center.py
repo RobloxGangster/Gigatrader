@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import os
 import sys
-import subprocess
 import time
+import signal
+import subprocess
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import requests
 import streamlit as st
 
-# try optional psutil for PID liveness check
+# optional psutil for liveness
 try:
     import psutil  # type: ignore
 except Exception:
-    psutil = None  # we'll handle gracefully
+    psutil = None
 
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
@@ -36,34 +37,33 @@ STRATEGY_LABELS: Dict[str, str] = {
     "swing_breakout": "Swing Breakout",
 }
 BACKEND_URL = "http://127.0.0.1:8000"
+
+_SESSION_PID_KEY = "backend.pid"
+
+
 def _pid_is_alive(pid: Optional[int]) -> bool:
     """
-    Best-effort cross-platform "is this PID running?" check.
-    Prefer psutil if available. Fallback to os.kill(pid, 0) semantics.
-    If anything looks off, return False.
+    Best-effort check if a PID is still running.
+    Prefer psutil if available. Fallback to os.kill semantics.
     """
-    if pid is None:
+    if not pid:
         return False
 
-    # psutil path
     if psutil is not None:
         try:
             proc = psutil.Process(pid)
             if not proc.is_running():
                 return False
-            # Avoid zombie on POSIX
+            # avoid zombies on POSIX
             if getattr(psutil, "STATUS_ZOMBIE", None) and proc.status() == psutil.STATUS_ZOMBIE:
                 return False
             return True
         except Exception:
             return False
 
-    # fallback path (no psutil)
+    # Fallback path: os.kill(pid, 0) is a common check on POSIX. On Windows it may
+    # raise PermissionError for "access denied", which we treat as "alive".
     try:
-        # os.kill(pid, 0) => on Windows may raise PermissionError if running;
-        # treat PermissionError as "alive".
-        import signal
-
         os.kill(pid, 0)
         return True
     except PermissionError:
@@ -71,29 +71,8 @@ def _pid_is_alive(pid: Optional[int]) -> bool:
     except Exception:
         return False
 
-def _kill_pid_tree(pid: int) -> None:
-    if psutil is None:
-        return
-    try:
-        p = psutil.Process(pid)
-    except psutil.Error:
-        return
-    for c in p.children(recursive=True):
-        try:
-            c.terminate()
-        except psutil.Error:
-            pass
-    try:
-        p.terminate()
-    except psutil.Error:
-        pass
-
 
 def _read_backend_log_tail(max_lines: int = 200) -> str:
-    """
-    Return the last `max_lines` lines of logs/backend_autostart.log.
-    If file doesn't exist, return a friendly message.
-    """
     path = os.path.join("logs", "backend_autostart.log")
     if not os.path.exists(path):
         return "(no backend_autostart.log yet)"
@@ -106,27 +85,22 @@ def _read_backend_log_tail(max_lines: int = 200) -> str:
         return f"(error reading backend_autostart.log: {e})"
 
 
-def _spawn_backend_if_needed() -> None:
+def _spawn_backend_if_needed() -> int:
     """
-    Make sure the FastAPI backend is running. If we don't have a live PID,
-    spawn a detached child that executes scripts/start_backend.py
-    with the SAME Python interpreter Streamlit is using.
+    Ensure exactly one backend launcher process is running.
+    If we already have a live PID in session_state[_SESSION_PID_KEY], reuse it.
+    Otherwise spawn a new detached child running scripts/start_backend.py
+    using the SAME Python interpreter Streamlit is using.
+
+    Returns the PID (alive or newly spawned).
     """
-    log_dir = os.path.join("logs")
-    os.makedirs(log_dir, exist_ok=True)
-
-    existing_pid = st.session_state.get("backend.pid")
-
-    # If we think we have a PID, verify it's alive.
+    existing_pid = st.session_state.get(_SESSION_PID_KEY)
     if existing_pid and _pid_is_alive(existing_pid):
-        # already running
-        return
+        return existing_pid
 
-    # stale PID? forget it
-    if existing_pid and not _pid_is_alive(existing_pid):
-        st.session_state.pop("backend.pid", None)
+    # PID missing or dead → spawn new one.
+    os.makedirs("logs", exist_ok=True)
 
-    # launch a brand new backend process
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
     proc = subprocess.Popen(
@@ -139,19 +113,44 @@ def _spawn_backend_if_needed() -> None:
         creationflags=creationflags,
     )
 
-    st.session_state["backend.pid"] = proc.pid
+    new_pid = proc.pid
+    st.session_state[_SESSION_PID_KEY] = new_pid
 
-    # tiny grace delay to let python process import modules & start logging
+    # small grace to let python import backend.api, write first log lines, etc.
     time.sleep(0.25)
+
+    return new_pid
 
 
 def _stop_backend() -> None:
-    pid = st.session_state.get("backend.pid")
-    if pid:
-        _kill_pid_tree(pid)
-    st.session_state.pop("backend.pid", None)
-    st.session_state.pop("backend.health", None)
-    st.session_state.pop("backend.error", None)
+    pid = st.session_state.get(_SESSION_PID_KEY)
+    if not pid:
+        return
+
+    # try best-effort graceful kill
+    try:
+        if psutil is not None:
+            try:
+                p = psutil.Process(pid)
+                p.terminate()
+            except Exception:
+                pass
+        else:
+            # portable-ish fallback
+            if os.name == "nt":
+                # Windows: TerminateProcess via taskkill is simplest
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+            else:
+                os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass
+
+    # give it a moment to die
+    time.sleep(0.25)
+
+    st.session_state[_SESSION_PID_KEY] = None
+
+
 def _fmt_money(value: Any, digits: int = 2) -> str:
     try:
         return fmt_currency(to_float(value), digits=digits)
@@ -919,9 +918,9 @@ def render(
             _stop_backend()
 
     # Sync session_state pid with reality
-    pid = st.session_state.get("backend.pid")
+    pid = st.session_state.get(_SESSION_PID_KEY)
     if pid and not _pid_is_alive(pid):
-        st.session_state.pop("backend.pid", None)
+        st.session_state.pop(_SESSION_PID_KEY, None)
 
     # Probe backend: we require /health AND /broker/status to both succeed.
     is_up, health_info, err_msg = probe_backend(BACKEND_URL, timeout_sec=3.0)
@@ -938,7 +937,7 @@ def render(
             st.warning(f"Health probe error: {err_msg}")
 
         # Show PID + tail of backend_autostart.log so the user can debug creds / crashes
-        pid = st.session_state.get("backend.pid")
+        pid = st.session_state.get(_SESSION_PID_KEY)
         alive = _pid_is_alive(pid) if pid else False
         pid_line = f"{pid} ({'alive' if alive else 'dead'})" if pid else "(none)"
 
