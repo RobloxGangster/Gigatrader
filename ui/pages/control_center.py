@@ -961,6 +961,13 @@ def render(
 
     st.session_state["backend.health"] = health_info
 
+    warnings_payload = health_info.get("warnings")
+    if isinstance(warnings_payload, Mapping):
+        for key, message in warnings_payload.items():
+            if not message:
+                continue
+            st.warning(f"Backend warning ({key}): {message}")
+
     st.session_state.setdefault("telemetry.autorefresh", False)
     auto_enabled = st.toggle(
         "Auto-refresh telemetry",
@@ -970,9 +977,27 @@ def render(
 
     profile = health_info.get("profile", "unknown")
     broker_name = health_info.get("broker", "unknown")
-    run_state = health_info.get("orchestrator_state", "unknown")
+    manager_snapshot = health_info.get("manager") or {}
+    manager_state = str(manager_snapshot.get("state", "unknown")).lower()
+    run_state = manager_state or str(health_info.get("orchestrator_state", "unknown")).lower()
     stream_src = health_info.get("stream_source", "unknown")
     kill_switch = health_info.get("kill_switch", "unknown")
+
+    manager_error = manager_snapshot.get("last_error") or health_info.get("error")
+
+    if manager_state == "running":
+        st.success("TRADING ACTIVE — orchestrator running in background.")
+    elif manager_state in {"starting", "stopping"}:
+        st.warning(
+            "Starting trading system…" if manager_state == "starting" else "Stopping trading system…"
+        )
+    elif manager_state == "error":
+        st.error("Trading orchestrator encountered an error. Check backend logs for details.")
+    else:
+        st.info("Trading system is currently stopped.")
+
+    if manager_error:
+        st.caption(f"Last orchestrator error: {manager_error}")
 
     if "mock" in str(stream_src).lower():
         st.warning("MOCK MODE — backend running in mock mode. Live orders will NOT be sent.")
@@ -981,7 +1006,7 @@ def render(
 
     st.write("Profile:", profile)
     st.write("Broker:", broker_name)
-    st.write("Run State:", run_state)
+    st.write("Run State:", run_state.title())
     st.write("Stream Source:", stream_src)
     st.write("Kill Switch:", kill_switch)
     st.write(

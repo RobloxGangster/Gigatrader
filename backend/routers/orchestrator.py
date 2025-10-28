@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -12,6 +11,8 @@ from backend.services.orchestrator import (
     get_last_order_attempt,
     get_orchestrator_status,
 )
+from backend.services.orchestrator_manager import orchestrator_manager
+from backend.services.orchestrator_runner import run_trading_loop
 
 from .deps import get_orchestrator
 
@@ -45,6 +46,9 @@ def _build_status(snapshot: dict) -> OrchestratorStatus:
         "uptime_secs": float(snapshot.get("uptime_secs") or 0.0),
         "restart_count": int(snapshot.get("restart_count") or 0),
     }
+    manager_status = snapshot.get("manager")
+    if manager_status is not None:
+        payload["manager"] = manager_status
     return OrchestratorStatus(**payload)
 
 
@@ -53,6 +57,7 @@ def orchestrator_status() -> OrchestratorStatus:
     orch = get_orchestrator()
     try:
         snapshot = orch.status()
+        snapshot["manager"] = orchestrator_manager.get_status()
         return _build_status(snapshot)
     except Exception as exc:  # noqa: BLE001 - surfaced to client
         raise HTTPException(status_code=500, detail=f"orchestrator_status: {exc}") from exc
@@ -60,7 +65,6 @@ def orchestrator_status() -> OrchestratorStatus:
 
 @router.post("/start", response_model=OrchestratorStatus)
 async def orchestrator_start(payload: OrchestratorStartPayload | None = None) -> OrchestratorStatus:
-    orch = get_orchestrator()
     try:
         flags = get_runtime_flags()
         if not flags.mock_mode:
@@ -68,9 +72,9 @@ async def orchestrator_start(payload: OrchestratorStartPayload | None = None) ->
                 require_alpaca_keys()
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-        await orch.start()
-        await asyncio.sleep(0)
-        snapshot = orch.status()
+        orchestrator_manager.start(run_trading_loop)
+        snapshot = get_orchestrator_status()
+        snapshot["manager"] = orchestrator_manager.get_status()
         if payload and payload.preset:
             snapshot["preset"] = payload.preset
         return _build_status(snapshot)
@@ -82,10 +86,10 @@ async def orchestrator_start(payload: OrchestratorStartPayload | None = None) ->
 
 @router.post("/stop", response_model=OrchestratorStatus)
 async def orchestrator_stop() -> OrchestratorStatus:
-    orch = get_orchestrator()
     try:
-        await orch.stop()
-        snapshot = orch.status()
+        orchestrator_manager.stop()
+        snapshot = get_orchestrator_status()
+        snapshot["manager"] = orchestrator_manager.get_status()
         return _build_status(snapshot)
     except Exception as exc:  # noqa: BLE001 - surfaced to client
         raise HTTPException(status_code=500, detail=f"orchestrator_stop: {exc}") from exc
@@ -94,6 +98,9 @@ async def orchestrator_stop() -> OrchestratorStatus:
 @router.get("/debug")
 async def orchestrator_debug() -> dict:
     return {
-        "status": get_orchestrator_status(),
+        "status": {
+            **get_orchestrator_status(),
+            "manager": orchestrator_manager.get_status(),
+        },
         "last_order_attempt": get_last_order_attempt(),
     }
