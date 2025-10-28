@@ -47,66 +47,114 @@ def _note_port_holder(holder_info: str) -> None:
 
 def _ensure_port_free(host: str, port: int) -> None:
     """
-    On Windows you'll get [Errno 10048] if something is already bound to the port.
-    We use psutil to locate and kill anything already listening on (host, port)
-    before we spawn our real backend.
+    Make sure (host, port) is not already bound before we launch uvicorn.
+    Prefer psutil to find and kill the listener.
+    If psutil is not available, fall back to Windows netstat/taskkill.
+    Write all findings to backend.portdebug.log for visibility in the UI.
     """
+    offenders = []
+
+    # First attempt: psutil
+    psutil_ok = False
     try:
         import psutil
-    except Exception as e:  # noqa: BLE001
-        _log(f"psutil import failed ({e!r}); skipping port cleanup.")
-        return
+        psutil_ok = True
+        for proc in psutil.process_iter(attrs=["pid", "name"]):
+            try:
+                conns = proc.connections(kind="inet")
+            except Exception:
+                continue
+            for c in conns:
+                if (
+                    c.laddr
+                    and len(c.laddr) == 2
+                    and c.laddr[0] == host
+                    and c.laddr[1] == port
+                    and getattr(c, "status", None) == psutil.CONN_LISTEN
+                ):
+                    offenders.append((proc.pid, proc.info.get("name", "?"), "psutil"))
+                    break
+    except Exception as e:
+        _log(f"psutil scan failed: {e!r}")
 
-    offenders = []
-    for proc in psutil.process_iter(attrs=["pid", "name"]):
+    # Fallback if psutil not available or found nothing
+    if not offenders:
+        # On Windows, netstat -ano will list the PID listening on :8000
+        # We'll parse any LISTENING line with the matching local endpoint.
         try:
-            conns = proc.connections(kind="inet")
-        except Exception:  # noqa: BLE001 - psutil access errors are best-effort
-            continue
-        for c in conns:
-            # c.laddr is local address: (ip, port)
-            if (
-                c.laddr
-                and len(c.laddr) == 2
-                and c.laddr[0] == host
-                and c.laddr[1] == port
-                and c.status == psutil.CONN_LISTEN
-            ):
-                offenders.append((proc.pid, proc.info.get("name", "?")))
-                break
+            import subprocess, re
+            cmd = ["netstat", "-ano"]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+            if result.returncode == 0:
+                pattern = re.compile(rf"^\s*TCP\s+{re.escape(host)}:{port}\s+[\d\.:]*\s+LISTENING\s+(\d+)\s*$",
+                                     re.IGNORECASE | re.MULTILINE)
+                for m in pattern.finditer(result.stdout):
+                    pid_str = m.group(1)
+                    if pid_str:
+                        offenders.append((int(pid_str), "unknown", "netstat"))
+        except Exception as e:
+            _log(f"netstat fallback failed: {e!r}")
 
     if not offenders:
         _log(f"No existing listener detected on {host}:{port}")
+        _note_port_holder(f"[CLEANUP] No listener found on {host}:{port}")
         return
 
-    for pid, name in offenders:
-        msg = f"Found existing listener on {host}:{port} -> PID {pid} ({name}). Attempting terminate..."
+    # Try to terminate all offenders
+    for (pid, name, source) in offenders:
+        msg = f"[CLEANUP] Found existing listener on {host}:{port} -> PID {pid} ({name}) via {source}"
         _log(msg)
         _note_port_holder(msg)
-        try:
-            p = psutil.Process(pid)
-            p.terminate()
-        except Exception as e:  # noqa: BLE001 - best-effort kill
-            _log(f"Failed .terminate() on {pid}: {e!r}")
-        try:
-            p.wait(timeout=3)
-        except Exception:  # noqa: BLE001 - continue regardless
-            pass
 
-    # second pass: we can force kill if still alive
-    for pid, name in offenders:
+        killed = False
+
+        # If we have psutil, prefer graceful terminate/kill
         try:
-            p = psutil.Process(pid)
-            if p.is_running():
-                _log(f"Process {pid} still alive; killing.")
+            import psutil
+            try:
+                p = psutil.Process(pid)
+                p.terminate()
                 try:
+                    p.wait(timeout=3)
+                    killed = True
+                except Exception:
+                    pass
+                if p.is_running():
+                    _log(f"[CLEANUP] PID {pid} still running after terminate(); forcing kill()")
                     p.kill()
-                except Exception as e:  # noqa: BLE001
-                    _log(f"Failed .kill() on {pid}: {e!r}")
-        except Exception:  # noqa: BLE001 - process vanished, continue
+                    try:
+                        p.wait(timeout=3)
+                        killed = True
+                    except Exception:
+                        pass
+            except Exception as e:
+                _log(f"[CLEANUP] psutil terminate/kill failed for PID {pid}: {e!r}")
+        except Exception:
+            # psutil might not be importable, skip this block
             pass
 
-    _log(f"Port cleanup complete for {host}:{port}")
+        # If still not killed, try taskkill /F (Windows hard kill)
+        if not killed:
+            try:
+                import subprocess
+                tk = subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                _log(f"[CLEANUP] taskkill /PID {pid} /F rc={tk.returncode} out={tk.stdout!r} err={tk.stderr!r}")
+                if tk.returncode == 0:
+                    killed = True
+            except Exception as e:
+                _log(f"[CLEANUP] taskkill failed for PID {pid}: {e!r}")
+
+        if killed:
+            _log(f"[CLEANUP] PID {pid} appears terminated.")
+        else:
+            _log(f"[CLEANUP] WARNING: PID {pid} may still be alive and holding {host}:{port}.")
+
+    _log(f"Port cleanup pass complete for {host}:{port}")
 
 def main() -> None:
     _log("=== backend_autostart begin ===")
