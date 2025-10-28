@@ -11,124 +11,106 @@ from __future__ import annotations
 
 import os
 import sys
-import traceback
+import time
+import subprocess
+from pathlib import Path
 from datetime import datetime
 
-import uvicorn  # runtime dependency for serving FastAPI
+ROOT = Path(__file__).resolve().parents[1]
+VENV_PY = Path(sys.executable).resolve()
+LOG_DIR = ROOT / "logs"
+LOG_DIR.mkdir(exist_ok=True, parents=True)
+
+AUTOSTART_LOG = LOG_DIR / "backend_autostart.log"
+BACKEND_OUT_LOG = LOG_DIR / "backend.out.log"
+BACKEND_ERR_LOG = LOG_DIR / "backend.err.log"
+PID_FILE = LOG_DIR / "backend.pid"
+EXIT_FILE = LOG_DIR / "backend.exitcode"
+
+API_MODULE = "backend.api:app"
+HOST = "127.0.0.1"
+PORT = "8000"
 
 
-LOG_DIR = os.path.join("logs")
-LOG_PATH = os.path.join(LOG_DIR, "backend_autostart.log")
+def _ts() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _ensure_logdir() -> None:
-    os.makedirs(LOG_DIR, exist_ok=True)
-
-
-def _log(raw: str) -> None:
-    """
-    Append `raw` to backend_autostart.log with a UTC timestamp, flush immediately.
-    We fsync so a different process (Streamlit) can read live.
-    """
-    _ensure_logdir()
-    stamp = datetime.utcnow().isoformat() + "Z"
-    line = f"[{stamp}] {raw.rstrip()}\n"
-    with open(LOG_PATH, "a", encoding="utf-8") as fh:
-        fh.write(line)
-        fh.flush()
-        os.fsync(fh.fileno())
-
-
-def _load_env() -> None:
-    """
-    Load .env so ALPACA_* creds, mode flags (paper/live), DRY_RUN, etc. are
-    available before importing backend.api. If python-dotenv isn't present, log a
-    warning but continue.
-    """
-    try:
-        from dotenv import load_dotenv  # python-dotenv must be in requirements
-    except Exception as e:
-        _log(f"WARNING: python-dotenv import failed ({e}); continuing anyway")
-        return
-
-    try:
-        loaded = load_dotenv()  # will search for .env automatically
-        _log(f"Loaded .env into process environment (loaded={loaded})")
-    except Exception as e:
-        _log(f"WARNING: load_dotenv() raised {e!r}; continuing anyway")
-
-
-def _log_runtime_env_snapshot() -> None:
-    """
-    Dump a minimal snapshot of runtime config so we can tell if we're in paper vs
-    live, etc. Redact anything that looks secret.
-    """
-    keys_of_interest = []
-    for k in os.environ.keys():
-        # grab broker / mode / alpaca - but don't spam entire environment
-        if k.upper().startswith("ALPACA") or "BROKER" in k.upper() or "PAPER" in k.upper() or "DRY" in k.upper():
-            keys_of_interest.append(k)
-
-    if not keys_of_interest:
-        _log("No interesting runtime env vars (ALPACA_*, *_BROKER*, PAPER, DRY*) found to log")
-        return
-
-    _log("Runtime env snapshot:")
-    for k in sorted(keys_of_interest):
-        v = os.environ.get(k, "")
-        redacted = v
-        if "SECRET" in k.upper() or "KEY" in k.upper() or "TOKEN" in k.upper():
-            if len(v) > 4:
-                redacted = v[:2] + "****" + v[-2:]
-            else:
-                redacted = "****"
-        _log(f"  {k} = {redacted}")
+def log(line: str) -> None:
+    with AUTOSTART_LOG.open("a", encoding="utf-8") as f:
+        f.write(f"[{_ts()}] {line}\n")
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def main() -> None:
-    _ensure_logdir()
+    log("=== backend_autostart begin ===")
+    log(f"python exe: {VENV_PY}")
+    log(f"cwd: {ROOT}")
+    log(f"Attempting to launch uvicorn for {API_MODULE} on {HOST}:{PORT} ...")
 
-    # Banner header every launch
-    _log("=== START backend_autostart ===")
+    if PID_FILE.exists():
+        PID_FILE.unlink()
+    if EXIT_FILE.exists():
+        EXIT_FILE.unlink()
 
-    # Log launcher PID, python, cwd. This helps us correlate with Streamlit.
-    _log(f"Launcher PID: {os.getpid()}")
-    _log(f"Python exec: {sys.executable}")
-    _log(f"CWD: {os.getcwd()}")
+    sep = f"\n----- NEW LAUNCH {_ts()} -----\n"
 
-    # Pull in .env BEFORE uvicorn imports backend.api:app.
-    _load_env()
-    _log_runtime_env_snapshot()
+    with BACKEND_OUT_LOG.open("a", buffering=1, encoding="utf-8") as out_fh, BACKEND_ERR_LOG.open(
+        "a", buffering=1, encoding="utf-8"
+    ) as err_fh:
+        out_fh.write(sep)
+        err_fh.write(sep)
+        out_fh.flush()
+        err_fh.flush()
 
-    _log("Attempting to launch uvicorn for backend.api:app on 127.0.0.1:8000 ...")
+        cmd = [
+            str(VENV_PY),
+            "-m",
+            "uvicorn",
+            API_MODULE,
+            "--host",
+            HOST,
+            "--port",
+            PORT,
+            "--log-level",
+            "info",
+        ]
 
-    crashed = False
-    crash_tb_lines: list[str] = []
-    try:
-        # uvicorn.run blocks until the server stops or fails.
-        uvicorn.run(
-            "backend.api:app",
-            host="127.0.0.1",
-            port=8000,
-            reload=False,
-            log_level="info",
-        )
-    except Exception as e:
-        crashed = True
-        _log("!!! uvicorn.run() RAISED AN EXCEPTION !!!")
-        _log(f"Exception type: {type(e).__name__}")
-        _log(f"Exception str: {e}")
-        crash_tb_lines = traceback.format_exc().splitlines()
-    finally:
-        if crashed:
-            _log("Traceback begins:")
-            for line in crash_tb_lines:
-                _log(line)
-            _log("Traceback ends.")
-        else:
-            _log("uvicorn.run() returned (server exited or stopped without throwing).")
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-        _log("backend_autostart.py exiting now.")
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=ROOT,
+                env=os.environ.copy(),
+                stdout=out_fh,
+                stderr=err_fh,
+                stdin=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+        except Exception as e:  # noqa: BLE001 - best effort logging
+            log(f"FATAL: could not spawn uvicorn: {e!r}")
+            err_fh.write(f"FATAL: could not spawn uvicorn: {e!r}\n")
+            err_fh.flush()
+            return
+
+        with PID_FILE.open("w", encoding="utf-8") as f:
+            f.write(str(proc.pid))
+        log(f"Spawned uvicorn PID={proc.pid}")
+
+        time.sleep(1.5)
+
+        retcode = proc.poll()
+        if retcode is None:
+            log(f"PID {proc.pid} appears alive after grace period.")
+            return
+
+        with EXIT_FILE.open("w", encoding="utf-8") as f:
+            f.write(str(retcode))
+        log(f"PID {proc.pid} exited early with code {retcode}")
+        out_fh.flush()
+        err_fh.flush()
 
 
 if __name__ == "__main__":

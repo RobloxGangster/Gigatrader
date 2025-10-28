@@ -5,6 +5,7 @@ import sys
 import time
 import signal
 import subprocess
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import requests
@@ -39,6 +40,14 @@ STRATEGY_LABELS: Dict[str, str] = {
 BACKEND_URL = "http://127.0.0.1:8000"
 
 _SESSION_PID_KEY = "backend.pid"
+
+ROOT = Path(__file__).resolve().parents[2]
+LOG_DIR = ROOT / "logs"
+PID_FILE = LOG_DIR / "backend.pid"
+EXIT_FILE = LOG_DIR / "backend.exitcode"
+AUTOSTART_LOG = LOG_DIR / "backend_autostart.log"
+BACKEND_ERR_LOG = LOG_DIR / "backend.err.log"
+BACKEND_OUT_LOG = LOG_DIR / "backend.out.log"
 
 
 def _pid_is_alive(pid: Optional[int]) -> bool:
@@ -75,21 +84,87 @@ def _pid_is_alive(pid: Optional[int]) -> bool:
         return False
 
 
-def _read_backend_log_tail(max_lines: int = 200) -> str:
-    """
-    Return the last ~max_lines lines of logs/backend_autostart.log.
-    This file is continuously appended to (fsync'd) by scripts/start_backend.py.
-    """
-    path = os.path.join("logs", "backend_autostart.log")
-    if not os.path.exists(path):
-        return "(no backend_autostart.log yet)"
+def _read_text(path: Path, default: str = "") -> str:
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            lines = fh.readlines()
-        tail = lines[-max_lines:]
-        return "".join(tail).rstrip()
-    except Exception as e:
-        return f"(error reading backend_autostart.log: {e})"
+        return path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return default
+
+
+def _tail_lines(txt: str, n: int = 200) -> str:
+    lines = txt.splitlines()
+    if not lines:
+        return txt
+    return "\n".join(lines[-n:])
+
+
+def _get_pid_status() -> Tuple[Optional[int], bool, Optional[str], str]:
+    pid: Optional[int] = None
+    if PID_FILE.exists():
+        try:
+            raw = PID_FILE.read_text(encoding="utf-8").strip()
+            if raw:
+                pid = int(raw)
+        except Exception:
+            pid = None
+
+    crashed = False
+    exit_code: Optional[str] = None
+    if EXIT_FILE.exists():
+        crashed = True
+        try:
+            exit_code = EXIT_FILE.read_text(encoding="utf-8").strip() or None
+        except Exception:
+            exit_code = "?"
+
+    alive = False
+    if pid and not crashed:
+        alive = _pid_is_alive(pid)
+
+    status_label = "unknown"
+    if alive and pid:
+        status_label = f"running (PID {pid})"
+    elif crashed and pid:
+        status_label = f"crashed (PID {pid}, exit {exit_code})"
+    elif crashed and not pid:
+        status_label = f"crashed (PID ?, exit {exit_code})"
+    elif pid:
+        status_label = f"not running (stale PID {pid})"
+    else:
+        status_label = "not running"
+
+    return pid, crashed, exit_code, status_label
+
+
+def render_backend_process_panel() -> None:
+    st.subheader("Backend Process")
+
+    pid, crashed, exit_code, status_label = _get_pid_status()
+    st.text(f"Status: {status_label}")
+    st.text(f"PID file contents: {pid if pid is not None else '(none)'}")
+    if crashed:
+        st.text(f"Exit code: {exit_code if exit_code is not None else '(unknown)'}")
+
+    st.caption("backend_autostart.log tail:")
+    auto_tail = _tail_lines(
+        _read_text(AUTOSTART_LOG, default="(no backend_autostart.log found)"),
+        n=200,
+    )
+    st.code(auto_tail or "(empty)", language="text")
+
+    st.caption("backend.err.log tail (uvicorn stderr):")
+    err_tail = _tail_lines(
+        _read_text(BACKEND_ERR_LOG, default="(no backend.err.log yet)"),
+        n=200,
+    )
+    st.code(err_tail or "(empty)", language="text")
+
+    with st.expander("backend.out.log tail (uvicorn stdout)", expanded=False):
+        out_tail = _tail_lines(
+            _read_text(BACKEND_OUT_LOG, default="(no backend.out.log yet)"),
+            n=200,
+        )
+        st.code(out_tail or "(empty)", language="text")
 
 
 def _spawn_backend_if_needed() -> int:
@@ -932,16 +1007,7 @@ def render(
     if pid and not _pid_is_alive(pid):
         st.session_state.pop(_SESSION_PID_KEY, None)
 
-    pid = st.session_state.get(_SESSION_PID_KEY)
-    alive = _pid_is_alive(pid)
-    pid_label = f"{pid} ({'alive' if alive else 'dead'})" if pid else "(none)"
-
-    with st.container():
-        st.markdown("### Backend Process")
-        st.write("**PID:**", pid_label)
-
-        st.write("**backend_autostart.log (tail):**")
-        st.code(_read_backend_log_tail(), language="text")
+    render_backend_process_panel()
 
     # Probe backend: we require /health AND /broker/status to both succeed.
     is_up, health_info, err_msg = probe_backend(BACKEND_URL, timeout_sec=3.0)
