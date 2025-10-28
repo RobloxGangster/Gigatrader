@@ -47,24 +47,23 @@ def _note_port_holder(holder_info: str) -> None:
 
 def _ensure_port_free(host: str, port: int) -> None:
     """
-    Make sure (host, port) is not already bound before we launch uvicorn.
-    Prefer psutil to find and kill the listener.
-    If psutil is not available, fall back to Windows netstat/taskkill.
-    Write all findings to backend.portdebug.log for visibility in the UI.
+    Guarantee that (host, port) is free before we spawn uvicorn.
+    1. Try psutil to find any listener on host:port, kill it.
+    2. If psutil didn't run or found nothing, fall back to Windows netstat+taskkill.
+    3. Log *everything* we discover to backend.portdebug.log so the UI can display it.
     """
     offenders = []
 
-    # First attempt: psutil
-    psutil_ok = False
+    # Try psutil first
     try:
         import psutil
-        psutil_ok = True
         for proc in psutil.process_iter(attrs=["pid", "name"]):
             try:
                 conns = proc.connections(kind="inet")
             except Exception:
                 continue
             for c in conns:
+                # We only care about LISTEN sockets that match (host, port)
                 if (
                     c.laddr
                     and len(c.laddr) == 2
@@ -75,40 +74,43 @@ def _ensure_port_free(host: str, port: int) -> None:
                     offenders.append((proc.pid, proc.info.get("name", "?"), "psutil"))
                     break
     except Exception as e:
-        _log(f"psutil scan failed: {e!r}")
+        _log(f"[CLEANUP] psutil scan failed: {e!r}")
+        _note_port_holder(f"[CLEANUP] psutil scan failed: {e!r}")
 
-    # Fallback if psutil not available or found nothing
+    # Fallback using netstat if we still don't have offenders
     if not offenders:
-        # On Windows, netstat -ano will list the PID listening on :8000
-        # We'll parse any LISTENING line with the matching local endpoint.
         try:
             import subprocess, re
             cmd = ["netstat", "-ano"]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
             if result.returncode == 0:
-                pattern = re.compile(rf"^\s*TCP\s+{re.escape(host)}:{port}\s+[\d\.:]*\s+LISTENING\s+(\d+)\s*$",
-                                     re.IGNORECASE | re.MULTILINE)
+                # Look for a LISTENING line matching "TCP  127.0.0.1:8000  ...  LISTENING  <PID>"
+                pattern = re.compile(
+                    rf"^\s*TCP\s+{re.escape(host)}:{port}\s+\S+\s+LISTENING\s+(\d+)\s*$",
+                    re.IGNORECASE | re.MULTILINE,
+                )
                 for m in pattern.finditer(result.stdout):
                     pid_str = m.group(1)
                     if pid_str:
                         offenders.append((int(pid_str), "unknown", "netstat"))
         except Exception as e:
-            _log(f"netstat fallback failed: {e!r}")
+            _log(f"[CLEANUP] netstat fallback failed: {e!r}")
+            _note_port_holder(f"[CLEANUP] netstat fallback failed: {e!r}")
 
     if not offenders:
-        _log(f"No existing listener detected on {host}:{port}")
-        _note_port_holder(f"[CLEANUP] No listener found on {host}:{port}")
+        _log(f"[CLEANUP] No existing listener on {host}:{port}")
+        _note_port_holder(f"[CLEANUP] No existing listener on {host}:{port}")
         return
 
-    # Try to terminate all offenders
+    # Kill every offender we saw
     for (pid, name, source) in offenders:
-        msg = f"[CLEANUP] Found existing listener on {host}:{port} -> PID {pid} ({name}) via {source}"
+        msg = f"[CLEANUP] Found listener on {host}:{port} -> PID {pid} ({name}) via {source}"
         _log(msg)
         _note_port_holder(msg)
 
         killed = False
 
-        # If we have psutil, prefer graceful terminate/kill
+        # Try graceful terminate/kill via psutil if it's there
         try:
             import psutil
             try:
@@ -119,8 +121,9 @@ def _ensure_port_free(host: str, port: int) -> None:
                     killed = True
                 except Exception:
                     pass
+
                 if p.is_running():
-                    _log(f"[CLEANUP] PID {pid} still running after terminate(); forcing kill()")
+                    _log(f"[CLEANUP] PID {pid} still alive after terminate(); forcing kill().")
                     p.kill()
                     try:
                         p.wait(timeout=3)
@@ -130,10 +133,10 @@ def _ensure_port_free(host: str, port: int) -> None:
             except Exception as e:
                 _log(f"[CLEANUP] psutil terminate/kill failed for PID {pid}: {e!r}")
         except Exception:
-            # psutil might not be importable, skip this block
+            # psutil import might fail, that's okay
             pass
 
-        # If still not killed, try taskkill /F (Windows hard kill)
+        # If it's *still* running, hard kill with taskkill /F
         if not killed:
             try:
                 import subprocess
@@ -143,18 +146,26 @@ def _ensure_port_free(host: str, port: int) -> None:
                     text=True,
                     timeout=3,
                 )
-                _log(f"[CLEANUP] taskkill /PID {pid} /F rc={tk.returncode} out={tk.stdout!r} err={tk.stderr!r}")
+                _log(
+                    f"[CLEANUP] taskkill /PID {pid} /F -> rc={tk.returncode} "
+                    f"out={tk.stdout!r} err={tk.stderr!r}"
+                )
                 if tk.returncode == 0:
                     killed = True
             except Exception as e:
                 _log(f"[CLEANUP] taskkill failed for PID {pid}: {e!r}")
 
         if killed:
-            _log(f"[CLEANUP] PID {pid} appears terminated.")
+            _log(f"[CLEANUP] PID {pid} terminated successfully.")
+            _note_port_holder(f"[CLEANUP] PID {pid} terminated.")
         else:
-            _log(f"[CLEANUP] WARNING: PID {pid} may still be alive and holding {host}:{port}.")
+            _log(f"[CLEANUP] WARNING: PID {pid} may still be holding {host}:{port}.")
+            _note_port_holder(
+                f"[CLEANUP] WARNING: PID {pid} may still be holding {host}:{port}."
+            )
 
-    _log(f"Port cleanup pass complete for {host}:{port}")
+    _log(f"[CLEANUP] Port {host}:{port} cleanup pass complete.")
+    _note_port_holder(f"[CLEANUP] Port {host}:{port} cleanup complete.")
 
 def main() -> None:
     _log("=== backend_autostart begin ===")
