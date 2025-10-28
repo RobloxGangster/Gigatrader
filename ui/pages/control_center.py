@@ -313,9 +313,12 @@ def _render_status_header(
     env_profile: str,
     env_broker: str,
 ) -> None:
-    orch_status = orchestrator_debug.get("status", orchestrator)
-    if not isinstance(orch_status, dict):
-        orch_status = orchestrator
+    orch_status: Dict[str, Any] = {}
+    if isinstance(orchestrator, dict):
+        orch_status.update(orchestrator)
+    debug_status = orchestrator_debug.get("status")
+    if isinstance(debug_status, dict):
+        orch_status.update(debug_status)
 
     profile_label = env_profile.title()
     broker_label = str(env_broker or "unknown").title()
@@ -323,28 +326,41 @@ def _render_status_header(
     stream_source = "offline"
     kill_switch_label = "Unknown"
     kill_switch_engaged = False
+    kill_switch_reason = None
+    can_trade = False
+    trade_guard_reason = None
 
     if backend_up:
         runtime_profile = runtime_flags.get("profile") if isinstance(runtime_flags, dict) else None
-        profile_value = runtime_profile or health.get("profile") or orch_status.get("profile")
+        profile_value = runtime_profile or orch_status.get("profile") or health.get("profile")
         if isinstance(profile_value, str) and profile_value:
             profile_label = ("Live" if profile_value.lower() == "live" else "Paper")
         runtime_broker = runtime_flags.get("broker") if isinstance(runtime_flags, dict) else None
-        broker_value = runtime_broker or health.get("broker") or orch_status.get("broker_impl")
+        broker_value = runtime_broker or orch_status.get("broker_impl") or health.get("broker")
         if broker_value is not None:
             broker_label = str(broker_value).title()
-        run_state = str(
-            health.get("orchestrator_state") or orch_status.get("state") or "Unknown"
+        run_state = str(orch_status.get("state") or health.get("orchestrator_state") or "Unknown")
+        stream_source = str(
+            orch_status.get("market_data_source")
+            or health.get("stream_source")
+            or stream.get("source")
+            or "unknown"
         )
-        stream_source = str(health.get("stream_source") or stream.get("source") or "unknown")
         kill_switch_label = (
-            health.get("kill_switch")
-            or orch_status.get("kill_switch")
+            orch_status.get("kill_switch")
+            or health.get("kill_switch")
             or ("Engaged" if orchestrator.get("kill_switch") else "Standby")
         )
         kill_switch_engaged = bool(
             orch_status.get("kill_switch_engaged", orchestrator.get("kill_switch"))
         )
+        kill_switch_reason = (
+            orch_status.get("kill_switch_reason")
+            or health.get("kill_switch_reason")
+            or orchestrator.get("kill_switch_reason")
+        )
+        can_trade = bool(orch_status.get("can_trade"))
+        trade_guard_reason = orch_status.get("trade_guard_reason")
 
     cols = st.columns(5)
     cols[0].metric("Profile", profile_label)
@@ -366,7 +382,8 @@ def _render_status_header(
     elif isinstance(stream, dict):
         stream_details = stream
     stream_source_detail = (
-        health.get("stream_source")
+        orch_status.get("market_data_source")
+        or health.get("stream_source")
         or stream_details.get("source")
         or stream.get("source")
     )
@@ -431,6 +448,10 @@ def _render_status_header(
         exec_variant = "warning"
         exec_label = "Dry Run"
         exec_caption += " (dry_run=true)"
+    elif not can_trade and trade_guard_reason:
+        exec_variant = "warning"
+        exec_label = "Blocked"
+        exec_caption += f" (guard: {trade_guard_reason})"
     status_pill("Execution", exec_label, variant=exec_variant)
     st.caption(exec_caption)
     if runtime_dry_run:
@@ -445,7 +466,12 @@ def _render_status_header(
             st.code("\n".join(tail_preview) or "No execution debug logs yet.")
 
     if kill_switch_engaged:
-        st.warning("KILL SWITCH ACTIVE — trading disabled until reset.")
+        reason_msg = "KILL SWITCH ACTIVE — trading disabled until reset."
+        if kill_switch_reason:
+            reason_msg = f"{reason_msg}\nReason: {kill_switch_reason}"
+        st.warning(reason_msg)
+    elif not can_trade and trade_guard_reason:
+        st.info(f"Execution guarded by {trade_guard_reason}. Enable trading to send orders.")
 
 
 def _render_metrics(
@@ -701,8 +727,9 @@ def _render_runbook(orchestrator: Dict[str, Any], api: ApiClient) -> None:
     cols = st.columns(4)
     if cols[0].button("Reset Kill Switch", key="cc_reset_kill"):
         try:
-            api.risk_reset_kill_switch()
+            api.orchestrator_reset_kill_switch()
             st.success("Kill switch reset")
+            _schedule_status_poll()
         except Exception as exc:  # noqa: BLE001
             st.error(f"Kill switch reset failed: {exc}")
     if cols[1].button("Cancel All", key="cc_cancel_all"):
@@ -724,8 +751,13 @@ def _render_runbook(orchestrator: Dict[str, Any], api: ApiClient) -> None:
         except Exception as exc:  # noqa: BLE001
             st.error(f"Diagnostics failed: {exc}")
 
-    if orchestrator.get("kill_switch"):
-        st.warning("Kill switch is engaged — trading halted until reset.")
+    kill_engaged = bool(orchestrator.get("kill_switch_engaged"))
+    if kill_engaged:
+        reason = orchestrator.get("kill_switch_reason")
+        msg = "Kill switch is engaged — trading halted until reset."
+        if reason:
+            msg = f"{msg} Reason: {reason}."
+        st.warning(msg)
 
 
 def _render_tables(

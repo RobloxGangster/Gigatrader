@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
+from collections import deque
 from contextlib import suppress
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Deque, Dict, List, Optional
 
 from core.kill_switch import KillSwitch
 from core.runtime_flags import get_runtime_flags
@@ -87,12 +88,14 @@ class OrchestratorSupervisor:
         self._last_heartbeat: datetime | None = None
         self._start_time: datetime | None = None
         self._restart_count = 0
+        self._kill_switch_events: Deque[Dict[str, Any]] = deque(maxlen=50)
         global _CURRENT_SUPERVISOR
         _CURRENT_SUPERVISOR = self
 
     def status(self) -> dict[str, Any]:
         """Return a thread-safe status snapshot."""
 
+        flags = get_runtime_flags()
         last_error = self._last_error_stack or self._last_error
         heartbeat = (
             self._last_heartbeat.isoformat()
@@ -105,14 +108,36 @@ class OrchestratorSupervisor:
                 0.0,
                 (datetime.now(timezone.utc) - self._start_time).total_seconds(),
             )
+        kill_snapshot = self._kill_switch_snapshot()
+        kill_engaged = bool(kill_snapshot.get("engaged"))
+        kill_reason = kill_snapshot.get("reason")
+        allowed, guard_reason = can_execute_trade(flags, kill_engaged)
+        broker_impl = (
+            "MockBrokerAdapter" if getattr(flags, "mock_mode", False) else "AlpacaBrokerAdapter"
+        )
+        uptime_label = f"{uptime:.2f}s"
         return {
             "state": self._state,
             "running": self._state == "running",
             "last_error": last_error,
             "last_heartbeat": heartbeat,
             "uptime_secs": uptime,
+            "uptime": uptime_label,
             "restart_count": self._restart_count,
-            "kill_switch": self._kill_switch.engaged_sync(),
+            "kill_switch": "Engaged" if kill_engaged else "Standby",
+            "kill_switch_engaged": kill_engaged,
+            "kill_switch_reason": kill_reason,
+            "kill_switch_engaged_at": kill_snapshot.get("engaged_at"),
+            "kill_switch_can_reset": (not kill_engaged)
+            or not self._is_hard_violation(kill_reason),
+            "kill_switch_history": self.kill_switch_history(),
+            "can_trade": allowed,
+            "trade_guard_reason": guard_reason,
+            "market_data_source": getattr(flags, "market_data_source", "mock"),
+            "broker_impl": broker_impl,
+            "profile": getattr(flags, "profile", "paper"),
+            "dry_run": getattr(flags, "dry_run", False),
+            "mock_mode": getattr(flags, "mock_mode", False),
         }
 
     async def start(self) -> None:
@@ -139,7 +164,7 @@ class OrchestratorSupervisor:
             self._state = "stopped"
             log.info("orchestrator.stop requested")
         try:
-            self._kill_switch.engage_sync()
+            self._kill_switch.engage_sync(reason="orchestrator_stopped")
         except Exception:  # pragma: no cover - defensive guard
             log.exception("orchestrator.stop kill-switch failed")
         if task:
@@ -170,7 +195,7 @@ class OrchestratorSupervisor:
         log.info("orchestrator.supervisor.stopped")
 
     async def _run_worker_once(self) -> None:
-        self._kill_switch.reset_sync()
+        self.safe_arm_trading(requested_by="worker_boot")
         self.mark_tick()
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
@@ -194,36 +219,92 @@ class OrchestratorSupervisor:
     def mark_tick(self) -> None:
         self._last_heartbeat = datetime.now(timezone.utc)
 
+    def kill_switch_history(self) -> List[Dict[str, Any]]:
+        return list(self._kill_switch_events)
+
+    def _record_kill_switch_event(
+        self,
+        action: str,
+        *,
+        reason: Optional[str] = None,
+        requested_by: Optional[str] = None,
+    ) -> None:
+        event = {"ts": _iso_now(), "action": action}
+        if reason:
+            event["reason"] = reason
+        if requested_by:
+            event["requested_by"] = requested_by
+        self._kill_switch_events.appendleft(event)
+
+    @staticmethod
+    def _is_hard_violation(reason: Optional[str]) -> bool:
+        if not reason:
+            return False
+        return reason.startswith("risk:") or reason.startswith("breaker:")
+
+    def _kill_switch_snapshot(self) -> Dict[str, Any]:
+        try:
+            info = self._kill_switch.info_sync()
+        except Exception:  # pragma: no cover - defensive snapshot guard
+            info = {"engaged": self._kill_switch.engaged_sync(), "reason": None, "engaged_at": None}
+        if "engaged" not in info:
+            info["engaged"] = self._kill_switch.engaged_sync()
+        return info
+
+    def reset_kill_switch(
+        self,
+        *,
+        requested_by: Optional[str] = None,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        snapshot = self._kill_switch_snapshot()
+        engaged = bool(snapshot.get("engaged"))
+        reason = snapshot.get("reason") if isinstance(snapshot.get("reason"), str) else None
+        if not engaged:
+            return snapshot
+        if not force and self._is_hard_violation(reason):
+            self._record_kill_switch_event("reset_blocked", reason=reason, requested_by=requested_by)
+            return snapshot
+        self._kill_switch.reset_sync()
+        updated = self._kill_switch_snapshot()
+        self._record_kill_switch_event("reset", reason=reason, requested_by=requested_by)
+        return updated
+
+    def safe_arm_trading(self, *, requested_by: str = "supervisor") -> Dict[str, Any]:
+        return self.reset_kill_switch(requested_by=requested_by, force=False)
+
 
 def get_orchestrator_status() -> Dict[str, Any]:
     supervisor = _CURRENT_SUPERVISOR
-    snapshot: Dict[str, Any] = {}
     if supervisor is not None:
         try:
-            snapshot = supervisor.status()
+            return supervisor.status()
         except Exception:  # pragma: no cover - defensive snapshot guard
-            snapshot = {}
+            log.exception("orchestrator.status_snapshot_failed")
     flags = get_runtime_flags()
-    kill_switch_engaged = False
-    if supervisor is not None:
-        try:
-            kill_switch_engaged = supervisor._kill_switch.engaged_sync()
-        except Exception:  # pragma: no cover - defensive
-            kill_switch_engaged = bool(snapshot.get("kill_switch"))
-    uptime_secs = snapshot.get("uptime_secs")
-    uptime_label: str | None = None
-    if isinstance(uptime_secs, (int, float)):
-        uptime_label = f"{uptime_secs:.2f}s"
-    broker_impl = "MockBrokerAdapter" if getattr(flags, "mock_mode", False) else "AlpacaBrokerAdapter"
+    kill_info = KillSwitch().info_sync()
+    kill_engaged = bool(kill_info.get("engaged"))
+    allowed, guard_reason = can_execute_trade(flags, kill_engaged)
+    broker_impl = (
+        "MockBrokerAdapter" if getattr(flags, "mock_mode", False) else "AlpacaBrokerAdapter"
+    )
     return {
-        "state": snapshot.get("state", "stopped"),
-        "running": bool(snapshot.get("running")),
-        "last_error": snapshot.get("last_error"),
-        "last_heartbeat": snapshot.get("last_heartbeat"),
-        "uptime": uptime_label,
-        "restart_count": snapshot.get("restart_count"),
-        "kill_switch": "Engaged" if kill_switch_engaged else "Standby",
-        "kill_switch_engaged": kill_switch_engaged,
+        "state": "stopped",
+        "running": False,
+        "last_error": None,
+        "last_heartbeat": None,
+        "uptime_secs": 0.0,
+        "uptime": "0.00s",
+        "restart_count": 0,
+        "kill_switch": "Engaged" if kill_engaged else "Standby",
+        "kill_switch_engaged": kill_engaged,
+        "kill_switch_reason": kill_info.get("reason"),
+        "kill_switch_engaged_at": kill_info.get("engaged_at"),
+        "kill_switch_can_reset": (not kill_engaged)
+        or not OrchestratorSupervisor._is_hard_violation(kill_info.get("reason")),
+        "kill_switch_history": [],
+        "can_trade": allowed,
+        "trade_guard_reason": guard_reason,
         "market_data_source": getattr(flags, "market_data_source", "mock"),
         "broker_impl": broker_impl,
         "profile": getattr(flags, "profile", "paper"),

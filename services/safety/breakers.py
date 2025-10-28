@@ -153,7 +153,8 @@ def enforce_breakers(now: datetime, kill_switch: KillSwitch) -> List[str]:
     if trips:
         _alert_breaker_trip(trips, now)
         try:
-            kill_switch.engage_sync()
+            reason = f"breaker:{','.join(trips)}"
+            kill_switch.engage_sync(reason=reason)
         except Exception:  # noqa: BLE001
             log.exception("failed to engage kill switch after breaker trip")
     return trips
