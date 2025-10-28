@@ -1244,12 +1244,12 @@ def paper_start_help():
 
 @app.post("/paper/stop")
 def paper_stop():
-    _kill_switch.engage_sync()
+    _kill_switch.engage_sync(reason="paper_stop")
     return {"ok": True}
 
 @app.post("/paper/flatten")
 def paper_flatten():
-    _kill_switch.engage_sync()
+    _kill_switch.engage_sync(reason="paper_flatten")
     try:
         subprocess.check_call([sys.executable, "backend/tools/flatten_all.py"])
     except Exception:

@@ -66,6 +66,7 @@ async def health(stream: StreamService = Depends(get_stream_manager)) -> Dict[st
 
     orchestrator_state = str(orch_snapshot.get("state", "stopped")).title()
     kill_label = orch_snapshot.get("kill_switch")
+    kill_reason = orch_snapshot.get("kill_switch_reason")
     if not isinstance(kill_label, str) or not kill_label:
         engaged = bool(orch_snapshot.get("kill_switch_engaged"))
         kill_label = "Triggered" if engaged else "Standby"
@@ -89,6 +90,8 @@ async def health(stream: StreamService = Depends(get_stream_manager)) -> Dict[st
         "orchestrator": orch_snapshot,
         "kill_switch": kill_label,
         "kill_switch_engaged": bool(orch_snapshot.get("kill_switch_engaged")),
+        "kill_switch_reason": kill_reason,
+        "kill_switch_can_reset": bool(orch_snapshot.get("kill_switch_can_reset", True)),
         "mock_mode": bool(getattr(flags, "mock_mode", False)),
         "dry_run": bool(getattr(flags, "dry_run", False)),
         "profile": getattr(flags, "profile", "paper"),

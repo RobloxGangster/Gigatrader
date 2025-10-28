@@ -176,6 +176,7 @@ async def health() -> Dict[str, Any]:
     kill_label = orchestrator_snapshot.get("kill_switch") or (
         "Triggered" if orchestrator_snapshot.get("kill_switch_engaged") else "Standby"
     )
+    kill_reason = orchestrator_snapshot.get("kill_switch_reason")
 
     payload: Dict[str, Any] = {
         "status": "ok",
@@ -186,6 +187,10 @@ async def health() -> Dict[str, Any]:
         "orchestrator_state": orchestrator_state,
         "kill_switch": kill_label,
         "kill_switch_engaged": bool(orchestrator_snapshot.get("kill_switch_engaged", False)),
+        "kill_switch_reason": kill_reason,
+        "kill_switch_can_reset": bool(orchestrator_snapshot.get("kill_switch_can_reset", True)),
+        "can_trade": bool(orchestrator_snapshot.get("can_trade", False)),
+        "trade_guard_reason": orchestrator_snapshot.get("trade_guard_reason"),
         "dry_run": dry_run_flag,
         "paper_mode": paper_mode_flag,
         "mock_mode": mock_mode_flag,
@@ -336,7 +341,7 @@ _register_compat_route("/paper/stop", paper_stop, ["POST"], tag="paper")
 
 @app.post("/paper/flatten")
 def flatten_and_halt():
-    get_kill_switch().engage_sync()
+    get_kill_switch().engage_sync(reason="manual_flatten")
     return {"ok": True, "halted": True}
 
 

@@ -121,7 +121,7 @@ async def _orchestrator_loop(backend_proc: subprocess.Popen[Any], launcher_log: 
         raise
     finally:
         with suppress(Exception):
-            get_kill_switch().engage_sync()
+            get_kill_switch().engage_sync(reason="cli_stop")
         with suppress(Exception):
             await orchestrator.stop()
         _log(launcher_log, "[run_trader] orchestrator supervisor stopped")

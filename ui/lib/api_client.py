@@ -255,6 +255,14 @@ class ApiClient:
                 return self.post("/paper/stop")
             raise
 
+    def orchestrator_reset_kill_switch(self) -> Any:
+        try:
+            return self.post("/orchestrator/reset_kill_switch")
+        except HTTPError as exc:
+            if exc.response is not None and exc.response.status_code in {404, 405}:
+                return self.post("/risk/killswitch/reset")
+            raise
+
     def orchestrator_reconcile(self) -> Any:
         try:
             return self.post("/orchestrator/reconcile")
