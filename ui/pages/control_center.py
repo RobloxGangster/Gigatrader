@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 import requests
 import streamlit as st
 
-# optional psutil for liveness
+# psutil is optional. If it's not available, we'll degrade gracefully.
 try:
     import psutil  # type: ignore
 except Exception:
@@ -43,36 +43,43 @@ _SESSION_PID_KEY = "backend.pid"
 
 def _pid_is_alive(pid: Optional[int]) -> bool:
     """
-    Best-effort check if a PID is still running.
+    Return True if a process with this PID still appears to be running.
     Prefer psutil if available. Fallback to os.kill semantics.
     """
     if not pid:
         return False
 
+    # psutil path first (most reliable cross-platform)
     if psutil is not None:
         try:
             proc = psutil.Process(pid)
             if not proc.is_running():
                 return False
-            # avoid zombies on POSIX
+            # Avoid treating zombies as alive on POSIX
             if getattr(psutil, "STATUS_ZOMBIE", None) and proc.status() == psutil.STATUS_ZOMBIE:
                 return False
             return True
         except Exception:
             return False
 
-    # Fallback path: os.kill(pid, 0) is a common check on POSIX. On Windows it may
-    # raise PermissionError for "access denied", which we treat as "alive".
+    # no psutil? use os.kill probe
     try:
+        # os.kill(pid, 0) => check signal delivery without killing (POSIX);
+        # on Windows this raises OSError for dead processes.
         os.kill(pid, 0)
         return True
     except PermissionError:
+        # access denied still means "something is there"
         return True
     except Exception:
         return False
 
 
 def _read_backend_log_tail(max_lines: int = 200) -> str:
+    """
+    Return the last ~max_lines lines of logs/backend_autostart.log.
+    This file is continuously appended to (fsync'd) by scripts/start_backend.py.
+    """
     path = os.path.join("logs", "backend_autostart.log")
     if not os.path.exists(path):
         return "(no backend_autostart.log yet)"
@@ -87,12 +94,11 @@ def _read_backend_log_tail(max_lines: int = 200) -> str:
 
 def _spawn_backend_if_needed() -> int:
     """
-    Ensure exactly one backend launcher process is running.
-    If we already have a live PID in session_state[_SESSION_PID_KEY], reuse it.
-    Otherwise spawn a new detached child running scripts/start_backend.py
-    using the SAME Python interpreter Streamlit is using.
-
-    Returns the PID (alive or newly spawned).
+    Ensure we have one backend launcher process running.
+    If we already have a live PID in st.session_state[_SESSION_PID_KEY], reuse it.
+    Otherwise spawn scripts/start_backend.py in a detached process
+    using this same Python interpreter.
+    Return the PID (either reused or new).
     """
     existing_pid = st.session_state.get(_SESSION_PID_KEY)
     if existing_pid and _pid_is_alive(existing_pid):
@@ -123,6 +129,10 @@ def _spawn_backend_if_needed() -> int:
 
 
 def _stop_backend() -> None:
+    """
+    Attempt to kill the backend process recorded in session_state.
+    Clear the PID afterwards.
+    """
     pid = st.session_state.get(_SESSION_PID_KEY)
     if not pid:
         return
@@ -922,6 +932,17 @@ def render(
     if pid and not _pid_is_alive(pid):
         st.session_state.pop(_SESSION_PID_KEY, None)
 
+    pid = st.session_state.get(_SESSION_PID_KEY)
+    alive = _pid_is_alive(pid)
+    pid_label = f"{pid} ({'alive' if alive else 'dead'})" if pid else "(none)"
+
+    with st.container():
+        st.markdown("### Backend Process")
+        st.write("**PID:**", pid_label)
+
+        st.write("**backend_autostart.log (tail):**")
+        st.code(_read_backend_log_tail(), language="text")
+
     # Probe backend: we require /health AND /broker/status to both succeed.
     is_up, health_info, err_msg = probe_backend(BACKEND_URL, timeout_sec=3.0)
 
@@ -935,16 +956,6 @@ def render(
         # Show captured error from the probe
         if err_msg:
             st.warning(f"Health probe error: {err_msg}")
-
-        # Show PID + tail of backend_autostart.log so the user can debug creds / crashes
-        pid = st.session_state.get(_SESSION_PID_KEY)
-        alive = _pid_is_alive(pid) if pid else False
-        pid_line = f"{pid} ({'alive' if alive else 'dead'})" if pid else "(none)"
-
-        st.write("**Process PID:**", pid_line)
-
-        log_tail = _read_backend_log_tail()
-        st.code(log_tail or "(log empty)", language="text")
 
         st.stop()
 
