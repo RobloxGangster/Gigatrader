@@ -275,16 +275,24 @@ def _trim_orders(raw: Iterable[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
 def _trim_positions(raw: Iterable[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for pos in raw or []:
+        qty_value = pos.get("qty") or pos.get("quantity")
         rows.append(
             {
                 "symbol": pos.get("symbol") or pos.get("asset_symbol"),
-                "qty": pos.get("qty") or pos.get("quantity"),
+                "qty": qty_value,
                 "avg_entry_price": pos.get("avg_entry_price") or pos.get("avg_price"),
                 "market_value": pos.get("market_value"),
                 "unrealized_pl": pos.get("unrealized_pl")
                 or pos.get("unrealized_intraday_pl"),
             }
         )
+        if rows[-1]["market_value"] is None:
+            market_price = pos.get("market_price") or pos.get("current_price")
+            try:
+                if market_price is not None and qty_value is not None:
+                    rows[-1]["market_value"] = float(market_price) * float(qty_value)
+            except Exception:  # noqa: BLE001 - defensive conversion
+                rows[-1]["market_value"] = None
     return rows
 
 
@@ -494,41 +502,118 @@ def _render_status_header(
 
 
 def _render_metrics(
-    account: Dict[str, Any], pnl: Dict[str, Any], exposure: Dict[str, Any]
+    account: Dict[str, Any],
+    pnl: Dict[str, Any],
+    exposure: Dict[str, Any],
+    telemetry: Dict[str, Any],
 ) -> None:
     st.subheader("Telemetry")
+    telemetry_snapshot = telemetry if isinstance(telemetry, dict) else {}
+    equity_value = telemetry_snapshot.get("equity")
+    buying_power_value = telemetry_snapshot.get("buying_power")
+    day_pl_value = telemetry_snapshot.get("day_pl")
+
     top = st.columns(3)
-    top[0].metric("Equity", _fmt_money(account.get("equity")))
-    top[1].metric("Cash", _fmt_money(account.get("cash")))
-    top[2].metric("Buying Power", _fmt_money(account.get("buying_power")))
+    top[0].metric(
+        "Equity",
+        _fmt_money(
+            equity_value if equity_value is not None else account.get("equity")
+        ),
+    )
+    top[1].metric(
+        "Buying Power",
+        _fmt_money(
+            buying_power_value
+            if buying_power_value is not None
+            else account.get("buying_power")
+        ),
+    )
+    top[2].metric(
+        "Day PnL",
+        _fmt_signed(
+            day_pl_value
+            if day_pl_value is not None
+            else (pnl.get("day_pl") or pnl.get("cumulative"))
+        ),
+    )
 
     pnl_cols = st.columns(3)
     pnl_cols[0].metric("Realized PnL", _fmt_signed(pnl.get("realized")))
     pnl_cols[1].metric("Unrealized PnL", _fmt_signed(pnl.get("unrealized")))
     pnl_cols[2].metric(
-        "Total PnL", _fmt_signed(pnl.get("cumulative") or pnl.get("day_pl"))
+        "Total PnL",
+        _fmt_signed(
+            pnl.get("cumulative")
+            or pnl.get("day_pl")
+            or day_pl_value
+        ),
     )
 
-    exposure_cols = st.columns(3)
-    exposure_cols[0].metric("Net Exposure", _fmt_money(exposure.get("net")))
-    exposure_cols[1].metric("Gross Exposure", _fmt_money(exposure.get("gross")))
-    symbols = (
-        exposure.get("by_symbol") if isinstance(exposure.get("by_symbol"), list) else []
-    )
-    long_total = 0.0
-    short_total = 0.0
-    for row in symbols:
+    risk_snapshot = telemetry_snapshot.get("risk")
+    if isinstance(risk_snapshot, dict) and risk_snapshot:
+        risk_cols = st.columns(5)
+        kill_engaged = bool(risk_snapshot.get("kill_switch_engaged"))
+        kill_label = "Engaged" if kill_engaged else "Standby"
+        risk_cols[0].metric("Kill Switch", kill_label)
+        risk_cols[1].metric(
+            "Daily Loss Limit", _fmt_money(risk_snapshot.get("daily_loss_limit"))
+        )
+        risk_cols[2].metric(
+            "Max Portfolio",
+            _fmt_money(risk_snapshot.get("max_portfolio_notional")),
+        )
         try:
-            notional = float(row.get("notional", 0.0))
+            max_positions = int(float(risk_snapshot.get("max_positions", 0) or 0))
         except Exception:  # noqa: BLE001 - defensive conversion
-            notional = 0.0
-        if notional >= 0:
-            long_total += notional
-        else:
-            short_total += notional
-    exposure_cols[2].metric(
-        "Long / Short", f"{_fmt_money(long_total)} · {_fmt_money(short_total)}"
-    )
+            max_positions = risk_snapshot.get("max_positions") or 0
+        risk_cols[3].metric("Max Positions", str(max_positions))
+        cooldown_label = "Active" if risk_snapshot.get("cooldown_active") else "Idle"
+        risk_cols[4].metric("Cooldown", cooldown_label)
+        reason = risk_snapshot.get("kill_switch_reason")
+        if reason:
+            st.caption(f"Kill switch reason: {reason}")
+
+    orchestrator_snapshot = telemetry_snapshot.get("orchestrator")
+    if isinstance(orchestrator_snapshot, dict) and orchestrator_snapshot:
+        orch_cols = st.columns(3)
+        orch_state = str(orchestrator_snapshot.get("state") or "stopped").title()
+        orch_cols[0].metric("Orchestrator", orch_state)
+        orch_cols[1].metric(
+            "Can Trade", "Yes" if orchestrator_snapshot.get("can_trade") else "No"
+        )
+        orch_cols[2].metric(
+            "Last Heartbeat",
+            orchestrator_snapshot.get("last_heartbeat") or "—",
+        )
+        if orchestrator_snapshot.get("trade_guard_reason"):
+            st.caption(f"Trade guard: {orchestrator_snapshot['trade_guard_reason']}")
+        if orchestrator_snapshot.get("last_error"):
+            st.caption(f"Last error: {orchestrator_snapshot['last_error']}")
+
+    if isinstance(exposure, dict) and exposure:
+        exposure_cols = st.columns(3)
+        exposure_cols[0].metric("Net Exposure", _fmt_money(exposure.get("net")))
+        exposure_cols[1].metric("Gross Exposure", _fmt_money(exposure.get("gross")))
+        symbols = (
+            exposure.get("by_symbol")
+            if isinstance(exposure.get("by_symbol"), list)
+            else []
+        )
+        long_total = 0.0
+        short_total = 0.0
+        for row in symbols:
+            try:
+                notional = float(row.get("notional", 0.0))
+            except Exception:  # noqa: BLE001 - defensive conversion
+                notional = 0.0
+            if notional >= 0:
+                long_total += notional
+            else:
+                short_total += notional
+        exposure_cols[2].metric(
+            "Long / Short",
+            f"{_fmt_money(long_total)} · {_fmt_money(short_total)}",
+        )
 
 
 def _render_algorithm_controls(
@@ -839,6 +924,25 @@ def _load_remote_state(
         return data
 
     try:
+        telemetry_payload = api.telemetry_metrics()
+    except requests.HTTPError as exc:
+        data["telemetry_error"] = str(exc)
+        data["telemetry"] = {}
+    except requests.RequestException as exc:
+        data["telemetry_error"] = str(exc)
+        data["telemetry"] = {}
+    except Exception as exc:  # noqa: BLE001 - defensive catch
+        data["telemetry_error"] = str(exc)
+        data["telemetry"] = {}
+    else:
+        if isinstance(telemetry_payload, dict):
+            data["telemetry"] = telemetry_payload
+            data["telemetry_error"] = None
+        else:
+            data["telemetry"] = {}
+            data["telemetry_error"] = None
+
+    try:
         data["status"] = api.status()
     except Exception as exc:  # noqa: BLE001
         data["status_error"] = str(exc)
@@ -957,6 +1061,47 @@ def _load_remote_state(
     except Exception as exc:  # noqa: BLE001
         data["logs_error"] = str(exc)
         data["logs"] = []
+
+    telemetry_snapshot = data.get("telemetry")
+    if isinstance(telemetry_snapshot, dict):
+        positions_payload = telemetry_snapshot.get("positions")
+        if isinstance(positions_payload, list):
+            data["positions"] = positions_payload
+        risk_payload = telemetry_snapshot.get("risk")
+        if isinstance(risk_payload, dict):
+            data["telemetry_risk"] = risk_payload
+        orch_payload = telemetry_snapshot.get("orchestrator")
+        if isinstance(orch_payload, dict):
+            existing_orch = data.get("orchestrator")
+            if isinstance(existing_orch, dict):
+                merged = dict(existing_orch)
+                for key, value in orch_payload.items():
+                    if value is not None:
+                        merged[key] = value
+                data["orchestrator"] = merged
+            else:
+                data["orchestrator"] = dict(orch_payload)
+        account_snapshot = data.get("account")
+        if not isinstance(account_snapshot, dict):
+            account_snapshot = {}
+        if (
+            telemetry_snapshot.get("equity") is not None
+            and "equity" not in account_snapshot
+        ):
+            account_snapshot["equity"] = telemetry_snapshot.get("equity")
+        if (
+            telemetry_snapshot.get("buying_power") is not None
+            and "buying_power" not in account_snapshot
+        ):
+            account_snapshot["buying_power"] = telemetry_snapshot.get("buying_power")
+        data["account"] = account_snapshot
+        pnl_snapshot = data.get("pnl") if isinstance(data.get("pnl"), dict) else {}
+        if (
+            telemetry_snapshot.get("day_pl") is not None
+            and "day_pl" not in pnl_snapshot
+        ):
+            pnl_snapshot["day_pl"] = telemetry_snapshot.get("day_pl")
+        data["pnl"] = pnl_snapshot
 
     data.setdefault("pacing", {})
     return data
@@ -1190,6 +1335,8 @@ def render(
         st.warning(f"Risk configuration unavailable: {data['risk_error']}")
     if data.get("pnl_error"):
         st.warning(f"PnL summary unavailable: {data['pnl_error']}")
+    if data.get("telemetry_error"):
+        st.info("Metrics temporarily unavailable. Please retry shortly.")
     if data.get("exposure_error"):
         st.warning(f"Exposure telemetry unavailable: {data['exposure_error']}")
     if data.get("logs_error"):
@@ -1213,7 +1360,10 @@ def render(
         env_broker=env_broker,
     )
     _render_metrics(
-        data.get("account", {}), data.get("pnl", {}), data.get("exposure", {})
+        data.get("account", {}),
+        data.get("pnl", {}),
+        data.get("exposure", {}),
+        data.get("telemetry", {}),
     )
     _render_algorithm_controls(
         strategy_cfg=data.get("strategy", {}),
