@@ -29,6 +29,16 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _iso_dt(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat().replace("+00:00", "Z")
+
+
+class OrchestratorStartupError(RuntimeError):
+    """Raised when the orchestrator fails to transition into a running state."""
+
+
 def record_order_attempt(
     *,
     symbol: str | None,
@@ -73,11 +83,12 @@ def can_execute_trade(
         return False, f"unsupported_profile:{profile}"
     return True, None
 
+
 log = logging.getLogger(__name__)
 
 
 class OrchestratorSupervisor:
-    """Supervise the trading runtime and restart it on failures."""
+    """Supervise the trading runtime and expose health/kill-switch state."""
 
     def __init__(self, kill_switch: KillSwitch) -> None:
         self._kill_switch = kill_switch
@@ -87,9 +98,14 @@ class OrchestratorSupervisor:
         self._stop_requested = False
         self._last_error: str | None = None
         self._last_error_stack: str | None = None
+        self._last_error_at: datetime | None = None
         self._last_heartbeat: datetime | None = None
         self._start_time: datetime | None = None
+        self._start_attempt_ts: datetime | None = None
+        self._last_shutdown_reason: str | None = None
+        self._trade_guard_reason: str | None = None
         self._restart_count = 0
+        self._runtime_started = False
         self._kill_switch_events: Deque[Dict[str, Any]] = deque(maxlen=50)
         global _CURRENT_SUPERVISOR
         _CURRENT_SUPERVISOR = self
@@ -98,12 +114,7 @@ class OrchestratorSupervisor:
         """Return a thread-safe status snapshot."""
 
         flags = get_runtime_flags()
-        last_error = self._last_error_stack or self._last_error
-        heartbeat = (
-            self._last_heartbeat.isoformat()
-            if isinstance(self._last_heartbeat, datetime)
-            else None
-        )
+        heartbeat = _iso_dt(self._last_heartbeat)
         uptime = 0.0
         if self._start_time:
             uptime = max(
@@ -112,10 +123,12 @@ class OrchestratorSupervisor:
             )
         kill_snapshot = self._kill_switch_snapshot()
         kill_engaged = bool(kill_snapshot.get("engaged"))
-        kill_reason = kill_snapshot.get("reason")
-        allowed, guard_reason = can_execute_trade(
+        kill_reason = kill_snapshot.get("reason") if isinstance(kill_snapshot.get("reason"), str) else None
+        allowed_by_policy, base_guard_reason = can_execute_trade(
             flags, kill_engaged, kill_reason=kill_reason
         )
+        trade_guard_reason = self._trade_guard_reason or base_guard_reason
+        can_trade = bool(allowed_by_policy) and self._trade_guard_reason is None
         broker_impl = (
             "MockBrokerAdapter" if getattr(flags, "mock_mode", False) else "AlpacaBrokerAdapter"
         )
@@ -126,11 +139,15 @@ class OrchestratorSupervisor:
         return {
             "state": self._state,
             "running": self._state == "running",
-            "last_error": last_error,
+            "last_error": self._last_error,
+            "last_error_stack": self._last_error_stack,
+            "last_error_at": _iso_dt(self._last_error_at),
             "last_heartbeat": heartbeat,
             "uptime_secs": uptime,
             "uptime": uptime_label,
             "restart_count": self._restart_count,
+            "start_attempt_ts": _iso_dt(self._start_attempt_ts),
+            "last_shutdown_reason": self._last_shutdown_reason,
             "kill_switch": kill_label,
             "kill_switch_engaged": kill_engaged,
             "kill_switch_reason": kill_reason,
@@ -138,8 +155,8 @@ class OrchestratorSupervisor:
             "kill_switch_can_reset": (not kill_engaged)
             or not self._is_hard_violation(kill_reason),
             "kill_switch_history": self.kill_switch_history(),
-            "can_trade": allowed,
-            "trade_guard_reason": guard_reason,
+            "can_trade": can_trade,
+            "trade_guard_reason": trade_guard_reason,
             "market_data_source": getattr(flags, "market_data_source", "mock"),
             "broker_impl": broker_impl,
             "profile": getattr(flags, "profile", "paper"),
@@ -149,66 +166,103 @@ class OrchestratorSupervisor:
 
     async def start(self) -> None:
         async with self._async_lock:
-            if self._state == "running" and self._supervisor_task and not self._supervisor_task.done():
+            if (
+                self._supervisor_task
+                and not self._supervisor_task.done()
+                and self._state in {"starting", "running"}
+            ):
                 return
             self._stop_requested = False
             self._last_error = None
             self._last_error_stack = None
-            self._start_time = datetime.now(timezone.utc)
-            self.mark_tick()
+            self._last_error_at = None
+            self._last_shutdown_reason = None
+            self._trade_guard_reason = None
+            self._start_time = None
+            self._start_attempt_ts = datetime.now(timezone.utc)
+            self._runtime_started = False
+            self._restart_count = 0
             loop = asyncio.get_running_loop()
             self._supervisor_task = loop.create_task(self._run_supervisor())
-            self._state = "running"
-            log.info("orchestrator.start state=running")
+            self._state = "starting"
+            log.info(
+                "orchestrator.start requested",
+                extra={"start_attempt": _iso_dt(self._start_attempt_ts)},
+            )
+        self.mark_tick()
 
     async def stop(self) -> None:
         async with self._async_lock:
-            self._stop_requested = True
             task = self._supervisor_task
             self._supervisor_task = None
             if task:
                 task.cancel()
-            self._state = "stopped"
+            self._stop_requested = True
+            self._state = "stopping"
+            self._last_shutdown_reason = "requested_stop"
             log.info("orchestrator.stop requested")
-        try:
-            self._kill_switch.engage_sync(reason="orchestrator_stopped")
-        except Exception:  # pragma: no cover - defensive guard
-            log.exception("orchestrator.stop kill-switch failed")
         if task:
             with suppress(asyncio.CancelledError):
                 await task
+        async with self._async_lock:
+            self._state = "stopped"
+            self._stop_requested = False
+            self._runtime_started = False
+            self._trade_guard_reason = None
+            self._start_time = None
         self.mark_tick()
 
     async def _run_supervisor(self) -> None:
-        while not self._stop_requested:
-            try:
-                await self._run_worker_once()
+        log.info("orchestrator.supervisor.loop.start")
+        try:
+            while not self._stop_requested:
+                try:
+                    await self._run_worker_once()
+                except asyncio.CancelledError:
+                    raise
+                except OrchestratorStartupError as exc:
+                    self._handle_start_failure(str(exc))
+                    break
+                except Exception as exc:  # pragma: no cover - runtime/IO failures
+                    self._handle_worker_exception(exc)
+                    break
+
                 if self._stop_requested:
                     break
-                log.warning("orchestrator.worker.exited unexpectedly; restarting")
-                self._restart_count += 1
-                await asyncio.sleep(2)
-            except asyncio.CancelledError:
+
+                self._handle_unexpected_exit()
                 break
-            except Exception as exc:  # pragma: no cover - network/runtime failures
-                self._last_error = str(exc)
-                self._last_error_stack = traceback.format_exc()
-                log.error("orchestrator.worker.crashed", exc_info=exc)
-                if self._stop_requested:
-                    break
-                self._restart_count += 1
-                await asyncio.sleep(2)
-        self._state = "stopped"
-        log.info("orchestrator.supervisor.stopped")
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self._state not in {"crashed", "error_startup"}:
+                if self._stop_requested and self._state != "stopped":
+                    self._state = "stopped"
+                elif not self._stop_requested and self._state not in {"stopped", "stopping"}:
+                    self._state = "stopped"
+            self.mark_tick()
+            log.info("orchestrator.supervisor.stopped", extra={"state": self._state})
 
     async def _run_worker_once(self) -> None:
-        self.safe_arm_trading(requested_by="worker_boot")
+        arm_snapshot = self.safe_arm_trading(requested_by="worker_boot")
+        if bool(arm_snapshot.get("engaged")):
+            reason = (
+                arm_snapshot.get("reason")
+                if isinstance(arm_snapshot.get("reason"), str)
+                else "kill_switch_engaged"
+            )
+            raise OrchestratorStartupError(f"kill_switch_engaged:{reason}")
+        self._state = "running"
+        self._trade_guard_reason = None
+        if self._start_time is None:
+            self._start_time = datetime.now(timezone.utc)
         self.mark_tick()
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
         def _run() -> None:
             from services.runtime import runner as runtime_runner
 
+            self._runtime_started = True
             runtime_runner.main()
 
         try:
@@ -217,6 +271,8 @@ class OrchestratorSupervisor:
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat_task
+            self._runtime_started = False
+            self.mark_tick()
 
     async def _heartbeat_loop(self) -> None:
         while True:
@@ -269,16 +325,88 @@ class OrchestratorSupervisor:
         reason = snapshot.get("reason") if isinstance(snapshot.get("reason"), str) else None
         if not engaged:
             return snapshot
-        if not force and self._is_hard_violation(reason):
-            self._record_kill_switch_event("reset_blocked", reason=reason, requested_by=requested_by)
-            return snapshot
+        auto_request = requested_by in {None, "supervisor", "worker_boot"}
+        if not force:
+            if self._is_hard_violation(reason):
+                self._record_kill_switch_event(
+                    "reset_blocked", reason=reason, requested_by=requested_by
+                )
+                return snapshot
+            if auto_request and reason == "orchestrator_crashed":
+                self._record_kill_switch_event(
+                    "reset_blocked", reason=reason, requested_by=requested_by
+                )
+                return snapshot
         self._kill_switch.reset_sync()
         updated = self._kill_switch_snapshot()
         self._record_kill_switch_event("reset", reason=reason, requested_by=requested_by)
+        if not bool(updated.get("engaged")):
+            self._trade_guard_reason = None
         return updated
 
     def safe_arm_trading(self, *, requested_by: str = "supervisor") -> Dict[str, Any]:
-        return self.reset_kill_switch(requested_by=requested_by, force=False)
+        snapshot = self.reset_kill_switch(requested_by=requested_by, force=False)
+        if bool(snapshot.get("engaged")):
+            reason = snapshot.get("reason") if isinstance(snapshot.get("reason"), str) else None
+            if reason == "orchestrator_crashed":
+                self._trade_guard_reason = "orchestrator_crashed"
+        return snapshot
+
+    def _engage_kill_switch(self, reason: str, *, requested_by: str) -> None:
+        try:
+            self._kill_switch.engage_sync(reason=reason)
+        except Exception:  # pragma: no cover - defensive guard
+            log.exception("orchestrator.kill_switch.engage_failed", extra={"reason": reason})
+        else:
+            self._record_kill_switch_event("engaged", reason=reason, requested_by=requested_by)
+
+    def _handle_worker_exception(self, exc: Exception) -> None:
+        self._last_error = str(exc)
+        self._last_error_stack = traceback.format_exc()
+        self._last_error_at = datetime.now(timezone.utc)
+        if self._runtime_started:
+            self._state = "crashed"
+            self._trade_guard_reason = "orchestrator_crashed"
+            self._last_shutdown_reason = "crashed"
+            self._restart_count += 1
+            log.error("orchestrator.worker.crashed", exc_info=exc)
+            self._engage_kill_switch("orchestrator_crashed", requested_by="supervisor")
+        else:
+            self._state = "error_startup"
+            self._trade_guard_reason = "startup_failed"
+            self._last_shutdown_reason = "startup_failed"
+            log.error("orchestrator.worker.startup_failed", exc_info=exc)
+        self._stop_requested = True
+
+    def _handle_start_failure(self, message: str) -> None:
+        self._last_error = message
+        self._last_error_stack = None
+        self._last_error_at = datetime.now(timezone.utc)
+        guard_reason = self._trade_guard_reason or (
+            "orchestrator_crashed" if "orchestrator_crashed" in str(message).lower() else "startup_failed"
+        )
+        if guard_reason == "orchestrator_crashed":
+            self._state = "crashed"
+            self._last_shutdown_reason = "crashed"
+            self._restart_count += 1
+        else:
+            self._state = "error_startup"
+            self._last_shutdown_reason = "startup_failed"
+        self._trade_guard_reason = guard_reason
+        log.error("orchestrator.worker.startup_blocked", extra={"reason": message})
+        self._stop_requested = True
+
+    def _handle_unexpected_exit(self) -> None:
+        self._last_error = "orchestrator worker exited unexpectedly"
+        self._last_error_stack = None
+        self._last_error_at = datetime.now(timezone.utc)
+        self._state = "crashed"
+        self._trade_guard_reason = "orchestrator_crashed"
+        self._last_shutdown_reason = "crashed"
+        self._restart_count += 1
+        log.error("orchestrator.worker.exited_unexpectedly")
+        self._engage_kill_switch("orchestrator_crashed", requested_by="supervisor")
+        self._stop_requested = True
 
 
 def get_orchestrator_status() -> Dict[str, Any]:
@@ -305,10 +433,14 @@ def get_orchestrator_status() -> Dict[str, Any]:
         "state": "stopped",
         "running": False,
         "last_error": None,
+        "last_error_stack": None,
+        "last_error_at": None,
         "last_heartbeat": None,
         "uptime_secs": 0.0,
         "uptime": "0.00s",
         "restart_count": 0,
+        "start_attempt_ts": None,
+        "last_shutdown_reason": None,
         "kill_switch": kill_label,
         "kill_switch_engaged": kill_engaged,
         "kill_switch_reason": kill_reason,

@@ -1,9 +1,32 @@
 from __future__ import annotations
 
+import logging
 import threading
+import traceback
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Literal, Optional
 
-OrchestratorState = Literal["stopped", "starting", "running", "stopping", "error"]
+log = logging.getLogger(__name__)
+
+
+OrchestratorState = Literal[
+    "stopped",
+    "starting",
+    "running",
+    "stopping",
+    "crashed",
+    "error_startup",
+]
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(ts: datetime | None) -> str | None:
+    if ts is None:
+        return None
+    return ts.isoformat().replace("+00:00", "Z")
 
 
 class OrchestratorManager:
@@ -14,6 +37,11 @@ class OrchestratorManager:
         self._thread: Optional[threading.Thread] = None
         self._stop_flag: bool = False
         self._last_error: Optional[str] = None
+        self._last_error_stack: Optional[str] = None
+        self._start_attempt_ts: Optional[datetime] = None
+        self._thread_started_at: Optional[datetime] = None
+        self._last_stop_ts: Optional[datetime] = None
+        self._last_exit_reason: Optional[str] = None
         self._lock = threading.Lock()
 
     def get_status(self) -> Dict[str, Any]:
@@ -21,15 +49,15 @@ class OrchestratorManager:
 
         with self._lock:
             thread_alive = self._thread.is_alive() if self._thread else False
-            effective_state: OrchestratorState = self._state
-            if thread_alive and self._state == "stopped":
-                effective_state = "running"
-            if not thread_alive and self._state in ("running", "starting"):
-                effective_state = "stopped"
             return {
-                "state": effective_state,
+                "state": self._state,
                 "last_error": self._last_error,
+                "last_error_stack": self._last_error_stack,
                 "thread_alive": thread_alive,
+                "start_attempt_ts": _iso(self._start_attempt_ts),
+                "thread_started_at": _iso(self._thread_started_at),
+                "last_stop_ts": _iso(self._last_stop_ts),
+                "last_exit_reason": self._last_exit_reason,
             }
 
     def start(self, trading_entrypoint: Callable[[Callable[[], bool]], None]) -> None:
@@ -38,26 +66,55 @@ class OrchestratorManager:
         with self._lock:
             if self._thread and self._thread.is_alive():
                 if self._state in ("running", "starting"):
+                    log.debug("orchestrator_manager.start skipped; thread already running")
                     return
             self._stop_flag = False
             self._state = "starting"
             self._last_error = None
+            self._last_error_stack = None
+            self._last_exit_reason = None
+            self._last_stop_ts = None
+            self._start_attempt_ts = _utc_now()
+            log.info(
+                "orchestrator_manager.start requested",
+                extra={"start_attempt": _iso(self._start_attempt_ts)},
+            )
 
             def _runner() -> None:
+                log.info("orchestrator_manager.thread.starting")
                 try:
                     with self._lock:
                         self._state = "running"
+                        self._thread_started_at = _utc_now()
                     trading_entrypoint(lambda: self._stop_flag)
                     with self._lock:
+                        exit_reason = "stop_requested" if self._stop_flag else "completed"
                         self._state = "stopped"
+                        self._last_exit_reason = exit_reason
                 except Exception as exc:  # pragma: no cover - runtime defensive
+                    stack = traceback.format_exc()
+                    log.exception("orchestrator_manager.thread.crashed")
                     with self._lock:
                         self._last_error = str(exc)
-                        self._state = "error"
+                        self._last_error_stack = stack
+                        if self._state == "starting":
+                            self._state = "error_startup"
+                        else:
+                            self._state = "crashed"
+                        self._last_exit_reason = "exception"
                 finally:
                     with self._lock:
                         self._thread = None
                         self._stop_flag = False
+                        self._last_stop_ts = _utc_now()
+                        self._thread_started_at = None
+                    log.info(
+                        "orchestrator_manager.thread.finished",
+                        extra={
+                            "state": self._state,
+                            "last_exit_reason": self._last_exit_reason,
+                        },
+                    )
 
             thread = threading.Thread(
                 target=_runner,
@@ -71,16 +128,26 @@ class OrchestratorManager:
         """Signal the orchestrator thread to stop gracefully."""
 
         with self._lock:
+            thread = self._thread
+            if not thread or not thread.is_alive():
+                self._state = "stopped"
+                self._stop_flag = False
+                return
             if self._state not in ("running", "starting"):
                 return
             self._stop_flag = True
             self._state = "stopping"
-            thread = self._thread
         if thread and thread.is_alive():
-            thread.join(timeout=0.0)
+            log.info("orchestrator_manager.stop waiting for thread to exit")
+            thread.join(timeout=10.0)
         with self._lock:
-            if not (thread and thread.is_alive()):
+            still_alive = bool(thread and thread.is_alive())
+            if still_alive:
+                log.warning("orchestrator_manager.stop timeout waiting for thread")
+            else:
                 self._state = "stopped"
+                self._stop_flag = False
+                self._last_stop_ts = _utc_now()
 
 
 orchestrator_manager = OrchestratorManager()

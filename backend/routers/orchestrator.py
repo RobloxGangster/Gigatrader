@@ -49,20 +49,16 @@ def _build_status(snapshot: dict) -> OrchestratorStatus:
     payload["restart_count"] = int(snapshot.get("restart_count") or 0)
     manager_status = snapshot.get("manager")
     if manager_status is not None:
-        manager_state = str(manager_status.get("state") or "")
         thread_alive = bool(manager_status.get("thread_alive"))
-        effective_state = manager_state or ("running" if thread_alive else "stopped")
+        manager_state = str(
+            manager_status.get("state")
+            or ("running" if thread_alive else "stopped")
+        )
         payload["manager"] = {
             **manager_status,
-            "state": effective_state,
+            "state": manager_state,
             "thread_alive": thread_alive,
         }
-        if thread_alive:
-            payload["state"] = "running"
-            payload["running"] = True
-        elif payload["running"] and not thread_alive:
-            payload["state"] = "stopped"
-            payload["running"] = False
     return OrchestratorStatus(**payload)
 
 
@@ -88,14 +84,17 @@ async def orchestrator_start(payload: OrchestratorStartPayload | None = None) ->
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         orchestrator = get_orchestrator()
         arm_snapshot = orchestrator.safe_arm_trading(requested_by="api.start")
+        if arm_snapshot.get("engaged"):
+            reason = arm_snapshot.get("reason")
+            reason_label = reason or "kill_switch_engaged"
+            raise HTTPException(
+                status_code=409,
+                detail=f"kill switch engaged ({reason_label}); reset before starting",
+            )
         orchestrator_manager.start(run_trading_loop)
         snapshot = orchestrator.status()
         snapshot["manager"] = orchestrator_manager.get_status()
         snapshot["kill_switch_engaged"] = bool(snapshot.get("kill_switch_engaged"))
-        if arm_snapshot.get("engaged"):
-            snapshot["kill_switch_engaged"] = True
-            if arm_snapshot.get("reason") and not snapshot.get("kill_switch_reason"):
-                snapshot["kill_switch_reason"] = arm_snapshot.get("reason")
         if payload and payload.preset:
             snapshot["preset"] = payload.preset
         return _build_status(snapshot)

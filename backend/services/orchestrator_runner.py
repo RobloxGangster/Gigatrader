@@ -14,15 +14,24 @@ def run_trading_loop(stop_requested: Callable[[], bool]) -> None:
 
     async def _main() -> None:
         orchestrator = get_orchestrator()
-        await orchestrator.start()
-        log.info("orchestrator background loop started")
+        started = False
         try:
+            await orchestrator.start()
+            started = True
+            log.info("orchestrator background loop started")
             while not stop_requested():
                 await asyncio.sleep(1.0)
+        except Exception:  # pragma: no cover - runtime defensive guard
+            log.exception("orchestrator background loop crashed")
+            raise
         finally:
             try:
                 await orchestrator.stop()
-            finally:
+            except Exception:  # pragma: no cover - ensure stop errors surface
+                log.exception("orchestrator background loop stop failed")
+                if started:
+                    raise
+            else:
                 log.info("orchestrator background loop stopped")
 
     asyncio.run(_main())
