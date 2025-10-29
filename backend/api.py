@@ -118,7 +118,7 @@ PRIMARY_ROUTERS: list[tuple[str, Any, list[str]]] = [
     ("/risk", risk.router, ["risk"]),
     ("/orchestrator", orchestrator.router, ["orchestrator"]),
     ("/pnl", pnl.router, ["pnl"]),
-    ("/telemetry", telemetry.router, ["telemetry"]),
+    ("", telemetry.router, ["telemetry"]),
     ("/logs", logs.router, ["logs"]),
     ("/diagnostics", diagnostics.router, ["diagnostics"]),
     ("/reconcile", reconcile.router, ["reconcile"]),

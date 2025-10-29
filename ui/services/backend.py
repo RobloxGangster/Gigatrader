@@ -11,8 +11,6 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol
 
-import requests
-
 from pydantic import BaseModel, Field
 
 from .config import api_base_url
@@ -472,55 +470,17 @@ class RealAPI:
         raise BackendError("Invalid option greeks payload")
 
     def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """
-        Return recent normalized broker orders/fills for display in Trade Blotter.
-        We call the backend /broker/orders endpoint (or /api/broker/orders) because
-        /trades does not exist server-side.
-
-        filters keys we expect from the UI:
-          - "status": list[str] like ["filled","canceled","rejected","accepted","new","partially_filled",...]
-          - "side": list[str] like ["buy","sell"]
-          - "symbol": optional str
-          - "start", "end": datetimes or date strings
-          - "limit": optional int
-        NOTE: backend/routers/broker.py currently only supports "status" and "limit".
-        We'll pass through the first selected status (or "all") and limit. All other
-        filters will be applied client-side in trade_blotter.py.
-        This keeps us compatible without breaking the API.
-        """
+        """Return recent broker activity normalised for the Trade Blotter."""
 
         if filters is None:
             filters = {}
 
-        status_list = filters.get("status") or []
-        if isinstance(status_list, (list, tuple)) and len(status_list) > 0:
-            status_param = status_list[0]
-        else:
-            status_param = "all"
-
-        limit_param = filters.get("limit") or 50
         try:
-            limit_int = int(limit_param)
-        except (TypeError, ValueError):
-            limit_int = 50
+            payload = self._request("GET", "/telemetry/trades")
+        except BackendError:
+            payload = []
 
-        params = {"status": status_param, "limit": limit_int}
-
-        headers = _build_trace_headers()
-        url = f"{self.base_url}/broker/orders"
-        resp = requests.get(url, params=params, timeout=10, headers=headers)
-        if resp.status_code == 404:
-            resp = requests.get(
-                f"{self.base_url}/api/broker/orders",
-                params=params,
-                timeout=10,
-                headers=headers,
-            )
-
-        resp.raise_for_status()
-
-        data = resp.json()
-        if not isinstance(data, list):
+        if not isinstance(payload, list):
             return []
 
         symbol_filter = (filters.get("symbol") or "").strip().upper()
@@ -538,6 +498,18 @@ class RealAPI:
         start = filters.get("start")
         end = filters.get("end")
 
+        try:
+            limit = int(filters.get("limit", 50))
+        except (TypeError, ValueError):
+            limit = 50
+
+        def _extract_ts(order: Mapping[str, Any]) -> Optional[str]:
+            for key in ("ts", "filled_at", "submitted_at", "created_at", "updated_at"):
+                value = order.get(key)
+                if value:
+                    return str(value)
+            return None
+
         def keep(order: Dict[str, Any]) -> bool:
             sym_ok = True
             if symbol_filter:
@@ -552,7 +524,7 @@ class RealAPI:
                 status_ok = str(order.get("status", "")).lower() in statuses_filter
 
             time_ok = True
-            ts_str = order.get("filled_at") or order.get("submitted_at")
+            ts_str = _extract_ts(order)
             if ts_str and (start or end):
                 from dateutil import parser as date_parser
 
@@ -577,7 +549,9 @@ class RealAPI:
 
             return sym_ok and side_ok and status_ok and time_ok
 
-        filtered = [order for order in data if isinstance(order, dict) and keep(order)]
+        filtered = [order for order in payload if isinstance(order, dict) and keep(order)]
+        if limit > 0:
+            return filtered[:limit]
         return filtered
 
     def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:
@@ -639,24 +613,10 @@ class RealAPI:
         return self._request("POST", "/ml/train", json_payload=payload)
 
     def get_metrics(self) -> Dict[str, Any]:
-        raw = self._request("GET", "/metrics")
-        metrics: Dict[str, Any] = {}
-        if isinstance(raw, str):
-            for line in raw.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split()
-                if len(parts) != 2:
-                    continue
-                key, value = parts
-                try:
-                    metrics[key] = float(value)
-                except ValueError:
-                    metrics[key] = value
-        elif isinstance(raw, dict):
-            metrics.update(raw)
-        return metrics
+        payload = self._request("GET", "/telemetry/metrics")
+        if isinstance(payload, Mapping):
+            return dict(payload)
+        return {}
 
 
 class _MockState(BaseModel):
@@ -860,7 +820,49 @@ class MockAPI:
         return {"model": "mock_model", "metrics": metrics}
 
     def get_metrics(self) -> Dict[str, Any]:
-        return {"alpaca_stream_connected": 0}
+        equity = 100000 + self.random.uniform(-500, 500)
+        buying_power = 200000 + self.random.uniform(-1000, 1000)
+        day_pl = self.random.uniform(-750, 750)
+        positions = [
+            {
+                "symbol": "AAPL",
+                "qty": 10.0,
+                "avg_price": 150.0,
+                "market_price": 151.5,
+                "unrealized_pl": 15.0,
+            },
+            {
+                "symbol": "MSFT",
+                "qty": -5.0,
+                "avg_price": 320.0,
+                "market_price": 318.25,
+                "unrealized_pl": 8.75,
+            },
+        ]
+        now = datetime.utcnow().isoformat() + "Z"
+        return {
+            "equity": round(equity, 2),
+            "buying_power": round(buying_power, 2),
+            "day_pl": round(day_pl, 2),
+            "positions": positions,
+            "risk": {
+                "kill_switch_engaged": False,
+                "kill_switch_reason": None,
+                "daily_loss_limit": 2000.0,
+                "max_portfolio_notional": 100000.0,
+                "max_positions": 10,
+                "cooldown_active": False,
+            },
+            "orchestrator": {
+                "state": "running",
+                "last_error": None,
+                "last_heartbeat": now,
+                "can_trade": True,
+                "trade_guard_reason": None,
+                "kill_switch_engaged": False,
+                "kill_switch_reason": None,
+            },
+        }
 
     def options_chain(self, symbol: str, expiry: Optional[str] = None) -> Dict[str, Any]:
         name = f"option_chain_{symbol.lower()}"

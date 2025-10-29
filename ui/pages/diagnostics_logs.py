@@ -20,6 +20,20 @@ DEFAULT_LINES = 200
 REFRESH_INTERVAL_MS = 5_000
 
 
+def _fmt_money(value: Any) -> str:
+    try:
+        return f"${float(value):,.2f}"
+    except Exception:  # noqa: BLE001 - formatting guard
+        return "—"
+
+
+def _fmt_signed(value: Any) -> str:
+    try:
+        return f"{float(value):+,.2f}"
+    except Exception:  # noqa: BLE001 - formatting guard
+        return "—"
+
+
 def _iter_fixture_files(fixtures_dir: Path) -> Iterable[Path]:
     if not fixtures_dir.exists():
         return []
@@ -74,6 +88,10 @@ def _get_state() -> Dict[str, Any]:
             "execution_tail": {"lines": []},
             "execution_error": None,
             "backend_up": False,
+            "telemetry": {},
+            "telemetry_error": None,
+            "telemetry_trades": [],
+            "telemetry_trades_error": None,
         },
     )
 
@@ -166,6 +184,9 @@ def render() -> None:
         state["execution_tail"] = {"lines": []}
         state["execution_error"] = None
 
+    if backend_up and not state.get("telemetry"):
+        _fetch_telemetry(client, state)
+
     interval_sec = REFRESH_INTERVAL_MS / 1000.0
     now = time.time()
     if run_clicked and backend_up:
@@ -176,6 +197,7 @@ def render() -> None:
             state["last_auto_refresh"] = now
             _fetch_logs(client, state, limit)
             _fetch_execution_tail(client, state, limit)
+            _fetch_telemetry(client, state)
     elif previous_auto and not auto_enabled:
         state["last_auto_refresh"] = 0.0
 
@@ -201,6 +223,7 @@ def render() -> None:
     pacing = state.get("pacing", {}) if isinstance(state.get("pacing"), dict) else {}
 
     _render_health_summary(health, pacing)
+    _render_telemetry_panel(state)
     st.subheader("Logs & Pacing")
     st.json(pacing or {"message": "No pacing telemetry"}, expanded=False)
 
@@ -275,11 +298,70 @@ def _render_health_summary(health: Dict[str, Any], pacing: Dict[str, Any]) -> No
     cols[3].metric("Backoffs", pacing_events)
 
 
+def _render_telemetry_panel(state: Dict[str, Any]) -> None:
+    telemetry = state.get("telemetry") or {}
+    telemetry_error = state.get("telemetry_error")
+    trades_error = state.get("telemetry_trades_error")
+    trades = state.get("telemetry_trades") or []
+
+    if telemetry:
+        st.subheader("Telemetry Snapshot")
+        metrics_cols = st.columns(3)
+        metrics_cols[0].metric("Equity", _fmt_money(telemetry.get("equity")))
+        metrics_cols[1].metric(
+            "Buying Power", _fmt_money(telemetry.get("buying_power"))
+        )
+        metrics_cols[2].metric("Day PnL", _fmt_signed(telemetry.get("day_pl")))
+
+        risk = telemetry.get("risk") or {}
+        risk_cols = st.columns(4)
+        kill_label = "Engaged" if risk.get("kill_switch_engaged") else "Standby"
+        risk_cols[0].metric("Kill Switch", kill_label)
+        risk_cols[1].metric(
+            "Daily Loss Limit", _fmt_money(risk.get("daily_loss_limit"))
+        )
+        risk_cols[2].metric(
+            "Max Portfolio", _fmt_money(risk.get("max_portfolio_notional"))
+        )
+        risk_cols[3].metric(
+            "Max Positions", str(risk.get("max_positions") or 0)
+        )
+        cooldown = "Active" if risk.get("cooldown_active") else "Idle"
+        st.caption(f"Cooldown: {cooldown}")
+        if risk.get("kill_switch_reason"):
+            st.caption(f"Kill switch reason: {risk['kill_switch_reason']}")
+
+        orchestrator = telemetry.get("orchestrator") or {}
+        orch_state = str(orchestrator.get("state") or "stopped").title()
+        st.caption(
+            "Orchestrator state: "
+            f"{orch_state} · Can trade: {'Yes' if orchestrator.get('can_trade') else 'No'}"
+        )
+        if orchestrator.get("last_heartbeat"):
+            st.caption(f"Last heartbeat: {orchestrator['last_heartbeat']}")
+        if orchestrator.get("trade_guard_reason"):
+            st.caption(f"Trade guard: {orchestrator['trade_guard_reason']}")
+        if orchestrator.get("last_error"):
+            st.caption(f"Last error: {orchestrator['last_error']}")
+    elif telemetry_error:
+        st.info("Telemetry temporarily unavailable.")
+
+    if trades:
+        st.subheader("Recent Telemetry Trades")
+        trades_df = pd.DataFrame(trades)
+        st.dataframe(trades_df, use_container_width=True)
+    elif trades_error:
+        st.info(f"Telemetry trades unavailable: {trades_error}")
+    elif telemetry:
+        st.caption("No recent telemetry trades available.")
+
+
 def _run_full_diagnostics(client: ApiClient, state: Dict[str, Any], limit: int) -> None:
     if not state.get("backend_up"):
         return
     _fetch_health(client, state)
     _fetch_pacing(client, state)
+    _fetch_telemetry(client, state)
     _fetch_logs(client, state, limit)
     _fetch_execution_tail(client, state, limit)
     state["last_diagnostics_at"] = _format_timestamp(datetime.now(timezone.utc))
@@ -302,6 +384,36 @@ def _fetch_pacing(client: ApiClient, state: Dict[str, Any]) -> None:
     except Exception as exc:  # noqa: BLE001
         state["pacing"] = {}
         state["pacing_error"] = {"path": "/pacing", "error": str(exc)}
+
+
+def _fetch_telemetry(client: ApiClient, state: Dict[str, Any]) -> None:
+    if not state.get("backend_up"):
+        state["telemetry"] = {}
+        state["telemetry_error"] = None
+        state["telemetry_trades"] = []
+        state["telemetry_trades_error"] = None
+        return
+
+    try:
+        payload = client.telemetry_metrics()
+    except Exception as exc:  # noqa: BLE001
+        state["telemetry"] = {}
+        state["telemetry_error"] = str(exc)
+    else:
+        state["telemetry"] = payload if isinstance(payload, dict) else {}
+        state["telemetry_error"] = None
+
+    try:
+        trades_payload = client.telemetry_trades()
+    except Exception as exc:  # noqa: BLE001
+        state["telemetry_trades"] = []
+        state["telemetry_trades_error"] = str(exc)
+    else:
+        if isinstance(trades_payload, list):
+            state["telemetry_trades"] = trades_payload
+        else:
+            state["telemetry_trades"] = []
+        state["telemetry_trades_error"] = None
 
 
 def _fetch_logs(client: ApiClient, state: Dict[str, Any], limit: int) -> None:

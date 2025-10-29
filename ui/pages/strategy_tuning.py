@@ -40,8 +40,8 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
 
     try:
         metrics = api.get_metrics()
-    except Exception as exc:  # noqa: BLE001 - optional metrics
-        st.warning(f"Metrics unavailable: {exc}")
+    except Exception:  # noqa: BLE001 - optional metrics
+        st.info("Metrics temporarily unavailable.")
         metrics = {}
 
     if metrics:

@@ -110,14 +110,20 @@ def _orders_to_dataframe(orders: List[Dict[str, Any]]) -> pd.DataFrame:
     for order in orders:
         if not isinstance(order, dict):
             continue
-        time_value = order.get("filled_at") or order.get("submitted_at")
-        qty_value = order.get("qty")
+        time_value = (
+            order.get("ts")
+            or order.get("filled_at")
+            or order.get("submitted_at")
+            or order.get("created_at")
+        )
+        qty_value = order.get("qty") or order.get("filled_qty") or order.get("quantity")
         if qty_value in (None, ""):
             qty_value = order.get("filled_qty")
         qty_float = _safe_float(qty_value)
 
         price_value = (
-            order.get("filled_avg_price")
+            order.get("fill_price")
+            or order.get("filled_avg_price")
             or order.get("limit_price")
             or order.get("avg_price")
         )
@@ -170,6 +176,12 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
         return
     except Exception:  # noqa: BLE001 - unexpected errors also surface as warnings
         st.warning("No trade data available right now.")
+        st.dataframe(empty_df, width="stretch")
+        return
+
+    trades = trades if isinstance(trades, list) else []
+    if not trades:
+        st.info("No trades yet.")
         st.dataframe(empty_df, width="stretch")
         return
 

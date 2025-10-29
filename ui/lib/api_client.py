@@ -346,6 +346,12 @@ class ApiClient:
     def pnl_summary(self) -> Any:
         return self.get("/pnl/summary")
 
+    def telemetry_metrics(self) -> Any:
+        return self.get("/telemetry/metrics")
+
+    def telemetry_trades(self) -> Any:
+        return self.get("/telemetry/trades")
+
     def exposure(self) -> Any:
         return self.get("/telemetry/exposure")
 
