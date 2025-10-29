@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from enum import Enum
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
@@ -26,8 +27,19 @@ class OrchestratorStartPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class OrchestratorState(str, Enum):
+    """Execution orchestrator states exposed via the public API."""
+
+    STOPPED = "stopped"
+    STARTING = "starting"
+    RUNNING = "running"
+    STOPPING = "stopping"
+    CRASHED = "crashed"
+    ERROR_STARTUP = "error_startup"
+
+
 class OrchestratorStatus(BaseModel):
-    state: Literal["running", "stopped"]
+    state: OrchestratorState
     running: bool
     last_error: str | None = None
     last_heartbeat: str | None = None
