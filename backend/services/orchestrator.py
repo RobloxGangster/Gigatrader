@@ -56,9 +56,11 @@ def get_last_order_attempt() -> Dict[str, Any]:
     return dict(_last_order_attempt)
 
 
-def can_execute_trade(flags, kill_switch_engaged: bool) -> tuple[bool, str | None]:
+def can_execute_trade(
+    flags, kill_switch_engaged: bool, *, kill_reason: str | None = None
+) -> tuple[bool, str | None]:
     if kill_switch_engaged:
-        return False, "kill_switch_engaged"
+        return False, kill_reason or "kill_switch_engaged"
     if getattr(flags, "dry_run", False):
         return False, "dry_run_enabled"
     if getattr(flags, "mock_mode", False):
@@ -111,11 +113,16 @@ class OrchestratorSupervisor:
         kill_snapshot = self._kill_switch_snapshot()
         kill_engaged = bool(kill_snapshot.get("engaged"))
         kill_reason = kill_snapshot.get("reason")
-        allowed, guard_reason = can_execute_trade(flags, kill_engaged)
+        allowed, guard_reason = can_execute_trade(
+            flags, kill_engaged, kill_reason=kill_reason
+        )
         broker_impl = (
             "MockBrokerAdapter" if getattr(flags, "mock_mode", False) else "AlpacaBrokerAdapter"
         )
         uptime_label = f"{uptime:.2f}s"
+        kill_label = "Engaged" if kill_engaged else "Standby"
+        if kill_engaged and kill_reason:
+            kill_label = f"Engaged ({kill_reason})"
         return {
             "state": self._state,
             "running": self._state == "running",
@@ -124,7 +131,7 @@ class OrchestratorSupervisor:
             "uptime_secs": uptime,
             "uptime": uptime_label,
             "restart_count": self._restart_count,
-            "kill_switch": "Engaged" if kill_engaged else "Standby",
+            "kill_switch": kill_label,
             "kill_switch_engaged": kill_engaged,
             "kill_switch_reason": kill_reason,
             "kill_switch_engaged_at": kill_snapshot.get("engaged_at"),
@@ -284,10 +291,16 @@ def get_orchestrator_status() -> Dict[str, Any]:
     flags = get_runtime_flags()
     kill_info = KillSwitch().info_sync()
     kill_engaged = bool(kill_info.get("engaged"))
-    allowed, guard_reason = can_execute_trade(flags, kill_engaged)
+    kill_reason = kill_info.get("reason") if isinstance(kill_info.get("reason"), str) else None
+    allowed, guard_reason = can_execute_trade(
+        flags, kill_engaged, kill_reason=kill_reason
+    )
     broker_impl = (
         "MockBrokerAdapter" if getattr(flags, "mock_mode", False) else "AlpacaBrokerAdapter"
     )
+    kill_label = "Engaged" if kill_engaged else "Standby"
+    if kill_engaged and kill_reason:
+        kill_label = f"Engaged ({kill_reason})"
     return {
         "state": "stopped",
         "running": False,
@@ -296,9 +309,9 @@ def get_orchestrator_status() -> Dict[str, Any]:
         "uptime_secs": 0.0,
         "uptime": "0.00s",
         "restart_count": 0,
-        "kill_switch": "Engaged" if kill_engaged else "Standby",
+        "kill_switch": kill_label,
         "kill_switch_engaged": kill_engaged,
-        "kill_switch_reason": kill_info.get("reason"),
+        "kill_switch_reason": kill_reason,
         "kill_switch_engaged_at": kill_info.get("engaged_at"),
         "kill_switch_can_reset": (not kill_engaged)
         or not OrchestratorSupervisor._is_hard_violation(kill_info.get("reason")),
