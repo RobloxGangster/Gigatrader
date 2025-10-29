@@ -21,8 +21,13 @@ class OrchestratorManager:
 
         with self._lock:
             thread_alive = self._thread.is_alive() if self._thread else False
+            effective_state: OrchestratorState = self._state
+            if thread_alive and self._state == "stopped":
+                effective_state = "running"
+            if not thread_alive and self._state in ("running", "starting"):
+                effective_state = "stopped"
             return {
-                "state": self._state,
+                "state": effective_state,
                 "last_error": self._last_error,
                 "thread_alive": thread_alive,
             }
@@ -73,6 +78,9 @@ class OrchestratorManager:
             thread = self._thread
         if thread and thread.is_alive():
             thread.join(timeout=0.0)
+        with self._lock:
+            if not (thread and thread.is_alive()):
+                self._state = "stopped"
 
 
 orchestrator_manager = OrchestratorManager()

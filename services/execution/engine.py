@@ -19,9 +19,11 @@ except Exception:  # pragma: no cover - fallback when backend unavailable
     def record_order_attempt(**_: Any) -> None:  # type: ignore[override]
         return None
 
-    def can_execute_trade(flags: Any, kill_switch_engaged: bool) -> tuple[bool, str | None]:
+    def can_execute_trade(
+        flags: Any, kill_switch_engaged: bool, *, kill_reason: str | None = None
+    ) -> tuple[bool, str | None]:
         if kill_switch_engaged or getattr(flags, "dry_run", False):
-            return False, "execution_disabled"
+            return False, kill_reason or "execution_disabled"
         return True, None
 
 from services.execution.adapter_alpaca import AlpacaAdapter
@@ -208,12 +210,20 @@ class ExecutionEngine:
         flags = get_runtime_flags()
         kill_switch_obj = getattr(self.risk, "kill_switch", None)
         kill_switch_engaged = False
+        kill_reason = None
         if kill_switch_obj is not None:
             try:
-                kill_switch_engaged = bool(kill_switch_obj.engaged_sync())
+                info = kill_switch_obj.info_sync()
+                kill_switch_engaged = bool(info.get("engaged"))
+                reason = info.get("reason")
+                if isinstance(reason, str):
+                    kill_reason = reason
             except Exception:  # pragma: no cover - defensive
                 kill_switch_engaged = False
-        allowed, guard_reason = can_execute_trade(flags, kill_switch_engaged)
+                kill_reason = None
+        allowed, guard_reason = can_execute_trade(
+            flags, kill_switch_engaged, kill_reason=kill_reason
+        )
         if not allowed:
             await self._forget_intent(key)
             reason_code = guard_reason or "execution_guard"
