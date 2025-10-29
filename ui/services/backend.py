@@ -11,6 +11,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol
 
+import requests
+
 from pydantic import BaseModel, Field
 
 from .config import api_base_url
@@ -27,7 +29,6 @@ from ui.state import (
     ReportSummary,
     RiskSnapshot,
     RunInfo,
-    Trade,
 )
 from ui.utils.runtime import get_runtime_flags
 
@@ -255,7 +256,7 @@ class BrokerAPI(Protocol):
     def get_positions(self) -> List[Position]: ...
     def get_account(self) -> Dict[str, Any]: ...
 
-    def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Trade]: ...
+    def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]: ...
 
     def options_chain(self, symbol: str, expiry: Optional[str] = None) -> Dict[str, Any]: ...
 
@@ -470,9 +471,114 @@ class RealAPI:
             return dict(payload)
         raise BackendError("Invalid option greeks payload")
 
-    def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Trade]:
-        payload = self._request("GET", "/trades", params=filters)
-        return [Trade(**item) for item in payload]
+    def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Return recent normalized broker orders/fills for display in Trade Blotter.
+        We call the backend /broker/orders endpoint (or /api/broker/orders) because
+        /trades does not exist server-side.
+
+        filters keys we expect from the UI:
+          - "status": list[str] like ["filled","canceled","rejected","accepted","new","partially_filled",...]
+          - "side": list[str] like ["buy","sell"]
+          - "symbol": optional str
+          - "start", "end": datetimes or date strings
+          - "limit": optional int
+        NOTE: backend/routers/broker.py currently only supports "status" and "limit".
+        We'll pass through the first selected status (or "all") and limit. All other
+        filters will be applied client-side in trade_blotter.py.
+        This keeps us compatible without breaking the API.
+        """
+
+        if filters is None:
+            filters = {}
+
+        status_list = filters.get("status") or []
+        if isinstance(status_list, (list, tuple)) and len(status_list) > 0:
+            status_param = status_list[0]
+        else:
+            status_param = "all"
+
+        limit_param = filters.get("limit") or 50
+        try:
+            limit_int = int(limit_param)
+        except (TypeError, ValueError):
+            limit_int = 50
+
+        params = {"status": status_param, "limit": limit_int}
+
+        headers = _build_trace_headers()
+        url = f"{self.base_url}/broker/orders"
+        resp = requests.get(url, params=params, timeout=10, headers=headers)
+        if resp.status_code == 404:
+            resp = requests.get(
+                f"{self.base_url}/api/broker/orders",
+                params=params,
+                timeout=10,
+                headers=headers,
+            )
+
+        resp.raise_for_status()
+
+        data = resp.json()
+        if not isinstance(data, list):
+            return []
+
+        symbol_filter = (filters.get("symbol") or "").strip().upper()
+        sides_filter = {
+            str(item).lower()
+            for item in (filters.get("side") or [])
+            if item
+        }
+        statuses_filter = {
+            str(item).lower()
+            for item in (filters.get("status") or [])
+            if item
+        }
+
+        start = filters.get("start")
+        end = filters.get("end")
+
+        def keep(order: Dict[str, Any]) -> bool:
+            sym_ok = True
+            if symbol_filter:
+                sym_ok = str(order.get("symbol", "")).upper() == symbol_filter
+
+            side_ok = True
+            if sides_filter:
+                side_ok = str(order.get("side", "")).lower() in sides_filter
+
+            status_ok = True
+            if statuses_filter:
+                status_ok = str(order.get("status", "")).lower() in statuses_filter
+
+            time_ok = True
+            ts_str = order.get("filled_at") or order.get("submitted_at")
+            if ts_str and (start or end):
+                from dateutil import parser as date_parser
+
+                try:
+                    ts = date_parser.parse(ts_str)
+                    if start:
+                        try:
+                            ts_start = date_parser.parse(str(start))
+                            if ts < ts_start:
+                                time_ok = False
+                        except Exception:  # noqa: BLE001 - ignore bad filter values
+                            pass
+                    if end:
+                        try:
+                            ts_end = date_parser.parse(str(end))
+                            if ts > ts_end:
+                                time_ok = False
+                        except Exception:  # noqa: BLE001 - ignore bad filter values
+                            pass
+                except Exception:  # noqa: BLE001 - ignore parse errors
+                    pass
+
+            return sym_ok and side_ok and status_ok and time_ok
+
+        filtered = [order for order in data if isinstance(order, dict) and keep(order)]
+        return filtered
 
     def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:
         payload = self.options_chain(symbol, expiry)
@@ -659,30 +765,67 @@ class MockAPI:
             "portfolio_value": snapshot.equity,
         }
 
-    def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Trade]:
+    def get_trades(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         payload = _load_json_fixture("trades")
-        trades = [Trade(**item) for item in payload]
-        if not filters:
-            return trades
+        if not isinstance(payload, list):
+            return []
 
-        filtered: List[Trade] = []
-        for trade in trades:
-            include = True
-            for key, value in filters.items():
-                if value is None:
-                    continue
-                attr = getattr(trade, key, None)
-                if isinstance(value, (list, tuple, set)):
-                    if attr not in value:
-                        include = False
-                        break
-                else:
-                    if attr != value:
-                        include = False
-                        break
-            if include:
-                filtered.append(trade)
-        return filtered
+        filters = filters or {}
+        symbol_filter = (filters.get("symbol") or "").strip().upper()
+        sides_filter = {
+            str(item).lower()
+            for item in (filters.get("side") or [])
+            if item
+        }
+        statuses_filter = {
+            str(item).lower()
+            for item in (filters.get("status") or [])
+            if item
+        }
+
+        start = filters.get("start")
+        end = filters.get("end")
+
+        def keep(order: Dict[str, Any]) -> bool:
+            sym_ok = True
+            if symbol_filter:
+                sym_ok = str(order.get("symbol", "")).upper() == symbol_filter
+
+            side_ok = True
+            if sides_filter:
+                side_ok = str(order.get("side", "")).lower() in sides_filter
+
+            status_ok = True
+            if statuses_filter:
+                status_ok = str(order.get("status", "")).lower() in statuses_filter
+
+            time_ok = True
+            ts_str = order.get("filled_at") or order.get("submitted_at")
+            if ts_str and (start or end):
+                from dateutil import parser as date_parser
+
+                try:
+                    ts = date_parser.parse(ts_str)
+                    if start:
+                        try:
+                            ts_start = date_parser.parse(str(start))
+                            if ts < ts_start:
+                                time_ok = False
+                        except Exception:  # noqa: BLE001 - ignore bad filter values
+                            pass
+                    if end:
+                        try:
+                            ts_end = date_parser.parse(str(end))
+                            if ts > ts_end:
+                                time_ok = False
+                        except Exception:  # noqa: BLE001 - ignore bad filter values
+                            pass
+                except Exception:  # noqa: BLE001 - ignore parse errors
+                    pass
+
+            return sym_ok and side_ok and status_ok and time_ok
+
+        return [order for order in payload if isinstance(order, dict) and keep(order)]
 
     def preview_signals(self, profile: str = "balanced", universe: Optional[List[str]] | None = None) -> Dict[str, Any]:
         symbols = universe or ["AAPL", "MSFT"]

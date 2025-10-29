@@ -98,6 +98,18 @@ def orders(
         _record_rate_limit(service)
 
 
+@router.get("/trades")
+def trades_alias(
+    status: str = Query("all"),
+    limit: int = Query(50, ge=1, le=500),
+    service: BrokerService = Depends(get_broker),
+    adapter: Any = Depends(get_broker_adapter),
+) -> list[dict]:
+    """Compatibility shim for legacy clients expecting /trades."""
+
+    return orders(status=status, limit=limit, service=service, adapter=adapter)
+
+
 @router.post("/orders")
 def place_order(
     order: Dict[str, Any],

@@ -64,28 +64,7 @@ class FakeSession:
         return FakeResponse({}, status_code=204)
 
 
-def test_place_order_hits_alpaca() -> None:
-    payload = {
-        "symbol": "AAPL",
-        "qty": 1,
-        "side": "buy",
-        "type": "market",
-        "client_order_id": "cid-1",
-    }
-    session = FakeSession(json_payload=[])
-    adapter = AlpacaAdapter(session=session)
-
-    result = adapter.place_order(payload)
-
-    assert result["id"] == "order-1"
-    url, kwargs = session.last_post
-    assert url == "https://paper-api.alpaca.markets/v2/orders"
-    assert kwargs["json"]["client_order_id"] == "cid-1"
-
-
-def test_broker_orders_route_returns_normalised(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _build_stubbed_broker_client() -> TestClient:
     app = FastAPI()
     app.include_router(broker.router, prefix="/broker")
     client = TestClient(app)
@@ -127,7 +106,42 @@ def test_broker_orders_route_returns_normalised(
     app.dependency_overrides[broker.get_broker_adapter] = lambda: stub_adapter
     app.dependency_overrides[broker.get_broker] = lambda: StubService()
 
+    return client
+
+
+def test_place_order_hits_alpaca() -> None:
+    payload = {
+        "symbol": "AAPL",
+        "qty": 1,
+        "side": "buy",
+        "type": "market",
+        "client_order_id": "cid-1",
+    }
+    session = FakeSession(json_payload=[])
+    adapter = AlpacaAdapter(session=session)
+
+    result = adapter.place_order(payload)
+
+    assert result["id"] == "order-1"
+    url, kwargs = session.last_post
+    assert url == "https://paper-api.alpaca.markets/v2/orders"
+    assert kwargs["json"]["client_order_id"] == "cid-1"
+
+
+def test_broker_orders_route_returns_normalised() -> None:
+    client = _build_stubbed_broker_client()
+
     response = client.get("/broker/orders")
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["status"] == "accepted"
+    assert body[0]["id"] == "order-1"
+
+
+def test_broker_trades_alias_returns_orders() -> None:
+    client = _build_stubbed_broker_client()
+
+    response = client.get("/broker/trades")
     assert response.status_code == 200
     body = response.json()
     assert body[0]["status"] == "accepted"
