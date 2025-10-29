@@ -404,9 +404,14 @@ def _render_status_header(
     if stream_details.get("last_error"):
         st.caption(f"Stream error: {stream_details['last_error']}")
 
-    if orch_status.get("last_error"):
+    last_error = orch_status.get("last_error")
+    last_error_stack = orch_status.get("last_error_stack")
+    last_error_at = orch_status.get("last_error_at")
+    if last_error_stack or last_error:
         with st.expander("Last orchestrator error", expanded=False):
-            st.code(str(orch_status.get("last_error")))
+            st.code(str(last_error_stack or last_error) or "No error payload available.")
+    if last_error_at:
+        st.caption(f"Last orchestrator error at: {last_error_at}")
 
     if orch_status.get("last_heartbeat"):
         st.caption(f"Last orchestrator heartbeat: {orch_status['last_heartbeat']}")
@@ -466,12 +471,26 @@ def _render_status_header(
             st.code("\n".join(tail_preview) or "No execution debug logs yet.")
 
     if kill_switch_engaged:
-        reason_msg = "KILL SWITCH ACTIVE — trading disabled until reset."
-        if kill_switch_reason:
-            reason_msg = f"{reason_msg}\nReason: {kill_switch_reason}"
-        st.warning(reason_msg)
+        reason_label = kill_switch_reason or "kill_switch_engaged"
+        if reason_label == "orchestrator_crashed":
+            st.error(
+                "Kill switch engaged — orchestrator crashed. Reset the kill switch before restarting."
+            )
+        else:
+            st.warning(
+                "KILL SWITCH ACTIVE — trading disabled until reset."
+                + (f"\nReason: {reason_label}" if reason_label else "")
+            )
     elif not can_trade and trade_guard_reason:
-        st.info(f"Execution guarded by {trade_guard_reason}. Enable trading to send orders.")
+        if trade_guard_reason == "startup_failed":
+            msg = "Orchestrator startup failed."
+            if last_error:
+                msg += f" Reason: {last_error}"
+            st.warning(msg)
+        else:
+            st.info(
+                f"Execution guarded by {trade_guard_reason}. Enable trading to send orders."
+            )
 
 
 def _render_metrics(
@@ -1015,7 +1034,11 @@ def render(
     stream_src = health_info.get("stream_source", "unknown")
     kill_switch = health_info.get("kill_switch", "unknown")
 
-    manager_error = manager_snapshot.get("last_error") or health_info.get("error")
+    manager_error = (
+        manager_snapshot.get("last_error_stack")
+        or manager_snapshot.get("last_error")
+        or health_info.get("error")
+    )
 
     if manager_state == "running":
         st.success("TRADING ACTIVE — orchestrator running in background.")
@@ -1023,8 +1046,13 @@ def render(
         st.warning(
             "Starting trading system…" if manager_state == "starting" else "Stopping trading system…"
         )
-    elif manager_state == "error":
-        st.error("Trading orchestrator encountered an error. Check backend logs for details.")
+    elif manager_state in {"error", "crashed", "error_startup"}:
+        if manager_state == "crashed":
+            st.error("Trading orchestrator crashed. Check kill switch status and backend logs.")
+        elif manager_state == "error_startup":
+            st.error("Trading orchestrator failed to start. Review configuration and logs.")
+        else:
+            st.error("Trading orchestrator encountered an error. Check backend logs for details.")
     else:
         st.info("Trading system is currently stopped.")
 

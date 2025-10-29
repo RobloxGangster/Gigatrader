@@ -33,6 +33,28 @@ def test_safe_arm_trading_respects_violation(tmp_path, monkeypatch) -> None:
         orchestrator_mod._CURRENT_SUPERVISOR = None
 
 
+def test_safe_arm_trading_blocks_crash_reset(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("BROKER", "alpaca")
+    monkeypatch.setenv("PROFILE", "paper")
+    monkeypatch.setenv("MOCK_MODE", "false")
+    monkeypatch.setenv("DRY_RUN", "false")
+
+    kill_path = tmp_path / "ks.json"
+    kill_switch = KillSwitch(kill_path)
+    supervisor = OrchestratorSupervisor(kill_switch)
+    try:
+        kill_switch.engage_sync(reason="orchestrator_crashed")
+        snapshot = supervisor.safe_arm_trading(requested_by="worker_boot")
+        assert snapshot["engaged"] is True
+        status = supervisor.status()
+        assert status["kill_switch_reason"] == "orchestrator_crashed"
+        assert status["trade_guard_reason"] == "orchestrator_crashed"
+        reset = supervisor.reset_kill_switch(requested_by="api.reset")
+        assert reset["engaged"] is False
+    finally:
+        orchestrator_mod._CURRENT_SUPERVISOR = None
+
+
 def test_status_reports_risk_reason(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("BROKER", "alpaca")
     monkeypatch.setenv("PROFILE", "paper")
