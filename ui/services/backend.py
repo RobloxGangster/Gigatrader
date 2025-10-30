@@ -888,9 +888,22 @@ class MockAPI:
         return Greeks(**payload)
 
     def get_indicators(self, symbol: str, lookback: int) -> Indicators:
-        payload = _load_json_fixture("indicators")
+        payload = dict(_load_json_fixture("indicators"))
         payload["symbol"] = symbol
-        payload["series"] = payload.get("series", [])[: lookback // 5 or 1]
+        payload.setdefault("interval", "1m")
+        series_map = {
+            name: list(values)
+            for name, values in (payload.get("indicators") or {}).items()
+            if isinstance(values, list)
+        }
+
+        if lookback > 0:
+            for name, values in series_map.items():
+                if values:
+                    series_map[name] = values[-min(len(values), lookback) :]
+
+        payload["indicators"] = series_map
+        payload["has_data"] = bool(series_map)
         return Indicators(**payload)
 
     def apply_strategy_params(self, payload: Dict[str, Any]) -> Dict[str, Any]:

@@ -27,11 +27,10 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     if not require_backend(backend_guard):
         st.stop()
 
-    default_symbol = (state.selected_symbol or "SPY").upper()
+    default_symbol = state.selected_symbol or "SPY"
     symbol = (
         st.text_input("Symbol", value=default_symbol, key="research_symbol")
         .strip()
-        .upper()
         or default_symbol
     )
     lookback = st.slider("Lookback (days)", min_value=10, max_value=120, value=30, step=5)
@@ -46,30 +45,40 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
 
     st.subheader("Indicator Snapshot")
     c1, c2, c3 = st.columns(3)
-    c1.metric("ATR", _fmt_decimal(indicators.atr))
-    c2.metric("RSI", _fmt_decimal(indicators.rsi))
-    c3.metric("Z-Score", _fmt_decimal(indicators.z_score))
+    if not indicators.has_data or not indicators.indicators:
+        st.info("Indicators are not available yet. Waiting for bars…")
+        return
 
-    st.caption(f"Updated {indicators.updated_at.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    c1.metric("ATR", _fmt_decimal(indicators.latest("atr")))
+    c2.metric("RSI", _fmt_decimal(indicators.latest("rsi")))
+    zscore_value = indicators.latest("zscore") or indicators.latest("z_score")
+    c3.metric("Z-Score", _fmt_decimal(zscore_value))
 
-    if indicators.series:
-        st.subheader("Series Breakdown")
-        df = pd.DataFrame(
-            {
-                "Label": [series.label for series in indicators.series],
-                "Value": [_fmt_decimal(series.value) for series in indicators.series],
-                "Trend": [series.trend or "—" for series in indicators.series],
-            }
-        )
+    last_ts = None
+    for key in ("rsi", "atr", "zscore", "z_score"):
+        series = indicators.indicators.get(key) or []
+        for entry in reversed(series):
+            if hasattr(entry, "timestamp") and getattr(entry, "timestamp"):
+                last_ts = getattr(entry, "timestamp")
+                break
+            if isinstance(entry, dict) and entry.get("timestamp"):
+                last_ts = pd.to_datetime(entry["timestamp"]).to_pydatetime()
+                break
+        if last_ts:
+            break
+
+    if last_ts:
+        st.caption(f"Updated {last_ts.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+    df = indicators.frame()
+    if df is not None and not df.empty:
+        st.subheader("Indicator Series")
         st.dataframe(df, use_container_width=True)
-
-        try:
-            numeric = pd.Series([float(s.value) for s in indicators.series], name="value")
-            chart_df = pd.DataFrame({"value": numeric})
-            chart_df.index = [series.label for series in indicators.series]
-            st.line_chart(chart_df, height=240)
-        except Exception:
-            pass
+        with pd.option_context("display.max_rows", None):
+            try:
+                st.line_chart(df, height=240)
+            except Exception:
+                pass
     else:
         st.info("No historical indicator series available for this symbol.")
 

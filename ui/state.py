@@ -128,20 +128,83 @@ class RiskSnapshot(BaseModelDecimal):
         return v
 
 
-class IndicatorSeries(BaseModelDecimal):
-    label: str
-    value: Decimal
-    trend: Optional[str] = None
+class IndicatorPoint(BaseModelDecimal):
+    """Flexible indicator point supporting optional metadata."""
+
+    model_config = ConfigDict(extra="allow")
+
+    timestamp: Optional[datetime] = None
+    label: Optional[str] = None
+    value: Optional[Decimal] = None
 
 
 class Indicators(BaseModelDecimal):
     symbol: str
-    atr: Decimal
-    rsi: Decimal
-    z_score: Decimal
-    orb: Decimal
-    updated_at: datetime
-    series: List[IndicatorSeries] = Field(default_factory=list)
+    interval: str = "1m"
+    indicators: Dict[str, List[IndicatorPoint | Decimal | float | int | None]] = Field(
+        default_factory=dict
+    )
+    has_data: bool = False
+
+    def latest(self, name: str) -> Optional[float]:
+        series = self.indicators.get(name) or []
+        for item in reversed(series):
+            value: Optional[float]
+            if isinstance(item, IndicatorPoint):
+                value = float(item.value) if item.value is not None else None
+            elif isinstance(item, (int, float, Decimal)):
+                value = float(item)
+            elif isinstance(item, dict):  # pragma: no cover - defensive fallback
+                raw = item.get("value")
+                value = float(raw) if raw is not None else None
+            else:  # pragma: no cover - resilience for unexpected payloads
+                value = None
+            if value is not None:
+                return value
+        return None
+
+    def frame(self) -> Optional["pd.DataFrame"]:
+        try:
+            import pandas as pd  # type: ignore
+        except Exception:  # pragma: no cover - optional dependency guard
+            return None
+
+        rows: Dict[str, List[Optional[float]]] = {}
+        timestamps: List[str] = []
+
+        for name, series in self.indicators.items():
+            values: List[Optional[float]] = []
+            labels: List[str] = []
+            for entry in series:
+                if isinstance(entry, IndicatorPoint):
+                    value = float(entry.value) if entry.value is not None else None
+                    label = entry.label or (
+                        entry.timestamp.isoformat() if entry.timestamp else ""
+                    )
+                elif isinstance(entry, (int, float, Decimal)):
+                    value = float(entry)
+                    label = ""
+                elif isinstance(entry, dict):  # pragma: no cover - defensive fallback
+                    raw = entry.get("value")
+                    value = float(raw) if raw is not None else None
+                    label = entry.get("label") or entry.get("timestamp") or ""
+                else:  # pragma: no cover - unexpected payload
+                    value = None
+                    label = ""
+                values.append(value)
+                labels.append(label)
+
+            rows[name] = values
+            if len(labels) > len(timestamps):
+                timestamps = labels
+
+        if not rows:
+            return None
+
+        df = pd.DataFrame(rows)
+        if timestamps:
+            df.index = timestamps + [""] * (len(df.index) - len(timestamps))
+        return df
 
 
 class ChainRow(BaseModelDecimal):

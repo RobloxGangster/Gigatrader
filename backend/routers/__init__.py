@@ -14,4 +14,5 @@ __all__ = [
     "reconcile",
     "audit",
     "options",
+    "indicators",
 ]
