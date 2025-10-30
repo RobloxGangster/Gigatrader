@@ -6,10 +6,11 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response
+from starlette.status import HTTP_201_CREATED
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -31,11 +32,11 @@ from backend.routers import (
     telemetry,
 )
 from backend.routers.deps import (
-    get_broker,
     get_kill_switch,
     get_orchestrator,
     get_stream_manager,
 )
+from backend.broker.adapter import get_broker as get_trade_broker
 from backend.services import reconcile
 from backend.services.alpaca_client import get_trading_client
 from backend.services.orchestrator import get_orchestrator_status
@@ -43,11 +44,136 @@ from backend.services.orchestrator_manager import orchestrator_manager
 from core.broker_config import is_mock
 from core.runtime_flags import RuntimeFlags, get_runtime_flags
 from core.settings import get_settings
+from backend.schemas import OrderRequest, OrderResponse
 
 load_dotenv()
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+
+order_router = APIRouter(tags=["broker"])
+_execution_log_path = Path("logs") / "execution_debug.log"
+
+
+def _append_execution_log(message: str) -> None:
+    try:
+        _execution_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with _execution_log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(f"{message}\n")
+    except Exception:  # pragma: no cover - logging best effort
+        logger.debug("Failed to append execution log", exc_info=True)
+
+
+def _safe_float(value: Any, default: float | None = None) -> float | None:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except Exception:  # pragma: no cover - defensive conversion
+        return default
+
+
+def normalize_order(order: Mapping[str, Any]) -> OrderResponse:
+    submitted_at = order.get("submitted_at") or order.get("created_at")
+    if submitted_at is not None and hasattr(submitted_at, "isoformat"):
+        submitted_at = submitted_at.isoformat()
+    elif submitted_at is not None:
+        submitted_at = str(submitted_at)
+
+    qty_value = order.get("qty") or order.get("quantity") or 0
+    tif_value = order.get("time_in_force") or order.get("tif") or "day"
+    order_type = order.get("type") or order.get("order_type") or "market"
+    side_value = order.get("side") or "buy"
+
+    raw_data: dict[str, Any] | None
+    if isinstance(order, dict):
+        raw_data = order
+    else:
+        raw_data = dict(order)
+
+    return OrderResponse(
+        id=str(order.get("id") or order.get("order_id") or order.get("id_str") or ""),
+        client_order_id=order.get("client_order_id"),
+        symbol=str(order.get("symbol") or order.get("ticker") or ""),
+        qty=_safe_float(qty_value, 0.0) or 0.0,
+        side=str(side_value).lower(),
+        type=str(order_type).lower(),
+        time_in_force=str(tif_value).lower(),
+        status=str(order.get("status") or order.get("state") or "unknown").lower(),
+        submitted_at=submitted_at,
+        filled_qty=_safe_float(order.get("filled_qty")),
+        filled_avg_price=_safe_float(order.get("filled_avg_price")),
+        raw=raw_data,
+    )
+
+
+async def _place_order(payload: OrderRequest, broker: Any) -> OrderResponse:
+    request_payload = payload.model_dump(exclude_none=True)
+    client_order_id = request_payload.get("client_order_id")
+
+    try:
+        order = await broker.place_order(**request_payload)
+    except NotImplementedError as exc:
+        logger.exception("Broker adapter does not implement place_order")
+        _append_execution_log(
+            f"[order][failure] cid={client_order_id or 'n/a'} not_implemented: {exc}"
+        )
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ValueError as exc:
+        _append_execution_log(
+            f"[order][failure] cid={client_order_id or 'n/a'} bad_request: {exc}"
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - network interaction
+        logger.exception("Failed to place order with broker")
+        _append_execution_log(
+            f"[order][failure] cid={client_order_id or 'n/a'} broker_error: {exc}"
+        )
+        raise HTTPException(status_code=502, detail=f"broker_error: {exc}") from exc
+
+    normalized = normalize_order(order)
+    _append_execution_log(
+        f"[order][success] cid={normalized.client_order_id or client_order_id or 'n/a'} "
+        f"id={normalized.id}"
+    )
+    return normalized
+
+
+def _broker_dependency() -> Any:
+    try:
+        return get_trade_broker()
+    except RuntimeError as exc:
+        _append_execution_log(
+            f"[order][failure] cid=n/a configuration_error: {exc}"
+        )
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@order_router.post(
+    "/broker/order",
+    response_model=OrderResponse,
+    status_code=HTTP_201_CREATED,
+)
+async def create_broker_order(
+    payload: OrderRequest, broker: Any = Depends(_broker_dependency)
+) -> OrderResponse:
+    """Create an order without orchestrator involvement."""
+
+    return await _place_order(payload, broker)
+
+
+@order_router.post(
+    "/broker/orders",
+    response_model=OrderResponse,
+    status_code=HTTP_201_CREATED,
+)
+async def create_broker_order_alias(
+    payload: OrderRequest, broker: Any = Depends(_broker_dependency)
+) -> OrderResponse:
+    """Backward compatible alias for order creation."""
+
+    return await _place_order(payload, broker)
 
 
 def _ensure_log_directories() -> None:
@@ -110,6 +236,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(order_router)
+for alias in ("/api", "/v1"):
+    app.include_router(order_router, prefix=alias, tags=["broker-compat"])
 
 PRIMARY_ROUTERS: list[tuple[str, Any, list[str]]] = [
     ("/broker", broker.router, ["broker"]),
