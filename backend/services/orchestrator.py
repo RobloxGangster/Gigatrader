@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Optional
 
 from core.kill_switch import KillSwitch
+from core.market_hours import market_is_open, market_state
 from core.runtime_flags import get_runtime_flags
 
 
@@ -122,6 +123,19 @@ class OrchestratorSupervisor:
                 (datetime.now(timezone.utc) - self._start_time).total_seconds(),
             )
         kill_snapshot = self._kill_switch_snapshot()
+        market_open = market_is_open()
+        manager_state: str | None = None
+        manager_thread_alive = False
+        manager_snapshot: dict[str, Any] | None = None
+        try:  # Deferred import to avoid circular dependency during app startup
+            from backend.services.orchestrator_manager import orchestrator_manager
+
+            manager_snapshot = orchestrator_manager.get_status()
+            if isinstance(manager_snapshot, dict):
+                manager_state = str(manager_snapshot.get("state") or "") or None
+                manager_thread_alive = bool(manager_snapshot.get("thread_alive"))
+        except Exception:  # pragma: no cover - defensive guard
+            manager_snapshot = None
         kill_engaged = bool(kill_snapshot.get("engaged"))
         kill_reason = kill_snapshot.get("reason") if isinstance(kill_snapshot.get("reason"), str) else None
         allowed_by_policy, base_guard_reason = can_execute_trade(
@@ -136,9 +150,27 @@ class OrchestratorSupervisor:
         kill_label = "Engaged" if kill_engaged else "Standby"
         if kill_engaged and kill_reason:
             kill_label = f"Engaged ({kill_reason})"
+        derived_state = self._state
+        if self._runtime_started:
+            if not market_open:
+                derived_state = "waiting_market_open"
+            elif derived_state in {"idle", "waiting_market_open"}:
+                derived_state = "running"
+        else:
+            if manager_state in {"idle", "waiting_market_open"}:
+                derived_state = manager_state
+            elif derived_state == "running":
+                derived_state = "idle" if market_open else "waiting_market_open"
+            elif derived_state == "stopped" and not kill_engaged and not market_open:
+                derived_state = "waiting_market_open"
+        if manager_state in {"idle", "waiting_market_open"}:
+            derived_state = manager_state
+
+        thread_alive = self._runtime_started or manager_thread_alive
+
         return {
-            "state": self._state,
-            "running": self._state == "running",
+            "state": derived_state,
+            "running": derived_state == "running",
             "last_error": self._last_error,
             "last_error_stack": self._last_error_stack,
             "last_error_at": _iso_dt(self._last_error_at),
@@ -146,6 +178,7 @@ class OrchestratorSupervisor:
             "uptime_secs": uptime,
             "uptime": uptime_label,
             "restart_count": self._restart_count,
+            "thread_alive": thread_alive,
             "start_attempt_ts": _iso_dt(self._start_attempt_ts),
             "last_shutdown_reason": self._last_shutdown_reason,
             "kill_switch": kill_label,
@@ -162,6 +195,7 @@ class OrchestratorSupervisor:
             "profile": getattr(flags, "profile", "paper"),
             "dry_run": getattr(flags, "dry_run", False),
             "mock_mode": getattr(flags, "mock_mode", False),
+            "market_state": market_state(),
         }
 
     async def start(self) -> None:
@@ -439,6 +473,7 @@ def get_orchestrator_status() -> Dict[str, Any]:
         "uptime_secs": 0.0,
         "uptime": "0.00s",
         "restart_count": 0,
+        "thread_alive": False,
         "start_attempt_ts": None,
         "last_shutdown_reason": None,
         "kill_switch": kill_label,
@@ -455,6 +490,7 @@ def get_orchestrator_status() -> Dict[str, Any]:
         "profile": getattr(flags, "profile", "paper"),
         "dry_run": getattr(flags, "dry_run", False),
         "mock_mode": getattr(flags, "mock_mode", False),
+        "market_state": market_state(),
     }
 
 

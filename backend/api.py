@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -163,8 +163,14 @@ async def health() -> Dict[str, Any]:
     except Exception:  # pragma: no cover - defensive runtime flag guard
         flags = None
 
-    orchestrator_snapshot = get_orchestrator_status()
-    manager_snapshot = orchestrator_manager.get_status()
+    try:
+        orchestrator_snapshot = get_orchestrator_status()
+    except Exception as exc:  # pragma: no cover - defensive health guard
+        orchestrator_snapshot = {"state": "unknown", "error": str(exc)}
+    try:
+        manager_snapshot = orchestrator_manager.get_status()
+    except Exception as exc:  # pragma: no cover - defensive health guard
+        manager_snapshot = {"state": "unknown", "error": str(exc), "thread_alive": False}
 
     profile_value = getattr(flags, "profile", None) or getattr(settings.runtime, "profile", "paper")
     broker_value = getattr(flags, "broker", getattr(settings.runtime, "broker", "alpaca"))
@@ -198,6 +204,19 @@ async def health() -> Dict[str, Any]:
         "orchestrator": {**orchestrator_snapshot, "manager": manager_snapshot},
         "manager": manager_snapshot,
     }
+
+    payload["thread_alive"] = bool(manager_snapshot.get("thread_alive"))
+    payload["restart_count"] = int(
+        orchestrator_snapshot.get("restart_count")
+        or manager_snapshot.get("restart_count")
+        or 0
+    )
+    payload["last_error"] = (
+        orchestrator_snapshot.get("last_error")
+        or manager_snapshot.get("last_error")
+        or orchestrator_snapshot.get("error")
+        or manager_snapshot.get("error")
+    )
 
     last_error = orchestrator_snapshot.get("last_error") or manager_snapshot.get("last_error")
     if last_error:
@@ -238,6 +257,11 @@ _register_compat_route("/health", health, ["GET"], tag="health")
 _register_compat_route("/version", version, ["GET"], tag="version")
 
 app.include_router(root_router)
+
+
+@app.get("/favicon.ico")
+async def favicon() -> Response:
+    return Response(status_code=204)
 
 from backend.routes import backtests_compat  # noqa: E402
 from backend.routers import options as options_router  # noqa: E402

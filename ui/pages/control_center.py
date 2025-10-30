@@ -13,7 +13,7 @@ import streamlit as st
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
 from ui.lib.api_client import ApiClient
-from ui.lib.st_compat import auto_refresh
+from ui.lib.refresh import safe_autorefresh, should_rerender_from_polyfill
 from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
@@ -337,6 +337,9 @@ def _render_status_header(
     kill_switch_reason = None
     can_trade = False
     trade_guard_reason = None
+    thread_alive = False
+    restart_count = 0
+    market_state_value = "unknown"
 
     if backend_up:
         runtime_profile = runtime_flags.get("profile") if isinstance(runtime_flags, dict) else None
@@ -347,7 +350,10 @@ def _render_status_header(
         broker_value = runtime_broker or orch_status.get("broker_impl") or health.get("broker")
         if broker_value is not None:
             broker_label = str(broker_value).title()
-        run_state = str(orch_status.get("state") or health.get("orchestrator_state") or "Unknown")
+        run_state_value = str(
+            orch_status.get("state") or health.get("orchestrator_state") or "Unknown"
+        )
+        run_state = run_state_value
         stream_source = str(
             orch_status.get("market_data_source")
             or health.get("stream_source")
@@ -369,11 +375,30 @@ def _render_status_header(
         )
         can_trade = bool(orch_status.get("can_trade"))
         trade_guard_reason = orch_status.get("trade_guard_reason")
+        thread_alive = bool(
+            orch_status.get("thread_alive")
+            or orch_status.get("manager", {}).get("thread_alive")
+        )
+        restart_count = int(orch_status.get("restart_count") or 0)
+        manager_restart = orch_status.get("manager", {}).get("restart_count")
+        if manager_restart is not None:
+            try:
+                restart_count = max(restart_count, int(manager_restart))
+            except Exception:
+                pass
+        market_state_value = str(
+            orch_status.get("market_state")
+            or health.get("market_state")
+            or orchestrator.get("market_state")
+            or "unknown"
+        )
+        run_state = run_state_value
 
     cols = st.columns(5)
+    run_state_display = run_state.replace("_", " ").title()
     cols[0].metric("Profile", profile_label)
     cols[1].metric("Broker", broker_label)
-    cols[2].metric("Run State", run_state)
+    cols[2].metric("Run State", run_state_display)
     cols[3].metric("Stream Source", stream_source)
     cols[4].metric("Kill Switch", kill_switch_label)
 
@@ -382,6 +407,28 @@ def _render_status_header(
         status_pill("Execution", "Offline", variant="warning")
         st.caption("Execution adapter offline while backend is stopped.")
         return
+
+    run_state_lower = run_state.lower()
+    if kill_switch_engaged:
+        trading_label = "Trading Halted (Kill Switch)"
+        trading_variant = "negative"
+    elif run_state_lower == "running":
+        trading_label = "Trading Active"
+        trading_variant = "positive"
+    elif run_state_lower in {"idle", "waiting_market_open"}:
+        trading_label = "Armed / Waiting"
+        trading_variant = "warning"
+    else:
+        trading_label = "Stopped"
+        trading_variant = "warning"
+
+    status_pill("Trading", trading_label, variant=trading_variant)
+    thread_label = "Worker thread: alive" if thread_alive else "Worker thread: offline"
+    st.caption(f"{thread_label} · restarts: {restart_count}")
+    if market_state_value and market_state_value.lower() in {"open", "closed"}:
+        st.caption(f"Market state: {market_state_value}")
+    if kill_switch_engaged and kill_switch_reason:
+        st.caption(f"Kill switch reason: {kill_switch_reason}")
 
     stream_details = {}
     details_raw = health.get("stream_details")
@@ -1386,9 +1433,17 @@ def render(
         st.session_state.pop("__cc_status_poll_until__", None)
 
     if auto_enabled:
-        auto_refresh(interval_ms=int(REFRESH_INTERVAL_SEC * 1000), key="telemetry.autorefresh.tick")
+        safe_autorefresh(
+            interval_ms=int(REFRESH_INTERVAL_SEC * 1000),
+            key="telemetry.autorefresh.tick",
+        )
+        should_rerender_from_polyfill()
 
     if not _TESTING:
         next_poll = st.session_state.get("__cc_status_poll_until__", 0.0)
         if next_poll and next_poll > now_ts:
-            auto_refresh(interval_ms=int(STATUS_POLL_INTERVAL * 1000), key="telemetry.status.poll")
+            safe_autorefresh(
+                interval_ms=int(STATUS_POLL_INTERVAL * 1000),
+                key="telemetry.status.poll",
+            )
+            should_rerender_from_polyfill()

@@ -5,7 +5,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
+
+from backend.routers.logs import export_logs
 
 router = APIRouter()
 
@@ -44,3 +46,10 @@ def diagnostics_run() -> Dict[str, Any]:
         return {"ok": overall_ok, "message": "Diagnostics complete", "details": details}
     except Exception as exc:  # pragma: no cover - defensive guard
         raise HTTPException(500, f"diagnostics_run: {exc}") from exc
+
+
+@router.get("/logs/export", response_model=None)
+def diagnostics_logs_export() -> Response:
+    """Expose the log archive export under the diagnostics namespace."""
+
+    return export_logs()

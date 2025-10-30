@@ -23,7 +23,7 @@ def _default_pages() -> List[PageSpec]:
         PageSpec("backtest_reports", "Backtest Reports", "ui.pages.backtest_reports"),
         PageSpec("ml_ops", "ML Ops", "ui.panels.ml_predict"),  # ML landing = predict panel
         PageSpec("option_chain", "Option Chain", "ui.pages.option_chain"),
-        PageSpec("diagnostics", "Diagnostics / Logs", "ui.pages.logs_pacing"),
+        PageSpec("diagnostics", "Diagnostics / Logs", "ui.pages.diagnostics_logs"),
         PageSpec("stream_status", "Stream Status", "ui.pages.stream_status"),  # optional
         PageSpec("metrics_extended", "Metrics (Extended)", "ui.panels.metrics_extended"),  # optional
         PageSpec("ml_calibration", "ML Calibration", "ui.panels.ml_calibration"),  # optional
