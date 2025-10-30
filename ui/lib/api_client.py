@@ -291,6 +291,10 @@ class ApiClient:
             return payload
         return {"path": None, "lines": []}
 
+    def logs_archive(self) -> bytes:
+        response = self._request("GET", "/diagnostics/logs/export", timeout=15)
+        return bytes(response.content or b"")
+
     def strategy_config(self) -> Any:
         return self.get("/strategy/config")
 

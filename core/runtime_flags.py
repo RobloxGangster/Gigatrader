@@ -13,7 +13,7 @@ _FLAGS_CACHE: "RuntimeFlags | None" = None
 _FLAGS_SIGNATURE: tuple[tuple[str, str | None], ...] | None = None
 _CACHE_LOCK = threading.Lock()
 
-_FALSEY = {"0", "false", "no", "off", "f", "n"}
+_FALSEY = {"0", "false", "no", "off", "f", "n", ""}
 _TRUEY = {"1", "true", "yes", "on", "t", "y"}
 
 
@@ -29,7 +29,7 @@ def parse_bool(value: object | None, default: bool = False) -> bool:
         return value
     text = str(value).strip()
     if not text:
-        return default
+        return False
     lowered = text.lower()
     if lowered in _TRUEY:
         return True

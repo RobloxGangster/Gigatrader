@@ -76,3 +76,24 @@ def test_status_reports_risk_reason(tmp_path, monkeypatch) -> None:
         assert cleared["trade_guard_reason"] is None
     finally:
         orchestrator_mod._CURRENT_SUPERVISOR = None
+
+
+def test_status_reflects_market_state(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("BROKER", "alpaca")
+    monkeypatch.setenv("PROFILE", "paper")
+    monkeypatch.setenv("MOCK_MODE", "false")
+    monkeypatch.setenv("DRY_RUN", "false")
+
+    kill_path = tmp_path / "ks.json"
+    kill_switch = KillSwitch(kill_path)
+    supervisor = OrchestratorSupervisor(kill_switch)
+    monkeypatch.setattr(orchestrator_mod, "market_is_open", lambda: False)
+    from backend.services.orchestrator_manager import orchestrator_manager
+
+    monkeypatch.setattr(orchestrator_manager, "get_status", lambda: {})
+    try:
+        snapshot = supervisor.status()
+        assert snapshot["market_state"] == "closed"
+        assert snapshot["state"] == "waiting_market_open"
+    finally:
+        orchestrator_mod._CURRENT_SUPERVISOR = None

@@ -13,7 +13,7 @@ import requests
 import streamlit as st
 
 from ui.lib.api_client import ApiClient, build_url
-from ui.lib.ui_compat import safe_rerun
+from ui.lib.refresh import safe_autorefresh, should_rerender_from_polyfill
 
 STATE_KEY = "__diagnostics_state__"
 DEFAULT_LINES = 200
@@ -146,6 +146,10 @@ def render() -> None:
     st.session_state["diag.autorefresh"] = auto_enabled
     state["filter"] = filter_text
 
+    if auto_enabled:
+        safe_autorefresh(interval_ms=REFRESH_INTERVAL_MS, key="diagnostics.autorefresh.tick")
+        should_rerender_from_polyfill()
+
     state_limit = state.get("limit", DEFAULT_LINES)
     if state_limit != limit:
         state["limit"] = limit
@@ -237,11 +241,28 @@ def render() -> None:
     st.subheader("Logs")
 
     st.download_button(
-        "Export logs",
+        "Export logs (text)",
         data=export_text.encode("utf-8"),
         file_name=_export_filename(),
         mime="text/plain",
     )
+
+    archive_bytes = b""
+    archive_error = None
+    if backend_up:
+        try:
+            archive_bytes = client.logs_archive()
+        except Exception as exc:  # noqa: BLE001 - surface fetch errors
+            archive_error = str(exc)
+    if archive_bytes:
+        st.download_button(
+            "Download log archive (.zip)",
+            data=archive_bytes,
+            file_name="diagnostics-logs.zip",
+            mime="application/zip",
+        )
+    elif archive_error:
+        st.info(f"Log archive unavailable: {archive_error}")
 
     if table_rows:
         df = pd.DataFrame(table_rows, columns=["time", "level", "worker", "msg"])
@@ -272,8 +293,7 @@ def render() -> None:
     st.caption(" · ".join(status_parts))
 
     if auto_enabled and "PYTEST_CURRENT_TEST" not in os.environ:
-        time.sleep(interval_sec)
-        safe_rerun()
+        should_rerender_from_polyfill()
 
 
 def _render_failure(payload: Dict[str, Any], client: ApiClient) -> None:

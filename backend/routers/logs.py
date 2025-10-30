@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 from collections import deque
+from io import BytesIO
 from pathlib import Path
 from typing import Dict, List
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -57,3 +59,25 @@ def download_log() -> Response:
             filename=LOG_PATH.name,
         )
     return PlainTextResponse("(no log file)", media_type="text/plain")
+
+
+@router.get("/export", response_model=None)
+def export_logs() -> Response:
+    """Return a zip archive containing recent diagnostic logs."""
+
+    logs_dir = Path("logs")
+    buffer = BytesIO()
+    with ZipFile(buffer, mode="w", compression=ZIP_DEFLATED) as zf:
+        if logs_dir.exists():
+            for path in logs_dir.rglob("*"):
+                if path.is_file():
+                    arcname = path.relative_to(logs_dir)
+                    zf.write(path, arcname.as_posix())
+        else:
+            zf.writestr("README.txt", "No log files were available at export time.")
+    buffer.seek(0)
+    headers = {
+        "Content-Disposition": "attachment; filename=diagnostics-logs.zip",
+        "Cache-Control": "no-store",
+    }
+    return Response(buffer.getvalue(), media_type="application/zip", headers=headers)

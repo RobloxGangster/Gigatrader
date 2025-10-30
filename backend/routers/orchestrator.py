@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
@@ -27,24 +26,26 @@ class OrchestratorStartPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-class OrchestratorState(str, Enum):
-    """Execution orchestrator states exposed via the public API."""
-
-    STOPPED = "stopped"
-    STARTING = "starting"
-    RUNNING = "running"
-    STOPPING = "stopping"
-    CRASHED = "crashed"
-    ERROR_STARTUP = "error_startup"
+OrchestratorState = Literal[
+    "starting",
+    "running",
+    "stopping",
+    "stopped",
+    "idle",
+    "waiting_market_open",
+    "crashed",
+    "error_startup",
+]
 
 
 class OrchestratorStatus(BaseModel):
     state: OrchestratorState
     running: bool
-    last_error: str | None = None
-    last_heartbeat: str | None = None
-    uptime_secs: float = 0.0
+    last_error: Optional[str] = None
+    thread_alive: bool = False
     restart_count: int = 0
+    last_heartbeat: Optional[str] = None
+    uptime_secs: float = 0.0
 
     model_config = ConfigDict(extra="allow")
 
@@ -54,6 +55,7 @@ def _build_status(snapshot: dict) -> OrchestratorStatus:
     payload["state"] = str(snapshot.get("state") or "stopped")
     payload["running"] = bool(snapshot.get("running"))
     payload["last_error"] = snapshot.get("last_error")
+    payload["thread_alive"] = bool(snapshot.get("thread_alive"))
     payload["last_heartbeat"] = snapshot.get("last_heartbeat")
     payload["uptime_secs"] = float(snapshot.get("uptime_secs") or 0.0)
     if "uptime" not in payload and snapshot.get("uptime_secs") is not None:
@@ -71,6 +73,7 @@ def _build_status(snapshot: dict) -> OrchestratorStatus:
             "state": manager_state,
             "thread_alive": thread_alive,
         }
+        payload.setdefault("thread_alive", thread_alive)
     return OrchestratorStatus(**payload)
 
 
@@ -125,7 +128,12 @@ async def orchestrator_stop() -> OrchestratorStatus:
         snapshot["manager"] = orchestrator_manager.get_status()
         return _build_status(snapshot)
     except Exception as exc:  # noqa: BLE001 - surfaced to client
-        raise HTTPException(status_code=500, detail=f"orchestrator_stop: {exc}") from exc
+        orchestrator = get_orchestrator()
+        snapshot = orchestrator.status()
+        snapshot["manager"] = orchestrator_manager.get_status()
+        snapshot["ok"] = False
+        snapshot["error"] = f"orchestrator_stop: {exc}"
+        return _build_status(snapshot)
 
 
 @router.post("/reset_kill_switch", response_model=OrchestratorStatus)
@@ -137,7 +145,12 @@ def orchestrator_reset_kill_switch() -> OrchestratorStatus:
         snapshot["manager"] = orchestrator_manager.get_status()
         return _build_status(snapshot)
     except Exception as exc:  # noqa: BLE001 - surfaced to client
-        raise HTTPException(status_code=500, detail=f"orchestrator_reset_kill_switch: {exc}") from exc
+        orchestrator = get_orchestrator()
+        snapshot = orchestrator.status()
+        snapshot["manager"] = orchestrator_manager.get_status()
+        snapshot["ok"] = False
+        snapshot["error"] = f"orchestrator_reset_kill_switch: {exc}"
+        return _build_status(snapshot)
 
 
 @router.get("/debug")

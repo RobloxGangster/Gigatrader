@@ -16,10 +16,14 @@ def test_parse_bool_truthy_cases():
 
 
 def test_parse_bool_falsey_cases():
-    falsey = [None, "0", "false", "False", "no", "off", "n"]
+    falsey = ["", "0", "false", "False", "no", "off", "n"]
     for value in falsey:
-        expected = True if value is None else False
-        assert parse_bool(value, default=True) is expected
+        assert parse_bool(value, default=True) is False
+
+
+def test_parse_bool_none_uses_default():
+    assert parse_bool(None, default=True) is True
+    assert parse_bool(None, default=False) is False
 
 
 def test_runtime_flags_from_env(monkeypatch):

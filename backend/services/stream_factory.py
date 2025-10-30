@@ -147,12 +147,15 @@ def make_stream_service(flags: RuntimeFlags | None = None) -> StreamService:
         return MockStreamService()
 
     if source.startswith("alpaca"):
+        healthy, err = _alpaca_env_health()
+        if not healthy:
+            detail = err or "missing credentials"
+            raise RuntimeError(f"Alpaca market data configuration invalid: {detail}")
         profile = getattr(cfg, "profile", "paper")
         log.info("Stream source selected: alpaca (profile=%s)", profile)
         return AlpacaStreamService(profile=profile)
 
-    log.warning("Unknown market_data_source %s, defaulting to mock", source)
-    return MockStreamService()
+    raise RuntimeError(f"Unsupported market_data_source: {cfg.market_data_source}")
 
 
 __all__ = [
