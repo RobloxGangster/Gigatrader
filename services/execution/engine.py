@@ -26,6 +26,7 @@ except Exception:  # pragma: no cover - fallback when backend unavailable
             return False, kill_reason or "execution_disabled"
         return True, None
 
+from backend.utils.structlog import jlog
 from services.execution.adapter_alpaca import AlpacaAdapter
 from services.execution.types import ExecIntent, ExecResult
 from services.execution.updates import UpdateBus
@@ -239,6 +240,15 @@ class ExecutionEngine:
                 self.debug_log.info("execution.guard_block", extra=context)
             except Exception:  # pragma: no cover - logging guard
                 pass
+            try:
+                jlog(
+                    "trade.blocked",
+                    symbol=intent.symbol,
+                    reason=str(reason_code),
+                    ctx="router.guard",
+                )
+            except Exception:  # pragma: no cover - logging guard
+                self.log.debug("failed to emit trade.blocked guard", exc_info=True)
             result = ExecResult(
                 accepted=False,
                 reason=reason_code,
@@ -270,6 +280,15 @@ class ExecutionEngine:
                 self.debug_log.info("execution.risk_denied", extra=context)
             except Exception:  # pragma: no cover - logging guard
                 pass
+            try:
+                jlog(
+                    "trade.blocked",
+                    symbol=intent.symbol,
+                    reason=reason,
+                    ctx="router.risk",
+                )
+            except Exception:  # pragma: no cover - logging guard
+                self.log.debug("failed to emit trade.blocked risk", exc_info=True)
             result = ExecResult(
                 accepted=False,
                 reason=reason,
@@ -286,6 +305,10 @@ class ExecutionEngine:
                 setattr(payload, "client_order_id", client_order_id)
             except Exception:
                 pass
+        try:
+            jlog("trade.route", route="broker", payload=payload)
+        except Exception:  # pragma: no cover - logging guard
+            self.log.debug("failed to emit trade.route", exc_info=True)
         try:
             response = await self.adapter.submit_order(payload)
         except Exception as exc:  # pragma: no cover - network errors simulated in integration tests
@@ -304,6 +327,15 @@ class ExecutionEngine:
                 self.debug_log.error("execution.submit_failed", extra=context)
             except Exception:  # pragma: no cover - logging guard
                 pass
+            try:
+                jlog(
+                    "trade.submit_error",
+                    error=str(exc),
+                    payload=payload,
+                    symbol=intent.symbol,
+                )
+            except Exception:  # pragma: no cover - logging guard
+                self.log.debug("failed to emit trade.submit_error", exc_info=True)
             result = ExecResult(
                 accepted=False,
                 reason=reason,
@@ -368,6 +400,19 @@ class ExecutionEngine:
             )
         except Exception:  # pragma: no cover - logging guard
             pass
+        try:
+            jlog(
+                "trade.submitted",
+                broker=getattr(self.adapter, "name", "alpaca"),
+                client_order_id=client_order_id,
+                id=order_id,
+                status=status,
+                symbol=intent.symbol,
+                side=intent.side,
+                qty=float(intent.qty),
+            )
+        except Exception:  # pragma: no cover - logging guard
+            self.log.debug("failed to emit trade.submitted", exc_info=True)
         self._record_attempt(intent, sent=True, accepted=True, reason=status)
         return result
 

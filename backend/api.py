@@ -10,7 +10,6 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response
-from starlette.status import HTTP_201_CREATED
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -63,6 +62,32 @@ def _append_execution_log(message: str) -> None:
             log_file.write(f"{message}\n")
     except Exception:  # pragma: no cover - logging best effort
         logger.debug("Failed to append execution log", exc_info=True)
+
+
+def _configure_gigatrader_logger() -> None:
+    """Ensure the shared Gigatrader logger has a sane log level."""
+
+    gigalog = logging.getLogger("gigatrader")
+    if getattr(gigalog, "_gigatrader_configured", False):  # type: ignore[attr-defined]
+        return
+
+    level = logging.INFO
+    try:
+        flags = get_runtime_flags()
+    except Exception:  # pragma: no cover - runtime flag probe
+        flags = None
+
+    profile = None
+    paper_mode = False
+    if flags is not None:
+        profile = str(getattr(flags, "profile", None) or "").lower() or None
+        paper_mode = bool(getattr(flags, "paper_trading", False))
+    if profile in {None, "paper", "dev", "development"} or paper_mode:
+        level = logging.DEBUG
+
+    gigalog.setLevel(level)
+    gigalog.propagate = True
+    setattr(gigalog, "_gigatrader_configured", True)
 
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
@@ -150,30 +175,34 @@ def _broker_dependency() -> Any:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+async def _create_broker_order(payload: OrderRequest, broker: Any) -> OrderResponse:
+    return await _place_order(payload, broker)
+
+
 @order_router.post(
     "/broker/order",
     response_model=OrderResponse,
-    status_code=HTTP_201_CREATED,
+    status_code=200,
 )
 async def create_broker_order(
     payload: OrderRequest, broker: Any = Depends(_broker_dependency)
 ) -> OrderResponse:
     """Create an order without orchestrator involvement."""
 
-    return await _place_order(payload, broker)
+    return await _create_broker_order(payload, broker)
 
 
 @order_router.post(
     "/broker/orders",
     response_model=OrderResponse,
-    status_code=HTTP_201_CREATED,
+    status_code=200,
 )
 async def create_broker_order_alias(
     payload: OrderRequest, broker: Any = Depends(_broker_dependency)
 ) -> OrderResponse:
     """Backward compatible alias for order creation."""
 
-    return await _place_order(payload, broker)
+    return await _create_broker_order(payload, broker)
 
 
 def _ensure_log_directories() -> None:
@@ -193,6 +222,7 @@ def _ensure_log_directories() -> None:
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
     _ensure_log_directories()
+    _configure_gigatrader_logger()
     flags = get_runtime_flags()
     profile = "paper" if flags.paper_trading else "live"
     logger.info(

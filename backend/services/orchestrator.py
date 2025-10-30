@@ -168,6 +168,15 @@ class OrchestratorSupervisor:
 
         thread_alive = self._runtime_started or manager_thread_alive
 
+        allowed_states = {"starting", "running", "stopping", "stopped"}
+        if derived_state not in allowed_states:
+            if self._stop_requested or manager_state == "stopping":
+                derived_state = "stopping"
+            elif thread_alive:
+                derived_state = "running" if self._runtime_started else "starting"
+            else:
+                derived_state = "stopped"
+
         return {
             "state": derived_state,
             "running": derived_state == "running",

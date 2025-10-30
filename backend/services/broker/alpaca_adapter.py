@@ -9,6 +9,7 @@ from typing import Any
 from alpaca_trade_api import REST as AlpacaREST
 
 from core.config import Settings
+from backend.utils.structlog import jlog
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +62,20 @@ class AlpacaBrokerAdapter:
         time_in_force: str = "day",
     ) -> dict[str, Any]:
         if self._settings.mock_mode or self._settings.dry_run:
+            try:
+                jlog(
+                    "trade.adapter.block",
+                    reason="dry_run" if self._settings.dry_run else "mock_mode",
+                    payload={
+                        "symbol": symbol,
+                        "qty": qty,
+                        "side": side,
+                        "type": type,
+                        "time_in_force": time_in_force,
+                    },
+                )
+            except Exception:  # pragma: no cover - logging guard
+                log.debug("failed to emit trade.adapter.block", exc_info=True)
             log.warning(
                 "broker.alpaca.dry_run",
                 extra={"symbol": symbol, "qty": qty, "side": side},
@@ -83,6 +98,20 @@ class AlpacaBrokerAdapter:
                 "time_in_force": time_in_force,
             },
         )
+        try:
+            jlog(
+                "trade.adapter.request",
+                endpoint="alpaca/orders",
+                body={
+                    "symbol": symbol,
+                    "qty": qty,
+                    "side": side,
+                    "type": type,
+                    "time_in_force": time_in_force,
+                },
+            )
+        except Exception:  # pragma: no cover - logging guard
+            log.debug("failed to emit trade.adapter.request", exc_info=True)
         order = self._rest.submit_order(
             symbol=symbol,
             qty=qty,
@@ -94,5 +123,14 @@ class AlpacaBrokerAdapter:
             "broker.alpaca.order_submitted",
             extra={"symbol": symbol, "qty": qty, "side": side, "id": order.id},
         )
-        return order._raw
+        data = order._raw
+        try:
+            jlog(
+                "trade.adapter.response",
+                status_code=200,
+                body=data,
+            )
+        except Exception:  # pragma: no cover - logging guard
+            log.debug("failed to emit trade.adapter.response", exc_info=True)
+        return data
 

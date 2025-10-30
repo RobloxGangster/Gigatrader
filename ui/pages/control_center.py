@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
@@ -13,12 +14,12 @@ import streamlit as st
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
 from ui.lib.api_client import ApiClient
-from ui.lib.refresh import safe_autorefresh, should_rerender_from_polyfill
 from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
 from ui.services.backend import BrokerAPI
 from ui.services.healthcheck import probe_backend
+from ui.utils.ui_poll import debounced_poll
 
 _TESTING = "PYTEST_CURRENT_TEST" in os.environ
 REFRESH_INTERVAL_SEC = 5
@@ -679,21 +680,40 @@ def _render_algorithm_controls(
         preset_index = DEFAULT_PRESETS.index(preset_default)
     except ValueError:
         preset_index = 1
+    preset = st.selectbox(
+        "Run Preset", DEFAULT_PRESETS, index=preset_index, key="cc_run_preset"
+    )
+    start_label = "Start Paper" if mock_mode else "Start Trading"
+    start_col, stop_col = st.columns(2)
+    if start_col.button(start_label, key="cc_start_btn"):
+        rid = f"start-{uuid.uuid4().hex[:8]}"
+        st.session_state["cc.last_req"] = rid
+        try:
+            result = api.orchestrator_start(preset=preset, request_id=rid)
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Failed to start trading: {exc}")
+        else:
+            st.toast(
+                f"Trading start requested ({result.get('run_id', 'paper')})", icon="✅"
+            )
+            _schedule_status_poll()
+    if stop_col.button("Stop", key="cc_stop_btn"):
+        rid = f"stop-{uuid.uuid4().hex[:8]}"
+        st.session_state["cc.last_req"] = rid
+        try:
+            api.orchestrator_stop(request_id=rid)
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Failed to stop trading: {exc}")
+        else:
+            st.toast("Trading stop requested", icon="🛑")
+            _schedule_status_poll()
+    st.caption(
+        "Start/stop orchestrator and enable live routing."
+        if not mock_mode
+        else "Mock mode prevents live orders."
+    )
 
     with st.form("algorithm_controls"):
-        start_label = "Start Paper" if mock_mode else "Start Trading"
-        preset = st.selectbox(
-            "Run Preset", DEFAULT_PRESETS, index=preset_index, key="cc_run_preset"
-        )
-        start_col, stop_col, reconcile_col = st.columns(3)
-        start_clicked = start_col.form_submit_button(start_label)
-        stop_clicked = stop_col.form_submit_button("Stop")
-        st.caption(
-            "Start/stop orchestrator and enable live routing."
-            if not mock_mode
-            else "Mock mode prevents live orders."
-        )
-
         strategy_flags = strategy_cfg.get("strategies") or {}
         toggles: Dict[str, bool] = {}
         toggle_cols = st.columns(len(STRATEGY_LABELS))
@@ -754,25 +774,10 @@ def _render_algorithm_controls(
             help="Dry run only available in mock mode.",
         )
 
-        update_clicked = st.form_submit_button("Update Strategy Settings")
-        reconcile_clicked = reconcile_col.form_submit_button("Sync & Reconcile")
+        actions_cols = st.columns([2, 1])
+        update_clicked = actions_cols[0].form_submit_button("Update Strategy Settings")
+        reconcile_clicked = actions_cols[1].form_submit_button("Sync & Reconcile")
 
-        if start_clicked:
-            try:
-                result = api.orchestrator_start(preset=preset)
-                st.toast(
-                    f"Trading started ({result.get('run_id', 'paper')})", icon="✅"
-                )
-                _schedule_status_poll()
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"Failed to start trading: {exc}")
-        if stop_clicked:
-            try:
-                api.orchestrator_stop()
-                st.toast("Trading stopped", icon="🛑")
-                _schedule_status_poll()
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"Failed to stop trading: {exc}")
         if reconcile_clicked:
             try:
                 api.orchestrator_reconcile()
@@ -951,10 +956,7 @@ def _render_logs(log_lines: List[str], pacing: Dict[str, Any]) -> None:
 def _schedule_status_poll(window: float = STATUS_POLL_WINDOW) -> None:
     if _TESTING:
         return
-    try:
-        st.session_state["__cc_status_poll_until__"] = time.time() + float(window)
-    except Exception:
-        st.session_state["__cc_status_poll_until__"] = time.time() + STATUS_POLL_WINDOW
+    st.session_state["__cc_force_poll"] = True
 
 
 def _load_remote_state(
@@ -1274,7 +1276,27 @@ def render(
 
     backend_running = True
 
-    data = _load_remote_state(api, backend_running, health_payload)
+    manual_refresh_ts = st.session_state.pop("__cc_manual_refresh_ts__", None)
+    force_poll = bool(st.session_state.pop("__cc_force_poll", False))
+    cache_key = "__cc_cached_state__"
+    now_ts = time.time()
+    should_fetch = cache_key not in st.session_state or manual_refresh_ts is not None or force_poll
+
+    if auto_enabled and not should_fetch:
+        if debounced_poll("cc_status", STATUS_POLL_INTERVAL):
+            should_fetch = True
+        else:
+            next_at = float(st.session_state.get("cc_status.next", 0.0) or 0.0)
+            wait_for = max(0.0, next_at - now_ts)
+            if wait_for > 0:
+                time.sleep(min(wait_for, 0.5))
+            st.experimental_rerun()
+
+    if should_fetch:
+        data = _load_remote_state(api, backend_running, health_payload)
+        st.session_state[cache_key] = data
+    else:
+        data = st.session_state.get(cache_key, {})
     backend_up = backend_running
 
     health_snapshot = data.get("health", {}) if isinstance(data, dict) else {}
@@ -1427,23 +1449,3 @@ def render(
     _render_tables(positions, orders, api.base())
     _render_logs(data.get("logs", []), data.get("pacing", {}))
 
-    now_ts = time.time()
-    poll_until = st.session_state.get("__cc_status_poll_until__", 0.0)
-    if poll_until and now_ts >= poll_until:
-        st.session_state.pop("__cc_status_poll_until__", None)
-
-    if auto_enabled:
-        safe_autorefresh(
-            interval_ms=int(REFRESH_INTERVAL_SEC * 1000),
-            key="telemetry.autorefresh.tick",
-        )
-        should_rerender_from_polyfill()
-
-    if not _TESTING:
-        next_poll = st.session_state.get("__cc_status_poll_until__", 0.0)
-        if next_poll and next_poll > now_ts:
-            safe_autorefresh(
-                interval_ms=int(STATUS_POLL_INTERVAL * 1000),
-                key="telemetry.status.poll",
-            )
-            should_rerender_from_polyfill()

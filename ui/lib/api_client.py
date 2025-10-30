@@ -234,12 +234,19 @@ class ApiClient:
     def orchestrator_debug(self) -> Any:
         return self.get("/orchestrator/debug")
 
-    def orchestrator_start(self, preset: Optional[str] = None, mode: Optional[str] = None) -> Any:
+    def orchestrator_start(
+        self,
+        preset: Optional[str] = None,
+        mode: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> Any:
         payload: Dict[str, Any] = {}
         if preset is not None:
             payload["preset"] = preset
         if mode is not None:
             payload["mode"] = mode
+        if request_id is not None:
+            payload["request_id"] = request_id
         try:
             return self.post("/orchestrator/start", json=payload or None)
         except HTTPError as exc:
@@ -247,12 +254,15 @@ class ApiClient:
                 return self.post("/paper/start", json=payload or None)
             raise
 
-    def orchestrator_stop(self) -> Any:
+    def orchestrator_stop(self, request_id: Optional[str] = None) -> Any:
+        payload: Dict[str, Any] | None = None
+        if request_id is not None:
+            payload = {"request_id": request_id}
         try:
-            return self.post("/orchestrator/stop")
+            return self.post("/orchestrator/stop", json=payload)
         except HTTPError as exc:
             if exc.response is not None and exc.response.status_code in {404, 405}:
-                return self.post("/paper/stop")
+                return self.post("/paper/stop", json=payload)
             raise
 
     def orchestrator_reset_kill_switch(self) -> Any:
