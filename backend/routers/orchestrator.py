@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
@@ -11,6 +11,7 @@ from backend.services.orchestrator import (
     get_last_order_attempt,
     get_orchestrator_status,
 )
+from backend.models.orchestrator import OrchestratorStatus as OrchestratorStatusModel, OrchState
 from backend.services.orchestrator_manager import orchestrator_manager
 from backend.services.orchestrator_runner import run_trading_loop
 
@@ -26,33 +27,20 @@ class OrchestratorStartPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-OrchestratorState = Literal[
-    "starting",
-    "running",
-    "stopping",
-    "stopped",
-    "idle",
-    "waiting_market_open",
-    "crashed",
-    "error_startup",
-]
-
-
-class OrchestratorStatus(BaseModel):
-    state: OrchestratorState
-    running: bool
-    last_error: Optional[str] = None
-    thread_alive: bool = False
-    restart_count: int = 0
-    last_heartbeat: Optional[str] = None
-    uptime_secs: float = 0.0
-
+class OrchestratorStatus(OrchestratorStatusModel):
     model_config = ConfigDict(extra="allow")
 
 
 def _build_status(snapshot: dict) -> OrchestratorStatus:
     payload = dict(snapshot)
-    payload["state"] = str(snapshot.get("state") or "stopped")
+    raw_state = str(snapshot.get("state") or "stopped")
+    allowed: set[str] = {"starting", "running", "stopping", "stopped"}
+    coerced_state: OrchState
+    if raw_state in allowed:
+        coerced_state = raw_state  # type: ignore[assignment]
+    else:
+        coerced_state = "running" if bool(snapshot.get("running")) else "stopped"
+    payload["state"] = coerced_state
     payload["running"] = bool(snapshot.get("running"))
     payload["last_error"] = snapshot.get("last_error")
     payload["thread_alive"] = bool(snapshot.get("thread_alive"))
@@ -106,9 +94,9 @@ async def orchestrator_start(payload: OrchestratorStartPayload | None = None) ->
                 status_code=409,
                 detail=f"kill switch engaged ({reason_label}); reset before starting",
             )
-        orchestrator_manager.start(run_trading_loop)
+        manager_snapshot = orchestrator_manager.start(run_trading_loop)
         snapshot = orchestrator.status()
-        snapshot["manager"] = orchestrator_manager.get_status()
+        snapshot["manager"] = manager_snapshot
         snapshot["kill_switch_engaged"] = bool(snapshot.get("kill_switch_engaged"))
         if payload and payload.preset:
             snapshot["preset"] = payload.preset
@@ -122,10 +110,10 @@ async def orchestrator_start(payload: OrchestratorStartPayload | None = None) ->
 @router.post("/stop", response_model=OrchestratorStatus)
 async def orchestrator_stop() -> OrchestratorStatus:
     try:
-        orchestrator_manager.stop()
+        manager_snapshot = orchestrator_manager.stop("api.stop")
         orchestrator = get_orchestrator()
         snapshot = orchestrator.status()
-        snapshot["manager"] = orchestrator_manager.get_status()
+        snapshot["manager"] = manager_snapshot
         return _build_status(snapshot)
     except Exception as exc:  # noqa: BLE001 - surfaced to client
         orchestrator = get_orchestrator()

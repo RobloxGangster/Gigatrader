@@ -17,6 +17,7 @@ import threading
 from app.execution.router import ExecIntent, OrderRouter
 from app.risk import Proposal, RiskManager
 from app.signals.signal_engine import SignalBundle, SignalCandidate
+from backend.utils.structlog import jlog
 from core.config import TradeLoopConfig
 from core.runtime_flags import RuntimeFlags, get_runtime_flags
 
@@ -482,6 +483,15 @@ class TradeOrchestrator:
                 "status": "filtered" if filters else "pending",
             }
             if filters:
+                try:
+                    jlog(
+                        "trade.blocked",
+                        symbol=symbol,
+                        reason=",".join(filters) or "filtered",
+                        ctx="candidate.pre_filter",
+                    )
+                except Exception:  # pragma: no cover - logging guard
+                    log.debug("failed to emit trade.blocked log", exc_info=True)
                 skipped.append(record)
                 continue
             rank_payload = _build_rank_payload(candidate, expected_value, direction_prob)
@@ -500,6 +510,15 @@ class TradeOrchestrator:
         selected = scored[: config.top_n]
         dropped = scored[config.top_n :]
         for candidate, ev_value, direction_prob, _ in dropped:
+            try:
+                jlog(
+                    "trade.blocked",
+                    symbol=_uppercase(candidate.symbol),
+                    reason="rank_out_of_range",
+                    ctx="candidate.rank",
+                )
+            except Exception:  # pragma: no cover - logging guard
+                log.debug("failed to emit trade.blocked for rank", exc_info=True)
             self._record_decision(
                 {
                     "symbol": _uppercase(candidate.symbol),
@@ -543,6 +562,15 @@ class TradeOrchestrator:
         if qty <= 0:
             record["status"] = "filtered"
             record["filters"] = ["sizing_zero"]
+            try:
+                jlog(
+                    "trade.blocked",
+                    symbol=symbol,
+                    reason="sizing_zero",
+                    ctx="candidate.sizing",
+                )
+            except Exception:  # pragma: no cover - logging guard
+                log.debug("failed to emit trade.blocked sizing", exc_info=True)
             self._record_decision(record)
             return
 
@@ -563,12 +591,30 @@ class TradeOrchestrator:
             record["status"] = "error"
             record["filters"] = ["risk_error"]
             record["reason"] = str(exc)
+            try:
+                jlog(
+                    "trade.blocked",
+                    symbol=symbol,
+                    reason="risk_error",
+                    ctx="risk.check",
+                )
+            except Exception:  # pragma: no cover - logging guard
+                log.debug("failed to emit trade.blocked risk_error", exc_info=True)
             self._record_decision(record)
             return
 
         if not getattr(decision, "allow", False):
             record["status"] = "rejected"
             record["filters"] = [f"risk:{getattr(decision, 'reason', 'denied')}"]
+            try:
+                jlog(
+                    "trade.blocked",
+                    symbol=symbol,
+                    reason=f"risk:{getattr(decision, 'reason', 'denied')}",
+                    ctx="risk.decision",
+                )
+            except Exception:  # pragma: no cover - logging guard
+                log.debug("failed to emit trade.blocked risk decision", exc_info=True)
             self._record_decision(record)
             return
 
@@ -579,6 +625,15 @@ class TradeOrchestrator:
         if qty <= 0:
             record["status"] = "filtered"
             record["filters"].append("risk_max_qty")
+            try:
+                jlog(
+                    "trade.blocked",
+                    symbol=symbol,
+                    reason="risk_max_qty",
+                    ctx="risk.sizing",
+                )
+            except Exception:  # pragma: no cover - logging guard
+                log.debug("failed to emit trade.blocked risk sizing", exc_info=True)
             self._record_decision(record)
             return
 
@@ -617,6 +672,30 @@ class TradeOrchestrator:
             asset_class="option" if candidate.kind == "option" else "equity",
             meta=policy_meta,
         )
+
+        intent_meta = {
+            "src": "trade.orchestrator",
+            "strategy": candidate.meta.get("strategy") if isinstance(candidate.meta, Mapping) else None,
+            "sig_id": (
+                candidate.meta.get("id") if isinstance(candidate.meta, Mapping) else None
+            ),
+            "expected_value": float(expected_value),
+            "confidence": float(candidate.confidence),
+            "proba_up": float(direction_prob) if direction_prob is not None else None,
+        }
+        payload = {
+            "symbol": symbol,
+            "side": candidate.side,
+            "qty": int(qty),
+            "type": "limit",
+            "time_in_force": "day",
+            "asset_class": intent.asset_class,
+            "meta": {k: v for k, v in intent_meta.items() if v is not None},
+        }
+        try:
+            jlog("trade.intent", **payload)
+        except Exception:  # pragma: no cover - logging guard
+            log.debug("failed to emit trade.intent", exc_info=True)
 
         result = await self._submit_with_retry(intent, dry_run=self._mock_routing)
         with self._metrics_lock:

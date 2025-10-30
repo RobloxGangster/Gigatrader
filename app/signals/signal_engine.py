@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from app.data.market import IMarketDataClient, bars_to_df
 from app.utils.cache import TTLCache
 from app.ml.features import build_features
+from backend.utils.structlog import jlog
 
 logger = logging.getLogger(__name__)
 
@@ -362,4 +363,13 @@ class SignalEngine:
             profile=profile,
             candidates=final_candidates,
         )
+        try:
+            jlog(
+                "signal.candidates",
+                count=len(final_candidates),
+                profile=profile,
+                symbols=[c.symbol for c in final_candidates][:20],
+            )
+        except Exception:  # pragma: no cover - logging best effort
+            logger.debug("failed to emit signal.candidates log", exc_info=True)
         return bundle

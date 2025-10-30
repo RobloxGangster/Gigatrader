@@ -1,233 +1,147 @@
+"""Threaded orchestrator manager with idempotent transitions."""
+
 from __future__ import annotations
 
 import logging
 import threading
-import time
 import traceback
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Literal, Optional
+from typing import Any, Callable, Dict
 
-from core.kill_switch import KillSwitch
-from core.market_hours import market_is_open
+from backend.models.orchestrator import OrchestratorStatus
+
 
 log = logging.getLogger(__name__)
 
 
-OrchestratorState = Literal[
-    "stopped",
-    "starting",
-    "running",
-    "stopping",
-    "crashed",
-    "error_startup",
-    "idle",
-    "waiting_market_open",
-]
+_state = OrchestratorStatus()
+_lock = threading.Lock()
+_worker_thread: threading.Thread | None = None
+_stop_event = threading.Event()
+_thread_started_at: datetime | None = None
+_last_error_stack: str | None = None
+_last_error_at: datetime | None = None
 
 
-def _utc_now() -> datetime:
+def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _iso(ts: datetime | None) -> str | None:
-    if ts is None:
-        return None
-    return ts.isoformat().replace("+00:00", "Z")
+def _snapshot_locked() -> Dict[str, Any]:
+    thread_alive = bool(_worker_thread and _worker_thread.is_alive())
+    uptime = 0.0
+    if thread_alive and _thread_started_at:
+        uptime = max(0.0, (_utcnow() - _thread_started_at).total_seconds())
+    snapshot = _state.model_copy(update={
+        "thread_alive": thread_alive,
+        "uptime_secs": uptime,
+        "last_error_stack": _last_error_stack,
+        "last_error_at": _last_error_at,
+    })
+    return snapshot.model_dump()
+
+
+def _update_state(**kwargs: Any) -> None:
+    for key, value in kwargs.items():
+        setattr(_state, key, value)
+
+
+def start(trading_entrypoint: Callable[[Callable[[], bool]], None]) -> Dict[str, Any]:
+    """Start the orchestrator thread if not already running."""
+
+    global _worker_thread, _thread_started_at, _last_error_stack, _last_error_at
+
+    with _lock:
+        thread_alive = bool(_worker_thread and _worker_thread.is_alive())
+        if thread_alive and _state.state in {"starting", "running"}:
+            return _snapshot_locked()
+        if thread_alive:
+            # Thread is alive but not marked running; avoid double-spawn.
+            return _snapshot_locked()
+
+        _stop_event.clear()
+        _update_state(
+            state="starting",
+            running=True,
+            last_error=None,
+            start_attempt_ts=_utcnow(),
+            last_shutdown_reason=None,
+        )
+        _last_error_stack = None
+        _last_error_at = None
+
+        def _runner() -> None:
+            nonlocal trading_entrypoint
+            global _worker_thread, _thread_started_at, _last_error_stack, _last_error_at
+            try:
+                with _lock:
+                    _update_state(state="running", running=True)
+                    _state.restart_count += 1
+                    _thread_started_at = _utcnow()
+                trading_entrypoint(lambda: _stop_event.is_set())
+            except Exception as exc:  # pragma: no cover - runtime guard
+                stack = traceback.format_exc()
+                log.exception("orchestrator_manager.worker.crashed")
+                with _lock:
+                    _update_state(last_error=str(exc))
+                    _last_error_stack = stack
+                    _last_error_at = _utcnow()
+            finally:
+                with _lock:
+                    _update_state(state="stopped", running=False)
+                    _thread_started_at = None
+                    if _state.last_shutdown_reason is None:
+                        _state.last_shutdown_reason = (
+                            "requested_stop" if _stop_event.is_set() else "completed"
+                        )
+                    _worker_thread = None
+                _stop_event.clear()
+
+        thread = threading.Thread(target=_runner, name="orchestrator", daemon=True)
+        _worker_thread = thread
+        thread.start()
+        return _snapshot_locked()
+
+
+def stop(reason: str = "requested_stop") -> Dict[str, Any]:
+    """Signal the orchestrator thread to stop, idempotently."""
+
+    with _lock:
+        if _state.state in {"stopping", "stopped"}:
+            if reason and not _state.last_shutdown_reason:
+                _state.last_shutdown_reason = reason
+            _state.running = False
+            return _snapshot_locked()
+
+        _update_state(state="stopping", running=False)
+        if reason:
+            _state.last_shutdown_reason = reason
+        _stop_event.set()
+        return _snapshot_locked()
+
+
+def status() -> Dict[str, Any]:
+    """Return the current orchestrator status snapshot."""
+
+    with _lock:
+        return _snapshot_locked()
 
 
 class OrchestratorManager:
-    """Run the trading orchestrator inside a dedicated background thread."""
+    """Object wrapper exposing the manager operations."""
 
-    def __init__(self) -> None:
-        self._state: OrchestratorState = "stopped"
-        self._thread: Optional[threading.Thread] = None
-        self._stop_flag: bool = False
-        self._last_error: Optional[str] = None
-        self._last_error_stack: Optional[str] = None
-        self._start_attempt_ts: Optional[datetime] = None
-        self._thread_started_at: Optional[datetime] = None
-        self._last_stop_ts: Optional[datetime] = None
-        self._last_exit_reason: Optional[str] = None
-        self._lock = threading.Lock()
-        self._watchdog_thread: Optional[threading.Thread] = None
-        self._watchdog_stop = threading.Event()
-        self._entrypoint: Optional[Callable[[Callable[[], bool]], None]] = None
-        self._auto_restart_enabled = False
-        self._restart_count = 0
-        self._kill_switch = KillSwitch()
+    def start(self, trading_entrypoint: Callable[[Callable[[], bool]], None]) -> Dict[str, Any]:
+        return start(trading_entrypoint)
+
+    def stop(self, reason: str = "requested_stop") -> Dict[str, Any]:
+        return stop(reason)
 
     def get_status(self) -> Dict[str, Any]:
-        """Return a lightweight snapshot about the orchestrator thread."""
-
-        with self._lock:
-            thread_alive = self._thread.is_alive() if self._thread else False
-            return {
-                "state": self._state,
-                "last_error": self._last_error,
-                "last_error_stack": self._last_error_stack,
-                "thread_alive": thread_alive,
-                "start_attempt_ts": _iso(self._start_attempt_ts),
-                "thread_started_at": _iso(self._thread_started_at),
-                "last_stop_ts": _iso(self._last_stop_ts),
-                "last_exit_reason": self._last_exit_reason,
-                "restart_count": self._restart_count,
-            }
-
-    def start(self, trading_entrypoint: Callable[[Callable[[], bool]], None]) -> None:
-        """Start the orchestrator thread if it is not already running."""
-
-        with self._lock:
-            if self._thread and self._thread.is_alive():
-                if self._state in ("running", "starting"):
-                    log.debug("orchestrator_manager.start skipped; thread already running")
-                    return
-            self._stop_flag = False
-            self._state = "starting"
-            self._last_error = None
-            self._last_error_stack = None
-            self._last_exit_reason = None
-            self._last_stop_ts = None
-            self._start_attempt_ts = _utc_now()
-            self._entrypoint = trading_entrypoint
-            self._auto_restart_enabled = True
-            self._restart_count = 0
-            log.info(
-                "orchestrator_manager.start requested",
-                extra={"start_attempt": _iso(self._start_attempt_ts)},
-            )
-            self._ensure_watchdog_locked()
-            self._launch_thread_locked(trading_entrypoint)
-
-    def stop(self) -> None:
-        """Signal the orchestrator thread to stop gracefully."""
-
-        with self._lock:
-            thread = self._thread
-            if not thread or not thread.is_alive():
-                self._state = "stopped"
-                self._stop_flag = False
-                self._auto_restart_enabled = False
-                self._entrypoint = None
-                return
-            if self._state not in ("running", "starting"):
-                return
-            self._stop_flag = True
-            self._state = "stopping"
-            self._auto_restart_enabled = False
-            self._entrypoint = None
-        if thread and thread.is_alive():
-            log.info("orchestrator_manager.stop waiting for thread to exit")
-            thread.join(timeout=10.0)
-        with self._lock:
-            still_alive = bool(thread and thread.is_alive())
-            if still_alive:
-                log.warning("orchestrator_manager.stop timeout waiting for thread")
-            else:
-                self._state = "stopped"
-                self._stop_flag = False
-                self._last_stop_ts = _utc_now()
-                self._thread = None
-
-    def _launch_thread_locked(
-        self,
-        trading_entrypoint: Callable[[Callable[[], bool]], None],
-    ) -> None:
-        def _runner() -> None:
-            log.info("orchestrator_manager.thread.starting")
-            try:
-                with self._lock:
-                    self._state = "running"
-                    self._thread_started_at = _utc_now()
-                trading_entrypoint(lambda: self._stop_flag)
-                with self._lock:
-                    exit_reason = "stop_requested" if self._stop_flag else "completed"
-                    self._last_exit_reason = exit_reason
-                    if self._stop_flag:
-                        self._state = "stopped"
-                    else:
-                        self._state = (
-                            "idle" if market_is_open() else "waiting_market_open"
-                        )
-            except Exception as exc:  # pragma: no cover - runtime defensive
-                stack = traceback.format_exc()
-                log.exception("orchestrator_manager.thread.crashed")
-                with self._lock:
-                    self._last_error = str(exc)
-                    self._last_error_stack = stack
-                    if self._state == "starting":
-                        self._state = "error_startup"
-                    else:
-                        self._state = "crashed"
-                    self._last_exit_reason = "exception"
-            finally:
-                with self._lock:
-                    self._thread = None
-                    self._stop_flag = False
-                    self._last_stop_ts = _utc_now()
-                    self._thread_started_at = None
-                log.info(
-                    "orchestrator_manager.thread.finished",
-                    extra={
-                        "state": self._state,
-                        "last_exit_reason": self._last_exit_reason,
-                    },
-                )
-
-        thread = threading.Thread(
-            target=_runner,
-            name="orchestrator-thread",
-            daemon=True,
-        )
-        self._thread = thread
-        thread.start()
-
-    def _ensure_watchdog_locked(self) -> None:
-        if self._watchdog_thread and self._watchdog_thread.is_alive():
-            return
-        self._watchdog_stop.clear()
-        thread = threading.Thread(
-            target=self._watchdog_loop,
-            name="orchestrator-watchdog",
-            daemon=True,
-        )
-        self._watchdog_thread = thread
-        thread.start()
-
-    def _watchdog_loop(self) -> None:
-        while not self._watchdog_stop.is_set():
-            if self._watchdog_stop.wait(timeout=1.5):
-                break
-            with self._lock:
-                entrypoint = self._entrypoint
-                thread = self._thread
-                stop_flag = self._stop_flag
-                auto_restart = self._auto_restart_enabled
-                state = self._state
-            if not auto_restart or entrypoint is None:
-                continue
-            if thread is not None and thread.is_alive():
-                continue
-            if stop_flag:
-                continue
-            if self._kill_switch.engaged_sync():
-                continue
-            log.warning(
-                "orchestrator_manager.watchdog.restart", extra={"state": state}
-            )
-            with self._lock:
-                if not self._auto_restart_enabled or self._entrypoint is None:
-                    continue
-                self._restart_count += 1
-                self._state = "starting"
-                self._last_error = None
-                self._last_error_stack = None
-                entry = self._entrypoint
-            if entry is None:
-                continue
-            self._launch_thread_locked(entry)
-            time.sleep(0.1)
+        return status()
 
 
 orchestrator_manager = OrchestratorManager()
 
-__all__ = ["OrchestratorManager", "OrchestratorState", "orchestrator_manager"]
+
+__all__ = ["orchestrator_manager", "OrchestratorManager", "start", "stop", "status"]
+

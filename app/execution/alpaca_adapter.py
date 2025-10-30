@@ -12,6 +12,7 @@ from uuid import uuid4
 import requests
 
 from services.ops.alerts import audit_log
+from backend.utils.structlog import jlog
 
 
 class AlpacaUnauthorized(Exception):
@@ -144,6 +145,14 @@ class AlpacaAdapter:
         if "client_order_id" not in payload:
             raise ValueError("client_order_id is required")
         if getattr(self, "dry_run", False):
+            try:
+                jlog(
+                    "trade.adapter.block",
+                    reason="dry_run",
+                    payload=dict(payload),
+                )
+            except Exception:  # pragma: no cover - logging guard
+                log.debug("failed to emit trade.adapter.block", exc_info=True)
             raise RuntimeError("dry_run is True — refusing to submit order to Alpaca")
 
         trace_id = str(payload.get("client_order_id") or uuid4().hex)
@@ -158,6 +167,14 @@ class AlpacaAdapter:
                 "profile": getattr(self, "profile", None),
             },
         )
+        try:
+            jlog(
+                "trade.adapter.request",
+                endpoint="alpaca/orders",
+                body=dict(payload),
+            )
+        except Exception:  # pragma: no cover - logging guard
+            log.debug("failed to emit trade.adapter.request", exc_info=True)
         try:
             response = self._post(
                 "/v2/orders",
@@ -176,11 +193,12 @@ class AlpacaAdapter:
                 },
             )
             raise
+        data = response.json()
         order_id = None
         status = None
-        if isinstance(response, Mapping):
-            order_id = response.get("id") or response.get("order_id")
-            status = response.get("status")
+        if isinstance(data, Mapping):
+            order_id = data.get("id") or data.get("order_id")
+            status = data.get("status")
         log.info(
             "alpaca.submit_order.ok",
             extra={
@@ -191,7 +209,15 @@ class AlpacaAdapter:
                 "profile": getattr(self, "profile", None),
             },
         )
-        return response
+        try:
+            jlog(
+                "trade.adapter.response",
+                status_code=response.status_code,
+                body=data,
+            )
+        except Exception:  # pragma: no cover - logging guard
+            log.debug("failed to emit trade.adapter.response", exc_info=True)
+        return data
 
     def cancel_order(self, order_id: str) -> bool:
         self._delete(f"/v2/orders/{order_id}")
@@ -320,7 +346,7 @@ class AlpacaAdapter:
             response.raise_for_status()
         except requests.HTTPError as exc:  # pragma: no cover - network failure path
             raise _map_http_error(response, exc) from exc
-        return response.json()
+        return response
 
     def _delete(self, path: str, **kwargs) -> Any:
         response = self._request("DELETE", path, **kwargs)
