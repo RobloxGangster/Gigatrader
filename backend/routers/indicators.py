@@ -51,3 +51,14 @@ def get_indicators(
     snapshot.setdefault("interval", interval)
     snapshot.setdefault("has_data", True)
     return snapshot
+
+
+@router.get("/indicators/{symbol}")
+async def indicators_for_symbol(
+    symbol: str,
+    lookback: int = Query(120, gt=0, le=5000, description="Number of bars to include"),
+    interval: str = Query("1m", description="Bar interval used for the indicators"),
+):
+    """Return indicators for ``symbol`` without raising 404 when unavailable."""
+
+    return get_indicators(symbol=symbol, lookback=lookback, interval=interval)

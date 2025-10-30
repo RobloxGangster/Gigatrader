@@ -29,8 +29,28 @@ pytest -q
 ```
 
 ## Env variables
-See `.env.example` for required vars. Paper vs live is controlled by `ALPACA_PAPER=true|false`
-and `TRADING_MODE=paper|live` (defaults favour paper).
+See `.env.example` for required vars. Paper vs live is controlled by `PROFILE=paper|live`
+with `BROKER=alpaca` by default. `MOCK_MODE=true` forces the in-memory broker regardless
+of other settings. `DRY_RUN=true` keeps the adapter from submitting real orders even when
+valid Alpaca credentials are present.
+
+## Live Trading (Alpaca)
+
+1. Copy `.env.example` to `.env` and fill in your Alpaca API keys:
+   ```env
+   ALPACA_KEY_ID=your_live_or_paper_key
+   ALPACA_SECRET_KEY=your_live_or_paper_secret
+   ```
+2. Set the runtime mode using the env toggles:
+   - `PROFILE=paper` (default) keeps submissions on Alpaca's paper endpoints.
+   - `PROFILE=live` targets the live REST endpoint (`https://api.alpaca.markets`).
+   - `MOCK_MODE=true` bypasses Alpaca entirely; useful for demos and tests.
+   - `DRY_RUN=true` logs orders but skips submission even when Alpaca is selected.
+3. Launch the API server: `uvicorn backend.api:app --host 0.0.0.0 --port 8000`.
+4. Start the Streamlit UI: `streamlit run ui/Home.py`.
+5. Navigate to **Control Center** → click **Start Trading System**.
+6. Confirm `/broker/status` shows `broker="alpaca"` and `dry_run=false` before placing orders.
+7. Monitor `/health` and the **Diagnostics / Logs** page for kill-switch status before live trading.
 
 ## Local launch (backend + orchestrator)
 1. Copy `.env.example` to `.env` and fill in your Alpaca paper API keys.

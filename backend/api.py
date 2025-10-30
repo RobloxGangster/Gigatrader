@@ -3,7 +3,6 @@ import inspect
 import logging
 import os
 import time
-from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,15 +16,18 @@ from pydantic import BaseModel
 from backend.routers import (
     audit,
     broker,
+    debug,
     diagnostics,
-    logs,
-    orchestrator,
     indicators,
+    logs,
+    metrics,
+    orchestrator,
     pnl,
     reconcile,
     risk,
     strategy,
     stream,
+    trades,
     telemetry,
 )
 from backend.routers.deps import (
@@ -46,9 +48,6 @@ load_dotenv()
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
-
-
-EXECUTION_LOG_PATH = Path("logs/execution_debug.log")
 
 
 def _ensure_log_directories() -> None:
@@ -119,10 +118,14 @@ PRIMARY_ROUTERS: list[tuple[str, Any, list[str]]] = [
     ("/risk", risk.router, ["risk"]),
     ("/orchestrator", orchestrator.router, ["orchestrator"]),
     ("/pnl", pnl.router, ["pnl"]),
+    ("/metrics", metrics.router, ["metrics"]),
     ("", telemetry.router, ["telemetry"]),
     ("/logs", logs.router, ["logs"]),
+    ("/trades", trades.router, ["trades"]),
     ("/indicators", indicators.router, ["indicators"]),
+    ("/features", indicators.router, ["features"]),
     ("/diagnostics", diagnostics.router, ["diagnostics"]),
+    ("/debug", debug.router, ["debug"]),
     ("/reconcile", reconcile.router, ["reconcile"]),
     ("/audit", audit.router, ["audit"]),
 ]
@@ -230,26 +233,6 @@ async def health() -> Dict[str, Any]:
 @root_router.get("/debug/runtime", response_model=RuntimeFlags)
 async def debug_runtime(flags: RuntimeFlags = Depends(get_runtime_flags)) -> RuntimeFlags:
     return flags
-
-
-def _tail_file(path: Path, limit: int) -> list[str]:
-    if limit <= 0:
-        return []
-    if not path.exists() or not path.is_file():
-        return []
-    try:
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            return list(deque(handle, maxlen=limit))
-    except Exception:  # pragma: no cover - defensive file guard
-        return []
-
-
-@root_router.get("/debug/execution_tail")
-async def execution_tail(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
-    lines = _tail_file(EXECUTION_LOG_PATH, limit)
-    return {"path": str(EXECUTION_LOG_PATH), "lines": [line.rstrip("\n") for line in lines]}
-
-
 @app.get("/version")
 def version() -> Dict[str, str]:
     return {"version": os.getenv("APP_VERSION", "dev")}

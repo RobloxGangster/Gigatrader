@@ -10,6 +10,8 @@ __all__ = [
     "pnl",
     "telemetry",
     "logs",
+    "trades",
+    "debug",
     "diagnostics",
     "reconcile",
     "audit",
