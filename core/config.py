@@ -21,7 +21,7 @@ except ModuleNotFoundError:  # pragma: no cover - executed in minimal environmen
 
 from dataclasses import dataclass, field, asdict
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 from core.runtime_flags import Broker, get_runtime_flags
 
@@ -33,6 +33,14 @@ EXECUTION_MODE: Literal["alpaca", "mock"] = _FLAGS.broker
 API_PORT: int = int(_FLAGS.api_port or 8000)
 UI_PORT: int = int(_FLAGS.ui_port or 8501)
 API_BASE_URL: str = (_FLAGS.api_base_url or f"http://127.0.0.1:{API_PORT}").rstrip("/")
+
+
+def to_bool(x: str | bool | None, default: bool = False) -> bool:
+    if isinstance(x, bool):
+        return x
+    if not x:
+        return default
+    return str(x).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
 
 def get_api_base_url() -> str:
@@ -258,3 +266,19 @@ def debug_alpaca_snapshot() -> Dict[str, Any]:
         "key_tail": masked_tail(cfg.api_key),
         "env": env_flags,
     }
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="", extra="ignore", populate_by_name=True)
+
+    mock_mode: bool = Field(default=False, json_schema_extra={"env": "MOCK_MODE"})
+    dry_run: bool = Field(default=False, json_schema_extra={"env": "DRY_RUN"})
+    profile: str = Field(default="paper", json_schema_extra={"env": "PROFILE"})
+    broker: str = Field(default="alpaca", json_schema_extra={"env": "BROKER"})
+
+    @model_validator(mode="after")
+    def _normalize(self):
+        self.mock_mode = to_bool(self.mock_mode)
+        self.dry_run = to_bool(self.dry_run)
+        self.profile = (self.profile or "paper").strip().lower()
+        self.broker = (self.broker or "alpaca").strip().lower()
+        return self
+

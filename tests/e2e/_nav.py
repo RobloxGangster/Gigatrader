@@ -50,7 +50,7 @@ def _shoot(page: Page, name: str, hint: str = "") -> None:
         pass
 
 
-def _wait_for_popover(page: Page, timeout_ms: int = 9000):
+def _wait_for_popover(page: Page, timeout_ms: int = 25000):
     """
     Wait for a select/menu popover across Streamlit/BaseWeb variants.
     """
@@ -102,7 +102,7 @@ def _open_selectbox_popover(page: Page):
     for attempt in range(5):
         try:
             _click_nav_toggle(page)
-            return _wait_for_popover(page, timeout_ms=7000 + attempt * 2000)
+            return _wait_for_popover(page, timeout_ms=15000 + attempt * 2500)
         except Exception as e:
             last_err = e
             # Keyboard nudges commonly open BaseWeb/Streamlit selects
