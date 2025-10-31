@@ -8,11 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, validator
 class BrokerProfile(BaseModel):
     broker: str = "alpaca"
     profile: str = "paper"
-    mode: str = "live"
+    mode: str = "paper"
 
 
 class KillSwitchStatus(BaseModel):
-    engaged: bool
+    engaged: bool = False
     reason: Optional[str] = None
     can_reset: bool = True
 
@@ -22,7 +22,7 @@ class OrchestratorStatus(BaseModel):
 
     state: str = Field(..., description="running|stopped")
     transition: Optional[str] = Field(None, description="starting|stopping|null")
-    kill_switch: KillSwitchStatus
+    kill_switch: KillSwitchStatus = Field(default_factory=KillSwitchStatus)
     phase: Optional[str] = None
     running: bool = False
     thread_alive: bool = False
@@ -30,7 +30,7 @@ class OrchestratorStatus(BaseModel):
     last_shutdown_reason: Optional[str] = None
     will_trade_at_open: bool = False
     preopen_queue_count: int = 0
-    broker: BrokerProfile
+    broker: BrokerProfile = Field(default_factory=BrokerProfile)
     ok: bool = True
     last_error: Optional[str] = None
     last_error_at: Optional[str] = None

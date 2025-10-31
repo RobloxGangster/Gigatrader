@@ -42,6 +42,21 @@ _preopen_queue = PreopenQueue()
 _preopen_queue_count: int = 0
 
 
+def _public_state_and_transition(internal: str | None) -> tuple[str, str | None]:
+    """Map internal supervisor state to the public state/transition contract."""
+
+    label = (internal or "").strip().lower()
+    if label == "running":
+        return "running", None
+    if label == "stopped":
+        return "stopped", None
+    if label == "starting":
+        return "stopped", "starting"
+    if label == "stopping":
+        return "running", "stopping"
+    return "stopped", None
+
+
 def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -259,10 +274,7 @@ class OrchestratorSupervisor:
         else:
             last_decision_value = _iso_dt(last_decision_at)
 
-        public_state = "running" if self._internal_state == "running" else "stopped"
-        transition = (
-            self._internal_state if self._internal_state in {"starting", "stopping"} else None
-        )
+        public_state, transition = _public_state_and_transition(self._internal_state)
 
         broker_profile = BrokerProfile(
             broker=str(getattr(flags, "broker", "alpaca")),
@@ -610,12 +622,14 @@ def get_orchestrator_status() -> OrchestratorStatus:
         mode=getattr(flags, "broker_mode", "paper"),
     )
 
+    public_state, transition = _public_state_and_transition("stopped")
+
     return OrchestratorStatus(
-        state="stopped",
-        transition=None,
+        state=public_state,
+        transition=transition,
         kill_switch=kill_status,
         phase="stopped",
-        running=False,
+        running=public_state == "running",
         thread_alive=False,
         start_attempt_ts=None,
         last_shutdown_reason=None,
