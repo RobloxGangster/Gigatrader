@@ -724,19 +724,73 @@ def _render_algorithm_controls(
     preset = st.selectbox(
         "Run Preset", DEFAULT_PRESETS, index=preset_index, key="cc_run_preset"
     )
+    fallback_universe_text = "AAPL,MSFT,NVDA,SPY"
+    universe_key = "cc_universe"
+    prefill_flag = "__cc_universe_prefilled__"
+    if not st.session_state.get(prefill_flag):
+        seeded_default = ",".join(strategy_cfg.get("universe") or [])
+        session_value = str(st.session_state.get(universe_key) or "").strip()
+        if not session_value:
+            if seeded_default:
+                st.session_state[universe_key] = seeded_default
+            else:
+                try:
+                    extended_seed = api.get_json("/universe/extended")
+                except Exception:
+                    extended_seed = []
+                if isinstance(extended_seed, list) and extended_seed:
+                    joined = ",".join(
+                        str(sym).strip().upper() for sym in extended_seed if str(sym).strip()
+                    )
+                else:
+                    joined = fallback_universe_text
+                st.session_state[universe_key] = joined
+        st.session_state[prefill_flag] = True
+
     start_label = "Start Paper" if mock_mode else "Start Trading"
     start_col, stop_col = st.columns(2)
     if start_col.button(start_label, key="cc_start_btn"):
         rid = f"start-{uuid.uuid4().hex[:8]}"
         st.session_state["cc.last_req"] = rid
+        universe_value = str(st.session_state.get(universe_key, "") or "").strip()
+        payload: Dict[str, Any] = {"request_id": rid}
+        if preset:
+            payload["preset"] = preset
+        if universe_value:
+            payload["universe"] = universe_value
         try:
-            result = api.orchestrator_start(preset=preset, request_id=rid)
+            api.post_json("/orchestrator/start", payload)
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to start trading: {exc}")
         else:
-            st.toast(
-                f"Trading start requested ({result.get('run_id', 'paper')})", icon="✅"
-            )
+            started = False
+            last_error: Optional[str] = None
+            status_error: Optional[str] = None
+            try:
+                for _ in range(10):
+                    status_payload = api.get_json("/orchestrator/status")
+                    state_label = str(status_payload.get("state", "")).lower()
+                    if state_label == "running":
+                        started = True
+                        break
+                    last_error = status_payload.get("last_error")
+                    if last_error:
+                        break
+                    time.sleep(0.5)
+            except Exception as exc:  # noqa: BLE001
+                status_error = str(exc)
+
+            if last_error:
+                st.error(f"Orchestrator reported error: {last_error}")
+            elif started:
+                st.success("Trading start confirmed.")
+            elif status_error:
+                st.warning(
+                    "Start requested; status check failed: "
+                    f"{status_error}"
+                )
+            else:
+                st.info("Start requested; awaiting orchestrator status update.")
             _schedule_status_poll()
     if stop_col.button("Stop", key="cc_stop_btn"):
         rid = f"stop-{uuid.uuid4().hex[:8]}"
@@ -753,6 +807,22 @@ def _render_algorithm_controls(
         if not mock_mode
         else "Mock mode prevents live orders."
     )
+
+    quick_cols = st.columns([1, 3])
+    if quick_cols[0].button("Use 24H Universe", key="cc_use_extended"):
+        try:
+            extended_payload = api.get_json("/universe/extended")
+        except Exception as exc:  # noqa: BLE001
+            st.warning(f"Failed to load extended universe: {exc}")
+        else:
+            if isinstance(extended_payload, list) and extended_payload:
+                joined = ",".join(
+                    str(sym).strip().upper() for sym in extended_payload if str(sym).strip()
+                )
+            else:
+                joined = fallback_universe_text
+            st.session_state[universe_key] = joined
+    quick_cols[1].caption("Prefill the universe with symbols tradable during 24H sessions.")
 
     with st.form("algorithm_controls"):
         strategy_flags = strategy_cfg.get("strategies") or {}
@@ -781,14 +851,22 @@ def _render_algorithm_controls(
             step=0.05,
         )
 
-        universe_default = ",".join(strategy_cfg.get("universe") or [])
+        universe_default = st.session_state.get(universe_key)
+        if not universe_default:
+            universe_default = ",".join(strategy_cfg.get("universe") or []) or fallback_universe_text
         universe_input = st.text_input(
             "Universe",
             value=universe_default,
             placeholder="AAPL, MSFT, NVDA",
             help="Comma separated list of symbols",
-            key="cc_universe",
+            key=universe_key,
         )
+        try:
+            effective_universe = api.get_json("/universe/effective")
+        except Exception:
+            effective_universe = []
+        if isinstance(effective_universe, list) and effective_universe:
+            st.caption(f"Effective universe size: {len(effective_universe)}")
 
         cooldown, pacing = st.columns(2)
         cooldown_value = cooldown.number_input(

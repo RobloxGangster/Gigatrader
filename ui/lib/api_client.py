@@ -205,6 +205,27 @@ class ApiClient:
             return path
         return f"{self.base_url}/{path.lstrip('/')}"
 
+    def get_json(self, path: str, **params: Any) -> Any:
+        response = self._request("GET", path, params=self._prepare_query(params))
+        if not response.content:
+            return {}
+        try:
+            return response.json()
+        except ValueError:
+            return self._parse_response(response)
+
+    def post_json(self, path: str, payload: Dict[str, Any] | None = None, **kwargs: Any) -> Any:
+        request_kwargs = dict(kwargs)
+        if payload is not None:
+            request_kwargs["json"] = payload
+        response = self._request("POST", path, **request_kwargs)
+        if not response.content:
+            return {}
+        try:
+            return response.json()
+        except ValueError:
+            return self._parse_response(response)
+
     @staticmethod
     def _prepare_query(params: Dict[str, Any]) -> Dict[str, Any] | None:
         query = params.pop("params", None)

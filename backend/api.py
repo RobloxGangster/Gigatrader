@@ -44,11 +44,16 @@ from backend.services import reconcile
 from backend.services.alpaca_client import get_trading_client
 from backend.services.orchestrator import get_orchestrator_status
 from backend.services.orchestrator_manager import orchestrator_manager
+from backend.services.universe_registry import (
+    clear_override_universe,
+    get_override_universe,
+    set_override_universe,
+)
 from core.broker_config import is_mock
 from core.runtime_flags import RuntimeFlags, get_runtime_flags
 from core.settings import get_settings
 from backend.schemas import OrderRequest, OrderResponse
-from backend.config.extended_universe import load_extended_tickers
+from backend.config.extended_universe import load_extended_tickers, is_extended
 
 load_dotenv()
 
@@ -417,6 +422,21 @@ def extended_universe() -> List[str]:
     return load_extended_tickers() or []
 
 
+@app.get("/universe/effective")
+def effective_universe() -> List[str]:
+    """Return the currently effective trading universe for the strategy."""
+
+    override = get_override_universe()
+    if override:
+        return override
+
+    extended = load_extended_tickers() or []
+    if is_extended() and extended:
+        return extended
+
+    return ["AAPL", "MSFT", "NVDA", "SPY"]
+
+
 _register_compat_route("/health", health, ["GET"], tag="health")
 _register_compat_route("/version", version, ["GET"], tag="version")
 
@@ -593,9 +613,39 @@ _register_compat_route(
 )
 
 
+def _parse_universe_arg(universe: Any) -> List[str]:
+    if universe is None:
+        return []
+    if isinstance(universe, str):
+        candidates = universe.split(",")
+    elif isinstance(universe, Iterable) and not isinstance(universe, (bytes, str)):
+        candidates = universe
+    else:
+        candidates = []
+
+    symbols: List[str] = []
+    for raw in candidates:
+        sym = str(raw).strip().upper()
+        if sym:
+            symbols.append(sym)
+    return symbols
+
+
 @app.get("/orchestrator/start")
-async def orchestrator_start_get():
-    return await orchestrator.orchestrator_start()
+async def orchestrator_start_get(
+    universe: str | None = Query(default=None),
+    preset: str | None = Query(default=None),
+):
+    symbols = _parse_universe_arg(universe)
+    if symbols:
+        set_override_universe(symbols)
+    elif get_override_universe():
+        pass
+    else:
+        clear_override_universe()
+
+    payload = orchestrator.OrchestratorStartPayload(preset=preset) if preset else None
+    return await orchestrator.orchestrator_start(payload)
 
 
 @app.get("/orchestrator/stop")
