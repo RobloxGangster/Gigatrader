@@ -15,6 +15,8 @@ _DEFAULT_BASES: Sequence[Optional[str]] = (
     os.getenv("GT_API_BASE_URL"),
     "http://127.0.0.1:8000",
     "http://localhost:8000",
+    "http://127.0.0.1:8001",
+    "http://localhost:8001",
 )
 
 _ADDITIONAL_ENV_VARS: Sequence[str] = (
@@ -23,13 +25,16 @@ _ADDITIONAL_ENV_VARS: Sequence[str] = (
     "GIGAT_API_URL",
 )
 
-_DISCOVERED_BASE_URL: Optional[str] = None
+_DISCOVERED_BASE: Optional[str] = None
 
 
 def _env_backend_base() -> str:
     for candidate in _DEFAULT_BASES:
-        if candidate:
-            return str(candidate).strip().rstrip("/") or "http://127.0.0.1:8000"
+        if not candidate:
+            continue
+        base = str(candidate).strip().rstrip("/")
+        if base:
+            return base
     return "http://127.0.0.1:8000"
 
 
@@ -40,58 +45,97 @@ def _sanitize_base(candidate: Optional[str]) -> Optional[str]:
     return base or None
 
 
+def _cache_backend_base(base: Optional[str]) -> Optional[str]:
+    sanitized = _sanitize_base(base)
+    if not sanitized:
+        return None
+    global _DISCOVERED_BASE
+    _DISCOVERED_BASE = sanitized
+    try:
+        st.session_state["backend_base"] = sanitized  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - streamlit not initialised
+        pass
+    return sanitized
+
+
 def discover_base_url() -> str:
-    """Return the first reachable backend base URL, caching the result."""
+    """Return the cached backend base URL or environment fallback."""
 
-    global _DISCOVERED_BASE_URL
-    if _DISCOVERED_BASE_URL:
-        return _DISCOVERED_BASE_URL
+    global _DISCOVERED_BASE
+    if _DISCOVERED_BASE:
+        return _DISCOVERED_BASE
 
-    candidates: list[Optional[str]] = []
     try:
         session_value = st.session_state.get("backend_base")  # type: ignore[attr-defined]
     except Exception:  # pragma: no cover - defensive for older Streamlit builds
         session_value = None
-    candidates.append(session_value)
-    candidates.append(_session_override())
-    candidates.extend(candidate for candidate in _DEFAULT_BASES if candidate)
 
-    # Ensure we always have at least the environment fallback
-    if not any(candidates):
-        candidates.append(_env_backend_base())
+    base = _cache_backend_base(session_value) or _env_backend_base()
+    _cache_backend_base(base)
+    return base
 
-    for candidate in candidates:
-        base = _sanitize_base(candidate)
-        if not base:
-            continue
-        try:
-            response = requests.get(f"{base}/health", timeout=2)
-        except requests.RequestException:
-            continue
-        if response.ok:
-            _DISCOVERED_BASE_URL = base
-            try:
-                st.session_state["backend_base"] = base  # type: ignore[attr-defined]
-            except Exception:  # pragma: no cover - streamlit not initialised
-                pass
-            return base
 
-    fallback = _sanitize_base(candidates[0]) if candidates else None
-    if not fallback:
-        fallback = _env_backend_base()
-    _DISCOVERED_BASE_URL = fallback
+def _looks_like_backend(url: str) -> bool:
     try:
-        st.session_state["backend_base"] = fallback  # type: ignore[attr-defined]
-    except Exception:  # pragma: no cover - streamlit not initialised
-        pass
-    return fallback
+        response = requests.get(f"{url.rstrip('/')}/orchestrator/status", timeout=2)
+    except requests.RequestException:
+        return False
+    if not response.ok:
+        return False
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    state = str(payload.get("state", "")).lower()
+    return state in {"running", "stopped"}
+
+
+def probe_and_bind_backend() -> str:
+    """Probe a list of candidate URLs until a working backend is found."""
+
+    try:
+        current = st.session_state.get("backend_base")  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - defensive for older Streamlit builds
+        current = None
+    current_sanitized = _sanitize_base(current)
+    if current_sanitized and _looks_like_backend(current_sanitized):
+        return _cache_backend_base(current_sanitized) or _env_backend_base()
+
+    for candidate in _DEFAULT_BASES:
+        sanitized = _sanitize_base(candidate)
+        if not sanitized:
+            continue
+        if _looks_like_backend(sanitized):
+            cached = _cache_backend_base(sanitized)
+            if cached:
+                return cached
+
+    for port in range(8000, 8011):
+        candidate = f"http://127.0.0.1:{port}"
+        if _looks_like_backend(candidate):
+            cached = _cache_backend_base(candidate)
+            if cached:
+                return cached
+
+    fallback = _cache_backend_base(_env_backend_base())
+    return fallback or "http://127.0.0.1:8000"
+
+
+def rebind_to_detected_backend() -> str:
+    """Force probing of candidates and update the cached backend base."""
+
+    global _DISCOVERED_BASE
+    _DISCOVERED_BASE = None
+    return probe_and_bind_backend()
 
 
 def reset_discovery_cache() -> None:
     """Clear any cached base URL discovery result."""
 
-    global _DISCOVERED_BASE_URL
-    _DISCOVERED_BASE_URL = None
+    global _DISCOVERED_BASE
+    _DISCOVERED_BASE = None
 
 
 def _session_override() -> Optional[str]:
@@ -119,14 +163,8 @@ class ApiClient:
         bases: Optional[Iterable[Optional[str]]] = None,
         timeout: float = 10.0,
     ) -> None:
-        try:
-            if "backend_base" not in st.session_state:  # type: ignore[attr-defined]
-                st.session_state["backend_base"] = discover_base_url()  # type: ignore[attr-defined]
-        except Exception:  # pragma: no cover - streamlit not initialised
-            pass
-        primary = base_url or base or discover_base_url()
-
         self.timeout = timeout
+        primary = base_url or base
         self.base_url = self._resolve_base_url(primary, bases)
         self._last_error: Optional[str] = None
 
@@ -136,16 +174,21 @@ class ApiClient:
     def _resolve_base_url(
         self, primary: Optional[str], bases: Optional[Iterable[Optional[str]]]
     ) -> str:
+        default_bound = probe_and_bind_backend()
         candidates: list[Optional[str]] = [primary, _session_override()]
         if bases:
             candidates.extend(bases)
-        candidates.append(discover_base_url())
+        candidates.append(default_bound)
 
         for candidate in candidates:
-            base = _sanitize_base(candidate)
-            if base:
-                return base
-        return discover_base_url()
+            sanitized = _sanitize_base(candidate)
+            if not sanitized:
+                continue
+            if _looks_like_backend(sanitized):
+                bound = _cache_backend_base(sanitized) or sanitized
+                return bound
+
+        return default_bound
 
     @staticmethod
     def _sanitize_base(candidate: Optional[str]) -> Optional[str]:

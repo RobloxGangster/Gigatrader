@@ -587,6 +587,24 @@ _register_compat_route(
 )
 
 
+@app.get("/orchestrator/start")
+async def orchestrator_start_get():
+    return await orchestrator.orchestrator_start()
+
+
+@app.get("/orchestrator/stop")
+async def orchestrator_stop_get():
+    return await orchestrator.orchestrator_stop()
+
+
+_register_compat_route(
+    "/orchestrator/start", orchestrator_start_get, ["GET"], tag="orchestrator"
+)
+_register_compat_route(
+    "/orchestrator/stop", orchestrator_stop_get, ["GET"], tag="orchestrator"
+)
+
+
 @app.post("/paper/start")
 def paper_start(req: StartReq | None = None):
     preset = req.preset if req else None

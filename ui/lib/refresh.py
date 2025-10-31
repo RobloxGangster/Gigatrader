@@ -3,32 +3,31 @@
 from __future__ import annotations
 
 import time
-from typing import Optional
-
 import streamlit as st
 
 
-def safe_autorefresh(interval_ms: int, *, key: Optional[str] = None) -> None:
-    """Request a rerender after ``interval_ms`` milliseconds when supported."""
+def safe_autorefresh(interval_ms: int = 5000, key: str = "auto") -> None:
+    """Request a rerun roughly every ``interval_ms`` milliseconds."""
 
     if interval_ms <= 0:
         return
 
-    refresh_key = key or "default"
+    try:
+        from streamlit_autorefresh import st_autorefresh  # type: ignore
 
-    if hasattr(st, "autorefresh"):
-        kwargs = {"interval": interval_ms, "key": f"auto-{refresh_key}"}
-        st.autorefresh(**kwargs)  # type: ignore[attr-defined]
+        st_autorefresh(interval=interval_ms, key=key)
         return
+    except Exception:  # pragma: no cover - optional dependency
+        pass
 
     rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun", None)
     if rerun is None:
         return
 
-    state_key = f"__safe_autorefresh_last__:{refresh_key}"
-    now = time.time() * 1000
+    state_key = f"__safe_autorefresh_last__:{key}"
+    now = time.time()
     last = float(st.session_state.get(state_key, 0.0) or 0.0)
-    if now - last >= interval_ms:
+    if (now - last) * 1000.0 >= float(interval_ms):
         st.session_state[state_key] = now
         rerun()
 
