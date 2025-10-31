@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Dict, Optional
 
+from backend.config.extended_universe import is_extended
+
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, TimeInForce
@@ -64,6 +66,12 @@ class AlpacaBrokerAdapter:
         client_order_id: str | None = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
+        if is_extended():
+            extended_hours = True
+            if type.lower() != "limit":
+                raise ValueError("Extended-hours requires type='limit'")
+            if time_in_force.lower() != "day":
+                raise ValueError("Extended-hours requires time_in_force='day'")
         side_lower = side.lower()
         if side_lower not in {"buy", "sell"}:
             raise ValueError(f"Unsupported order side: {side}")

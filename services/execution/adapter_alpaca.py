@@ -123,6 +123,8 @@ class AlpacaAdapter:
             }
             if limit_price is not None:
                 kwargs["limit_price"] = limit_price
+            if payload.get("extended_hours"):
+                kwargs["extended_hours"] = True
             tp = payload.get("take_profit")
             sl = payload.get("stop_loss")
             if tp or sl:

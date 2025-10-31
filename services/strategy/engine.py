@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import os
 from datetime import datetime, timezone
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from backend.services.orchestrator import queue_preopen_intent, record_decision_cycle
 from core.market_hours import market_is_open, seconds_until_open
+from backend.config.extended_universe import (
+    is_extended as is_extended_session,
+    is_rth as is_rth_session,
+    load_extended_tickers,
+)
 from services.execution.engine import ExecutionEngine
 from services.execution.preopen_queue import PreopenIntent
 from services.execution.types import ExecIntent
@@ -63,6 +69,7 @@ class StrategyEngine:
         option_strategies: Optional[Iterable[OptionStrategy]] = None,
         regime_detector: Optional[RegimeDetector] = None,
     ) -> None:
+        self.log = logging.getLogger("gigatrader.strategy.engine")
         self.exec = exec_engine
         self.option_gateway = option_gateway
         self.state = state
@@ -71,6 +78,8 @@ class StrategyEngine:
         base_symbols = [sym.strip() for sym in base_symbols_env.split(",") if sym.strip()]
         max_watch = _env_int("STRAT_UNIVERSE_MAX", 25)
         self.universe = universe or Universe(base_symbols, max_watch=max_watch)
+        self._extended_universe: List[str] = load_extended_tickers()
+        self._extended_set = {sym.upper() for sym in self._extended_universe}
         self._equity_enabled = _env_bool("STRAT_EQUITY_ENABLED", True)
         self._option_enabled = _env_bool("STRAT_OPTION_ENABLED", True)
         self._senti_min = float(os.getenv("STRAT_SENTI_MIN", "0") or 0)
@@ -108,6 +117,14 @@ class StrategyEngine:
         else:
             senti = self.latest_sentiment.get(normalized_symbol)
 
+        now = datetime.now(timezone.utc)
+        extended_now = is_extended_session(now)
+        rth_now = is_rth_session(now)
+
+        if self._extended_set and not rth_now:
+            if normalized_symbol not in self._extended_set:
+                return
+
         if not self.universe.contains(normalized_symbol):
             return
 
@@ -121,7 +138,6 @@ class StrategyEngine:
         total_signals = 0
         orders_submitted = 0
         preopen_orders = 0
-        now = datetime.now(timezone.utc)
         market_open = market_is_open(now)
         will_trade_at_open = False
         seconds_to_open = seconds_until_open(now)
@@ -155,13 +171,26 @@ class StrategyEngine:
                 )
                 if will_trade_at_open and not market_open:
                     preopen_orders += 1
-                submitted = await self._route_equity_plan(
-                    plan,
-                    market_open=market_open,
-                    time_in_force=tif,
-                    order_type=order_type,
-                    current_price=bar.close,
-                )
+                extended_for_order = extended_now and not will_trade_at_open
+                try:
+                    submitted = await self._route_equity_plan(
+                        plan,
+                        market_open=market_open,
+                        time_in_force=tif,
+                        order_type=order_type,
+                        current_price=bar.close,
+                        extended_hours=extended_for_order,
+                    )
+                except ValueError as exc:
+                    self.log.warning(
+                        "strategy.order_rejected",
+                        extra={
+                            "symbol": normalized_symbol,
+                            "reason": str(exc),
+                            "extended_hours": extended_for_order,
+                        },
+                    )
+                    continue
                 if submitted:
                     orders_submitted += 1
 
@@ -211,11 +240,17 @@ class StrategyEngine:
         time_in_force: str | None = None,
         order_type: str | None = None,
         current_price: float = 0.0,
+        extended_hours: bool = False,
     ) -> bool:
         side = "buy" if str(plan.side).lower() == "buy" else "sell"
         tif_value = (time_in_force or "").lower() if time_in_force else None
         order_kind = order_type or ("limit" if plan.limit_price is not None else "market")
         entry_price = plan.limit_price if plan.limit_price is not None else current_price
+        if extended_hours:
+            if plan.limit_price is None:
+                raise ValueError("Extended-hours orders require a limit price")
+            tif_value = "day"
+            order_kind = "limit"
         stop_pct = abs(plan.stop_loss_pct) if plan.stop_loss_pct is not None else self.default_stop_pct
         take_pct = abs(plan.take_profit_pct) if plan.take_profit_pct is not None else self.default_tp_pct
         qty = max(1, int(round(plan.qty)))
@@ -237,6 +272,13 @@ class StrategyEngine:
             await queue_preopen_intent(preopen_intent)
             return False
 
+        intent_meta: Dict[str, Any] = {}
+        if extended_hours:
+            intent_meta["extended_hours"] = True
+
+        resolved_tif = tif_value if tif_value else None
+        resolved_order_type = order_kind if (order_type is not None or extended_hours) else None
+
         intent = ExecIntent(
             symbol=plan.symbol,
             side=side,
@@ -246,8 +288,9 @@ class StrategyEngine:
             client_tag=f"eq:{plan.note}" if plan.note else "eq:auto",
             take_profit_pct=take_pct,
             stop_loss_pct=stop_pct,
-            time_in_force=time_in_force,
-            order_type=order_kind if order_type else None,
+            time_in_force=resolved_tif or time_in_force,
+            order_type=resolved_order_type,
+            meta=intent_meta,
         )
         await self.exec.submit(intent)
         return True
