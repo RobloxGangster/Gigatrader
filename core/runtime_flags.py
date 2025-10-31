@@ -285,17 +285,24 @@ def require_live_alpaca_or_fail() -> None:
         or os.getenv("ALPACA_API_SECRET_KEY")
         or os.getenv("APCA_API_SECRET_KEY")
     )
+    base_url = (
+        os.getenv("ALPACA_BASE_URL")
+        or os.getenv("APCA_API_BASE_URL")
+        or os.getenv("ALPACA_API_BASE_URL")
+    )
 
     if not key_id:
         missing.append("ALPACA_KEY_ID")
     if not secret_key:
         missing.append("ALPACA_SECRET_KEY")
+    if not base_url:
+        missing.append("ALPACA_BASE_URL")
 
     if missing:
         joined = ", ".join(sorted(set(missing)))
         raise RuntimeError(
-            "Live Alpaca mode requires credentials; set the following environment "
-            f"variables: {joined}"
+            "Live Alpaca paper mode requested (MOCK_MODE=false), but missing env: "
+            f"{joined}"
         )
 
 

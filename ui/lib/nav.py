@@ -2,8 +2,11 @@ from __future__ import annotations
 
 """Navigation metadata and helpers for the Streamlit UI."""
 
+import inspect
 from importlib import import_module
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+
+import streamlit as st
 
 from ui.state import AppSessionState, init_session_state
 from ui.services.backend import BrokerAPI, get_backend
@@ -135,22 +138,82 @@ def resolve_renderer(item: Dict[str, str]) -> Callable[..., Any]:
     return getattr(module, item["render_name"])
 
 
+class _DependencyResolutionError(RuntimeError):
+    """Raised when we cannot map a renderer's signature to known dependencies."""
+
+
+def _build_injected_args(
+    fn: Callable[..., Any],
+    state: AppSessionState,
+    api: BrokerAPI,
+) -> Tuple[List[Any], Dict[str, Any]]:
+    """Return positional and keyword arguments for ``fn`` based on its signature."""
+
+    provided: Dict[str, Any] = {
+        "api": api,
+        "backend": api,
+        "broker": api,
+        "broker_api": api,
+        "state": state,
+        "session_state": state,
+        "app_state": state,
+        "st": st,
+        "streamlit": st,
+    }
+
+    signature = inspect.signature(fn)
+    args: List[Any] = []
+    kwargs: Dict[str, Any] = {}
+
+    for param in signature.parameters.values():
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            # Variadic parameters can be satisfied by the renderer itself.
+            continue
+
+        target = provided.get(param.name)
+        if param.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            if target is not None:
+                args.append(target)
+            elif param.default is inspect._empty:
+                raise _DependencyResolutionError(
+                    f"Cannot inject required positional parameter '{param.name}'"
+                )
+        elif param.kind is inspect.Parameter.KEYWORD_ONLY:
+            if target is not None:
+                kwargs[param.name] = target
+            elif param.default is inspect._empty:
+                raise _DependencyResolutionError(
+                    f"Cannot inject required keyword parameter '{param.name}'"
+                )
+
+    return args, kwargs
+
+
 def dispatch_render(fn: Callable[..., Any]) -> Any:
-    """Invoke a page render function with best-effort dependency injection."""
+    """Invoke a page render function with adaptive dependency injection."""
 
     state: AppSessionState = init_session_state()
     api: BrokerAPI = get_backend()
 
     try:
-        return fn(api, state)  # type: ignore[arg-type]
-    except TypeError:
-        try:
-            return fn(api)  # type: ignore[arg-type]
-        except TypeError:
+        args, kwargs = _build_injected_args(fn, state, api)
+    except _DependencyResolutionError:
+        # Fall back to legacy positional attempts in decreasing order of fidelity.
+        for candidate in (
+            lambda: fn(st, state),
+            lambda: fn(state),
+            lambda: fn(),
+        ):
             try:
-                return fn(state)  # type: ignore[arg-type]
+                return candidate()
             except TypeError:
-                return fn()
+                continue
+        raise
+
+    return fn(*args, **kwargs)
 
 
 __all__ = [

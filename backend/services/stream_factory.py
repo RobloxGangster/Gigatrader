@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol
 
-from core.runtime_flags import RuntimeFlags, get_runtime_flags
+from core.runtime_flags import RuntimeFlags, get_runtime_flags, require_live_alpaca_or_fail
 
 
 log = logging.getLogger(__name__)
@@ -153,6 +153,7 @@ def make_stream_service(flags: RuntimeFlags | None = None) -> StreamService:
         )
 
     if source.startswith("alpaca"):
+        require_live_alpaca_or_fail()
         healthy, err = _alpaca_env_health()
         profile = getattr(cfg, "profile", "paper")
         if not healthy:
