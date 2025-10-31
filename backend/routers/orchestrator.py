@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Iterable, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
@@ -13,6 +13,11 @@ from backend.services.orchestrator import (
 )
 from backend.services.orchestrator_manager import orchestrator_manager
 from backend.services.orchestrator_runner import run_trading_loop
+from backend.services.universe_registry import (
+    clear_override_universe,
+    get_override_universe,
+    set_override_universe,
+)
 
 from .deps import get_orchestrator
 
@@ -23,8 +28,27 @@ router = APIRouter()
 class OrchestratorStartPayload(BaseModel):
     preset: Optional[str] = None
     mode: Optional[str] = None
+    universe: List[str] | str | None = None
 
     model_config = ConfigDict(extra="allow")
+
+
+def _normalize_universe(universe: Any) -> List[str]:
+    if universe is None:
+        return []
+    if isinstance(universe, str):
+        candidates = universe.split(",")
+    elif isinstance(universe, Iterable) and not isinstance(universe, (bytes, str)):
+        candidates = universe
+    else:
+        candidates = []
+
+    symbols: List[str] = []
+    for raw in candidates:
+        sym = str(raw).strip().upper()
+        if sym:
+            symbols.append(sym)
+    return symbols
 
 
 def _ensure_status(data: OrchestratorStatus | dict[str, Any]) -> OrchestratorStatus:
@@ -67,6 +91,13 @@ async def orchestrator_start(
             except RuntimeError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         orchestrator = get_orchestrator()
+        override_symbols = _normalize_universe(payload.universe if payload else None)
+        if override_symbols:
+            set_override_universe(override_symbols)
+        elif get_override_universe():
+            pass
+        else:
+            clear_override_universe()
         arm_snapshot = orchestrator.safe_arm_trading(requested_by="api.start")
         if arm_snapshot.get("engaged"):
             reason = arm_snapshot.get("reason")

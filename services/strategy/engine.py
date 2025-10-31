@@ -16,6 +16,7 @@ from backend.config.extended_universe import (
     is_rth as is_rth_session,
     load_extended_tickers,
 )
+from backend.services.universe_registry import get_override_universe
 from services.execution.engine import ExecutionEngine
 from services.execution.preopen_queue import PreopenIntent
 from services.execution.types import ExecIntent
@@ -26,6 +27,9 @@ from services.strategy.options_strat import OptionStrategy
 from services.strategy.regime import RegimeDetector
 from services.strategy.types import Bar, OrderPlan
 from services.strategy.universe import Universe
+
+
+FALLBACK_UNIVERSE = ["AAPL", "MSFT", "NVDA", "SPY"]
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -76,6 +80,8 @@ class StrategyEngine:
         self.regime = regime_detector or RegimeDetector()
         base_symbols_env = os.getenv("SYMBOLS", "")
         base_symbols = [sym.strip() for sym in base_symbols_env.split(",") if sym.strip()]
+        if not base_symbols:
+            base_symbols = list(FALLBACK_UNIVERSE)
         max_watch = _env_int("STRAT_UNIVERSE_MAX", 25)
         self.universe = universe or Universe(base_symbols, max_watch=max_watch)
         self._extended_universe: List[str] = load_extended_tickers()
@@ -121,11 +127,23 @@ class StrategyEngine:
         extended_now = is_extended_session(now)
         rth_now = is_rth_session(now)
 
-        if self._extended_set and not rth_now:
-            if normalized_symbol not in self._extended_set:
-                return
+        override_universe = get_override_universe()
+        base_universe = self.universe.get()
+        if not base_universe:
+            base_universe = list(FALLBACK_UNIVERSE)
 
-        if not self.universe.contains(normalized_symbol):
+        if override_universe:
+            active_universe = override_universe
+        elif not rth_now and self._extended_universe:
+            active_universe = self._extended_universe
+        else:
+            active_universe = base_universe
+
+        active_set = {sym.strip().upper() for sym in active_universe if sym}
+        if normalized_symbol not in active_set:
+            return
+
+        if not override_universe and not self.universe.contains(normalized_symbol):
             return
 
         regime = self.regime.update(bar.high, bar.low, bar.close)
