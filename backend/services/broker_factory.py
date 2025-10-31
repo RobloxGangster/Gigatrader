@@ -37,6 +37,11 @@ def make_broker_adapter(flags: RuntimeFlags | None = None) -> Any:
             raise RuntimeError("Alpaca configuration invalid: missing keys or base URL") from exc
         return adapter
 
+    if broker == "mock" and not cfg.mock_mode:
+        raise RuntimeError(
+            "Mock broker selected while MOCK_MODE=false; update BROKER or enable mock mode."
+        )
+
     if cfg.mock_mode or broker == "mock":
         adapter = MockBrokerAdapter()
         setattr(adapter, "dry_run", bool(cfg.dry_run))

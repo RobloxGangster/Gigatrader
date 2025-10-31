@@ -25,6 +25,15 @@ _last_order_attempt: Dict[str, Any] = {
     "broker_impl": None,
 }
 
+_decision_snapshot: Dict[str, Any] = {
+    "will_trade_at_open": False,
+    "preopen_queue_count": 0,
+    "last_decision_at": None,
+    "last_decision_iso": None,
+    "last_signals": 0,
+    "last_orders": 0,
+}
+
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -65,6 +74,41 @@ def record_order_attempt(
 
 def get_last_order_attempt() -> Dict[str, Any]:
     return dict(_last_order_attempt)
+
+
+def record_decision_cycle(
+    *,
+    will_trade_at_open: bool,
+    signals: int,
+    orders: int,
+    preopen_queue: int,
+) -> None:
+    ts = datetime.now(timezone.utc)
+    iso_ts = ts.isoformat().replace("+00:00", "Z")
+    _decision_snapshot.update(
+        {
+            "will_trade_at_open": bool(will_trade_at_open),
+            "preopen_queue_count": max(0, int(preopen_queue)),
+            "last_decision_at": ts,
+            "last_decision_iso": iso_ts,
+            "last_signals": max(0, int(signals)),
+            "last_orders": max(0, int(orders)),
+        }
+    )
+    log.info(
+        "orchestrator.decision",
+        extra={
+            "will_trade_at_open": bool(will_trade_at_open),
+            "signals": int(signals),
+            "orders": int(orders),
+            "preopen_queue": max(0, int(preopen_queue)),
+        },
+    )
+
+
+def _decision_state_snapshot() -> Dict[str, Any]:
+    payload = dict(_decision_snapshot)
+    return payload
 
 
 def can_execute_trade(
@@ -168,6 +212,7 @@ class OrchestratorSupervisor:
 
         thread_alive = self._runtime_started or manager_thread_alive
 
+        phase_value = derived_state
         allowed_states = {"starting", "running", "stopping", "stopped"}
         if derived_state not in allowed_states:
             if self._stop_requested or manager_state == "stopping":
@@ -177,9 +222,16 @@ class OrchestratorSupervisor:
             else:
                 derived_state = "stopped"
 
+        decision_state = _decision_state_snapshot()
+        transition: str | None = None
+        public_state = "running" if derived_state == "running" else "stopped"
+        if derived_state in {"starting", "stopping"}:
+            transition = derived_state
         return {
-            "state": derived_state,
-            "running": derived_state == "running",
+            "state": public_state,
+            "phase": phase_value,
+            "transition": transition,
+            "running": public_state == "running",
             "last_error": self._last_error,
             "last_error_stack": self._last_error_stack,
             "last_error_at": _iso_dt(self._last_error_at),
@@ -205,6 +257,12 @@ class OrchestratorSupervisor:
             "dry_run": getattr(flags, "dry_run", False),
             "mock_mode": getattr(flags, "mock_mode", False),
             "market_state": market_state(),
+            "will_trade_at_open": bool(decision_state.get("will_trade_at_open")),
+            "preopen_queue_count": int(decision_state.get("preopen_queue_count") or 0),
+            "last_decision_at": decision_state.get("last_decision_at"),
+            "last_decision_ts": decision_state.get("last_decision_iso"),
+            "last_decision_signals": int(decision_state.get("last_signals") or 0),
+            "last_decision_orders": int(decision_state.get("last_orders") or 0),
         }
 
     async def start(self) -> None:
@@ -472,8 +530,11 @@ def get_orchestrator_status() -> Dict[str, Any]:
     kill_label = "Engaged" if kill_engaged else "Standby"
     if kill_engaged and kill_reason:
         kill_label = f"Engaged ({kill_reason})"
+    decision_state = _decision_state_snapshot()
     return {
         "state": "stopped",
+        "phase": "stopped",
+        "transition": None,
         "running": False,
         "last_error": None,
         "last_error_stack": None,
@@ -500,12 +561,19 @@ def get_orchestrator_status() -> Dict[str, Any]:
         "dry_run": getattr(flags, "dry_run", False),
         "mock_mode": getattr(flags, "mock_mode", False),
         "market_state": market_state(),
+        "will_trade_at_open": bool(decision_state.get("will_trade_at_open")),
+        "preopen_queue_count": int(decision_state.get("preopen_queue_count") or 0),
+        "last_decision_at": decision_state.get("last_decision_at"),
+        "last_decision_ts": decision_state.get("last_decision_iso"),
+        "last_decision_signals": int(decision_state.get("last_signals") or 0),
+        "last_decision_orders": int(decision_state.get("last_orders") or 0),
     }
 
 
 __all__ = [
     "OrchestratorSupervisor",
     "can_execute_trade",
+    "record_decision_cycle",
     "get_last_order_attempt",
     "get_orchestrator_status",
     "record_order_attempt",

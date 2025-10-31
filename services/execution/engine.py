@@ -127,6 +127,10 @@ class ExecutionEngine:
             "client_order_id": client_order_id,
             "asset_class": intent.asset_class,
         }
+        if intent.time_in_force:
+            payload["time_in_force"] = intent.time_in_force
+        if intent.order_type:
+            payload["type"] = intent.order_type
         if intent.asset_class == "option" and intent.option_symbol:
             payload["symbol"] = intent.option_symbol
             payload["underlying_symbol"] = intent.symbol
@@ -141,6 +145,10 @@ class ExecutionEngine:
                 tp, sl = _bracket_prices(intent.side, limit_price, tp_pct, sl_pct)
                 payload["take_profit"] = {"limit_price": tp}
                 payload["stop_loss"] = {"stop_price": sl}
+        if "type" not in payload:
+            payload["type"] = "limit" if intent.limit_price is not None else "market"
+        if "time_in_force" not in payload:
+            payload["time_in_force"] = "day"
         return payload
 
     async def _forget_intent(self, key: str) -> None:

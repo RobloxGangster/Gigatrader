@@ -19,7 +19,6 @@ from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
 from ui.services.backend import BrokerAPI
 from ui.services.healthcheck import probe_backend
-from ui.utils.ui_poll import debounced_poll
 
 _TESTING = "PYTEST_CURRENT_TEST" in os.environ
 REFRESH_INTERVAL_SEC = 5
@@ -341,6 +340,10 @@ def _render_status_header(
     thread_alive = False
     restart_count = 0
     market_state_value = "unknown"
+    transition_value: str | None = "—"
+    preopen_queue = 0
+    will_trade_open = False
+    last_decision_ts: str | None = None
 
     if backend_up:
         runtime_profile = runtime_flags.get("profile") if isinstance(runtime_flags, dict) else None
@@ -352,7 +355,11 @@ def _render_status_header(
         if broker_value is not None:
             broker_label = str(broker_value).title()
         run_state_value = str(
-            orch_status.get("state") or health.get("orchestrator_state") or "Unknown"
+            orch_status.get("phase")
+            or health.get("orchestrator_phase")
+            or orch_status.get("state")
+            or health.get("orchestrator_state")
+            or "Unknown"
         )
         run_state = run_state_value
         stream_source = str(
@@ -394,6 +401,25 @@ def _render_status_header(
             or "unknown"
         )
         run_state = run_state_value
+        transition_value = (
+            orch_status.get("transition")
+            or health.get("orchestrator_transition")
+            or "—"
+        )
+        preopen_queue = int(
+            orch_status.get("preopen_queue_count")
+            or health.get("preopen_queue_count")
+            or 0
+        )
+        will_trade_open = bool(
+            orch_status.get("will_trade_at_open")
+            or health.get("will_trade_at_open")
+        )
+        last_decision_ts = (
+            orch_status.get("last_decision_ts")
+            or orch_status.get("last_decision_at")
+            or health.get("last_decision_at")
+        )
 
     cols = st.columns(5)
     run_state_display = run_state.replace("_", " ").title()
@@ -402,6 +428,13 @@ def _render_status_header(
     cols[2].metric("Run State", run_state_display)
     cols[3].metric("Stream Source", stream_source)
     cols[4].metric("Kill Switch", kill_switch_label)
+
+    extra_cols = st.columns(3)
+    extra_cols[0].metric("Transition", str(transition_value or "—"))
+    extra_cols[1].metric("Preopen Queue", preopen_queue)
+    extra_cols[2].metric("Will Trade At Open", "Yes" if will_trade_open else "No")
+    if last_decision_ts:
+        st.caption(f"Last decision: {last_decision_ts}")
 
     if not backend_up:
         status_pill("Stream", "Offline", variant="warning")
@@ -1168,7 +1201,7 @@ def render(
     st.caption(f"Resolved API: {resolved_base}")
     st.sidebar.caption(f"Resolved API: {resolved_base}")
     if st.button("Refresh", key="cc_manual_refresh"):
-        st.session_state["__cc_manual_refresh_ts__"] = time.time()
+        st.session_state["__cc_force_poll"] = True
 
     col_start, col_stop = st.columns([1, 1])
     with col_start:
@@ -1212,13 +1245,6 @@ def render(
             if not message:
                 continue
             st.warning(f"Backend warning ({key}): {message}")
-
-    st.session_state.setdefault("telemetry.autorefresh", False)
-    auto_enabled = st.toggle(
-        "Auto-refresh telemetry",
-        key="telemetry.autorefresh",
-        help="Refresh KPIs and tables every few seconds.",
-    )
 
     profile = health_info.get("profile", "unknown")
     broker_name = health_info.get("broker", "unknown")
@@ -1276,25 +1302,16 @@ def render(
 
     backend_running = True
 
-    manual_refresh_ts = st.session_state.pop("__cc_manual_refresh_ts__", None)
     force_poll = bool(st.session_state.pop("__cc_force_poll", False))
     cache_key = "__cc_cached_state__"
     now_ts = time.time()
-    should_fetch = cache_key not in st.session_state or manual_refresh_ts is not None or force_poll
-
-    if auto_enabled and not should_fetch:
-        if debounced_poll("cc_status", STATUS_POLL_INTERVAL):
-            should_fetch = True
-        else:
-            next_at = float(st.session_state.get("cc_status.next", 0.0) or 0.0)
-            wait_for = max(0.0, next_at - now_ts)
-            if wait_for > 0:
-                time.sleep(min(wait_for, 0.5))
-            st.experimental_rerun()
+    last_fetch = float(st.session_state.get("__cc_last_fetch__", 0.0) or 0.0)
+    should_fetch = cache_key not in st.session_state or force_poll or (now_ts - last_fetch) >= STATUS_POLL_INTERVAL
 
     if should_fetch:
         data = _load_remote_state(api, backend_running, health_payload)
         st.session_state[cache_key] = data
+        st.session_state["__cc_last_fetch__"] = now_ts
     else:
         data = st.session_state.get(cache_key, {})
     backend_up = backend_running

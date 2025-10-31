@@ -7,11 +7,14 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-OrchState = Literal["starting", "running", "stopping", "stopped"]
+PublicState = Literal["running", "stopped"]
+TransitionState = Literal["starting", "stopping"]
 
 
 class OrchestratorStatus(BaseModel):
-    state: OrchState = "stopped"
+    state: PublicState = "stopped"
+    transition: TransitionState | None = None
+    phase: Optional[str] = None
     running: bool = False
     last_error: Optional[str] = None
     thread_alive: bool = False
@@ -27,7 +30,14 @@ class OrchestratorStatus(BaseModel):
     kill_switch_reason: Optional[str] = None
     kill_switch_engaged_at: Optional[datetime] = None
     kill_switch_can_reset: bool = True
+    will_trade_at_open: bool = False
+    preopen_queue_count: int = 0
+    last_decision_at: Optional[datetime] = None
 
 
-__all__ = ["OrchestratorStatus", "OrchState"]
+__all__ = [
+    "OrchestratorStatus",
+    "PublicState",
+    "TransitionState",
+]
 
