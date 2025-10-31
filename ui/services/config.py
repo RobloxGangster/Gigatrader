@@ -4,22 +4,46 @@ from __future__ import annotations
 
 import os
 
-from ui.lib.api_client import discover_base_url, reset_discovery_cache
+import streamlit as st
+
+
+def _sanitize(value: object | None) -> str | None:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned:
+            return cleaned.rstrip("/") or cleaned
+    return None
 
 
 def api_base_url() -> str:
     """
-    API base URL used by the UI. Prefer explicit env override,
-    otherwise use the discovered base (cached).
+    Return backend base URL without importing api_client to avoid circular imports.
+    Priority: session_state.backend_base > BACKEND_BASE > GT_API_BASE_URL > default.
     """
 
-    return os.environ.get("API_BASE_URL") or discover_base_url()
+    try:
+        session_base = st.session_state.get("backend_base")  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - streamlit not initialised
+        session_base = None
+    for candidate in (
+        session_base,
+        os.getenv("BACKEND_BASE"),
+        os.getenv("GT_API_BASE_URL"),
+    ):
+        cleaned = _sanitize(candidate)
+        if cleaned:
+            return cleaned
+    return "http://127.0.0.1:8000"
 
 
 def force_redetect_api_base() -> str:
-    """For diagnostics: clear cache and rediscover."""
+    """For diagnostics: clear session cache and rediscover."""
 
-    reset_discovery_cache()
+    try:
+        if "backend_base" in st.session_state:  # type: ignore[attr-defined]
+            del st.session_state["backend_base"]  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - streamlit not initialised
+        pass
     return api_base_url()
 
 

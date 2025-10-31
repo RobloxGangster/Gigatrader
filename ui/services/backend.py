@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 from requests import HTTPError
 import streamlit as st
 
-from .config import api_base_url
 from ui.state import (
     EquityPoint,
     Greeks,
@@ -30,14 +29,11 @@ from ui.state import (
     RunInfo,
 )
 
-def _resolve_env_backend_base() -> str:
-    value = os.getenv("BACKEND_BASE")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return "http://127.0.0.1:8000"
-
-
-ENV_BACKEND_BASE = _resolve_env_backend_base()
+ENV_BACKEND_BASE = (
+    os.getenv("BACKEND_BASE")
+    or os.getenv("GT_API_BASE_URL")
+    or "http://127.0.0.1:8000"
+)
 _FALLBACK_SESSION_STATE: Dict[str, Any] = {}
 
 
@@ -342,7 +338,7 @@ class RealAPI:
         base_url: Optional[str] = None,
         api_client: Optional["ApiClient"] = None,
     ) -> None:
-        base_candidate = base_url or api_base_url()
+        base_candidate = base_url or get_api_base()
         if api_client is not None and base_url is None:
             self.client = api_client
         else:

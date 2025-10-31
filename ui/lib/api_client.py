@@ -10,9 +10,8 @@ import streamlit as st
 from requests import HTTPError, Response
 from urllib.parse import urljoin
 
-from ui.services.backend import ensure_backend_base, get_api_base
-
 _DEFAULT_BASES: Sequence[Optional[str]] = (
+    os.getenv("BACKEND_BASE"),
     os.getenv("GT_API_BASE_URL"),
     "http://127.0.0.1:8000",
     "http://localhost:8000",
@@ -27,6 +26,20 @@ _ADDITIONAL_ENV_VARS: Sequence[str] = (
 _DISCOVERED_BASE_URL: Optional[str] = None
 
 
+def _env_backend_base() -> str:
+    for candidate in _DEFAULT_BASES:
+        if candidate:
+            return str(candidate).strip().rstrip("/") or "http://127.0.0.1:8000"
+    return "http://127.0.0.1:8000"
+
+
+def _sanitize_base(candidate: Optional[str]) -> Optional[str]:
+    if not candidate:
+        return None
+    base = str(candidate).strip().rstrip("/")
+    return base or None
+
+
 def discover_base_url() -> str:
     """Return the first reachable backend base URL, caching the result."""
 
@@ -34,12 +47,21 @@ def discover_base_url() -> str:
     if _DISCOVERED_BASE_URL:
         return _DISCOVERED_BASE_URL
 
-    candidates = [candidate for candidate in _DEFAULT_BASES if candidate]
-    if not candidates:
-        candidates = ["http://127.0.0.1:8000", "http://localhost:8000"]
+    candidates: list[Optional[str]] = []
+    try:
+        session_value = st.session_state.get("backend_base")  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - defensive for older Streamlit builds
+        session_value = None
+    candidates.append(session_value)
+    candidates.append(_session_override())
+    candidates.extend(candidate for candidate in _DEFAULT_BASES if candidate)
+
+    # Ensure we always have at least the environment fallback
+    if not any(candidates):
+        candidates.append(_env_backend_base())
 
     for candidate in candidates:
-        base = str(candidate).strip().rstrip("/")
+        base = _sanitize_base(candidate)
         if not base:
             continue
         try:
@@ -48,11 +70,21 @@ def discover_base_url() -> str:
             continue
         if response.ok:
             _DISCOVERED_BASE_URL = base
+            try:
+                st.session_state["backend_base"] = base  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - streamlit not initialised
+                pass
             return base
 
-    fallback = str(candidates[0]).strip().rstrip("/")
-    _DISCOVERED_BASE_URL = fallback or "http://127.0.0.1:8000"
-    return _DISCOVERED_BASE_URL
+    fallback = _sanitize_base(candidates[0]) if candidates else None
+    if not fallback:
+        fallback = _env_backend_base()
+    _DISCOVERED_BASE_URL = fallback
+    try:
+        st.session_state["backend_base"] = fallback  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - streamlit not initialised
+        pass
+    return fallback
 
 
 def reset_discovery_cache() -> None:
@@ -87,8 +119,12 @@ class ApiClient:
         bases: Optional[Iterable[Optional[str]]] = None,
         timeout: float = 10.0,
     ) -> None:
-        ensure_backend_base()
-        primary = base_url or base or get_api_base()
+        try:
+            if "backend_base" not in st.session_state:  # type: ignore[attr-defined]
+                st.session_state["backend_base"] = discover_base_url()  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - streamlit not initialised
+            pass
+        primary = base_url or base or discover_base_url()
 
         self.timeout = timeout
         self.base_url = self._resolve_base_url(primary, bases)
@@ -106,17 +142,14 @@ class ApiClient:
         candidates.append(discover_base_url())
 
         for candidate in candidates:
-            base = self._sanitize_base(candidate)
+            base = _sanitize_base(candidate)
             if base:
                 return base
         return discover_base_url()
 
     @staticmethod
     def _sanitize_base(candidate: Optional[str]) -> Optional[str]:
-        if not candidate:
-            return None
-        base = str(candidate).strip().rstrip("/")
-        return base or None
+        return _sanitize_base(candidate)
 
     def base(self) -> str:
         return self.base_url
@@ -433,7 +466,7 @@ def json_post(path: str, payload: Any, **kwargs: Any) -> Dict[str, Any]:
 def _base_url() -> str:
     override = _session_override()
     if override:
-        sanitized = ApiClient._sanitize_base(override)
+        sanitized = _sanitize_base(override)
         if sanitized:
             return sanitized
     return discover_base_url()
