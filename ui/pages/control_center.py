@@ -1234,8 +1234,8 @@ def render(
         # Show captured error from the probe
         if err_msg:
             st.warning(f"Health probe error: {err_msg}")
-
-        st.stop()
+        st.caption("Check backend logs or launch the trading service, then refresh.")
+        return
 
     st.session_state["backend.health"] = health_info
 

@@ -13,10 +13,30 @@ import requests
 import streamlit as st
 
 from ui.lib.api_client import ApiClient, build_url
+from ui.lib.nav import NAV_ITEMS
+from ui.lib.ui_compat import safe_rerun
 
 STATE_KEY = "__diagnostics_state__"
 DEFAULT_LINES = 200
 REFRESH_INTERVAL_MS = 5_000
+_DEFAULT_SLUG = "diagnostics"
+
+
+def _read_query_slug() -> str:
+    try:
+        params = dict(st.query_params)  # type: ignore[arg-type]
+    except Exception:  # pragma: no cover - Streamlit < 1.30 fallback
+        raw = st.experimental_get_query_params()
+        params = {k: v[0] if isinstance(v, list) and v else v for k, v in raw.items()}
+    slug = str(params.get("page", _DEFAULT_SLUG) or _DEFAULT_SLUG).strip().lower()
+    return slug or _DEFAULT_SLUG
+
+
+def _set_query_slug(slug: str) -> None:
+    try:
+        st.query_params["page"] = slug
+    except Exception:  # pragma: no cover - legacy fallback
+        st.experimental_set_query_params(page=slug)
 
 
 def _fmt_money(value: Any) -> str:
@@ -98,6 +118,34 @@ def _get_state() -> Dict[str, Any]:
 def render() -> None:
     st.header("Diagnostics / Logs")
     st.caption("Backend health, pacing, and recent logs. Export and refresh controls below.")
+
+    nav_labels = [item["label"] for item in NAV_ITEMS]
+    nav_lookup = {item["label"]: item["slug"] for item in NAV_ITEMS}
+    current_slug = _read_query_slug()
+    current_label = next(
+        (label for label, slug in nav_lookup.items() if slug == current_slug),
+        "Diagnostics / Logs",
+    )
+    if current_label not in nav_labels:
+        nav_labels.insert(0, current_label)
+        nav_lookup[current_label] = current_slug
+
+    try:
+        current_index = nav_labels.index(current_label)
+    except ValueError:
+        current_index = 0
+
+    selection = st.selectbox(
+        "Navigate",
+        nav_labels,
+        index=current_index,
+        help="Jump between Gigatrader pages.",
+    )
+    selected_slug = nav_lookup.get(selection, _DEFAULT_SLUG)
+    if selected_slug != current_slug:
+        _set_query_slug(selected_slug)
+        safe_rerun()
+        return
 
     client = ApiClient()
     state = _get_state()

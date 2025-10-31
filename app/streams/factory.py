@@ -24,7 +24,11 @@ class AlpacaStream:
 
 
 def make_stream(flags: RuntimeFlags) -> MockStream | AlpacaStream:
-    if flags.mock_mode:
+    broker_label = str(getattr(flags, "broker", "alpaca")).lower()
+    use_mock_stream = bool(flags.mock_mode or broker_label == "mock")
+    if use_mock_stream and not flags.mock_mode:
+        raise RuntimeError("Live mode requested but stream would be mock")
+    if use_mock_stream:
         return MockStream()
     return AlpacaStream(
         key=flags.alpaca_key,

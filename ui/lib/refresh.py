@@ -3,29 +3,34 @@
 from __future__ import annotations
 
 import time
+from typing import Optional
 
 import streamlit as st
 
 
-def safe_autorefresh(interval_ms: int, key: str) -> None:
-    """Polyfill for ``st.autorefresh`` that degrades gracefully."""
+def safe_autorefresh(interval_ms: int, *, key: Optional[str] = None) -> None:
+    """Request a rerender after ``interval_ms`` milliseconds when supported."""
+
+    if interval_ms <= 0:
+        return
+
+    refresh_key = key or "default"
 
     if hasattr(st, "autorefresh"):
-        st.autorefresh(interval=interval_ms, key=key)  # type: ignore[attr-defined]
+        kwargs = {"interval": interval_ms, "key": f"auto-{refresh_key}"}
+        st.autorefresh(**kwargs)  # type: ignore[attr-defined]
         return
-    st.session_state.setdefault("__next_refresh_at__", time.time() + interval_ms / 1000.0)
+
+    rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun", None)
+    if rerun is None:
+        return
+
+    state_key = f"__safe_autorefresh_last__:{refresh_key}"
+    now = time.time() * 1000
+    last = float(st.session_state.get(state_key, 0.0) or 0.0)
+    if now - last >= interval_ms:
+        st.session_state[state_key] = now
+        rerun()
 
 
-def should_rerender_from_polyfill() -> bool:
-    """Return True if the polyfill indicates the page should rerender."""
-
-    nxt = st.session_state.get("__next_refresh_at__")
-    if not nxt:
-        return False
-    if time.time() >= nxt:
-        st.session_state.pop("__next_refresh_at__", None)
-        return True
-    return False
-
-
-__all__ = ["safe_autorefresh", "should_rerender_from_polyfill"]
+__all__ = ["safe_autorefresh"]

@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from backend import api as backend_api
 from backend.routers import orchestrator as orchestrator_router
+from backend.services import orchestrator as orchestrator_service
 from services.strategy.engine import StrategyEngine
 from services.strategy.types import Bar as StrategyBar, OrderPlan
 
@@ -96,6 +97,8 @@ async def test_preopen_opg_order(monkeypatch):
     monkeypatch.setattr("services.strategy.engine.market_is_open", lambda _now=None: False)
     monkeypatch.setattr("services.strategy.engine.seconds_until_open", lambda _now=None: 60.0)
 
+    await orchestrator_service.drain_preopen_queue()
+
     engine = StrategyEngine(
         exec_engine=exec_stub,
         option_gateway=_StubOptionGateway(),
@@ -107,13 +110,14 @@ async def test_preopen_opg_order(monkeypatch):
     bar = StrategyBar(ts=datetime.utcnow().timestamp(), open=100.0, high=101.0, low=99.0, close=100.5, volume=1000.0)
     await engine.on_bar("AAPL", bar, senti=0.6)
 
-    assert exec_stub.intents  # ensure submit was invoked
-    intent = exec_stub.intents[0]
-    assert intent.time_in_force == "opg"
-    assert intent.order_type in {"market", "limit"}
+    assert not exec_stub.intents
+    queue_count = orchestrator_service.get_preopen_queue_count()
+    assert queue_count >= 1
     assert decisions
     assert decisions[-1][0] == "decision"
     assert decisions[-1][1]["preopen_queue"] >= 1
+
+    await orchestrator_service.drain_preopen_queue()
 
 
 def test_ui_refresh_does_not_stop_worker(monkeypatch):

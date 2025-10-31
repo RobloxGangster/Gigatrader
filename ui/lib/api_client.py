@@ -171,10 +171,21 @@ class ApiClient:
     def request(self, method: str, path: str, **kwargs: Any) -> Response:
         return self._request(method, path, **kwargs)
 
-    def get(self, path: str, **params: Any) -> Any:
+    def get(self, path: str, *, default: Any = None, **params: Any) -> Any:
         query = self._prepare_query(params)
-        response = self._request("GET", path, params=query)
-        return self._parse_response(response)
+        try:
+            response = self._request("GET", path, params=query)
+        except HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status in {404, 405}:
+                self._last_error = None
+                return default if default is not None else {}
+            self._last_error = str(exc)
+            raise
+        parsed = self._parse_response(response)
+        if parsed is None and default is not None:
+            return default
+        return parsed
 
     def post(self, path: str, json: Any | None = None, **kwargs: Any) -> Any:
         request_kwargs = dict(kwargs)
@@ -198,21 +209,21 @@ class ApiClient:
         return self._last_error
 
     def health(self) -> Any:
-        data = self.get("/health")
+        data = self.get("/health", default={})
         if isinstance(data, dict):
             return data
         return {"status": data}
 
     def pacing(self) -> Any:
-        payload = self.get("/pacing")
+        payload = self.get("/pacing", default={})
         return payload if isinstance(payload, dict) else {"raw": payload}
 
     def logs_recent(self, limit: int = 200) -> Any:
         try:
-            data = self.get("/logs/recent", limit=limit)
+            data = self.get("/logs/recent", default=[], limit=limit)
         except HTTPError as exc:
             if exc.response is not None and exc.response.status_code in {404, 405}:
-                return self.get("/logs", tail=limit)
+                return self.get("/logs", default=[], tail=limit)
             raise
         return data
 
@@ -220,19 +231,19 @@ class ApiClient:
         return self.logs_recent(limit=limit)
 
     def status(self) -> Any:
-        return self.get("/status")
+        return self.get("/status", default={})
 
     def broker_status(self) -> Any:
-        payload = self.get("/broker/status")
+        payload = self.get("/broker/status", default={})
         if isinstance(payload, dict):
             return payload
         return {"raw": payload}
 
     def orchestrator_status(self) -> Any:
-        return self.get("/orchestrator/status")
+        return self.get("/orchestrator/status", default={})
 
     def orchestrator_debug(self) -> Any:
-        return self.get("/orchestrator/debug")
+        return self.get("/orchestrator/debug", default={})
 
     def orchestrator_start(
         self,
@@ -282,14 +293,14 @@ class ApiClient:
             raise
 
     def debug_runtime(self) -> Dict[str, Any]:
-        payload = self.get("/debug/runtime")
+        payload = self.get("/debug/runtime", default={})
         if isinstance(payload, dict):
             return payload
         return {"raw": payload}
 
     def execution_tail(self, limit: int = 50) -> Dict[str, Any]:
         try:
-            payload = self.get("/debug/execution_tail", limit=limit)
+            payload = self.get("/debug/execution_tail", default={}, limit=limit)
         except HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
                 return {"path": None, "lines": []}
@@ -306,13 +317,13 @@ class ApiClient:
         return bytes(response.content or b"")
 
     def strategy_config(self) -> Any:
-        return self.get("/strategy/config")
+        return self.get("/strategy/config", default={})
 
     def strategy_update(self, payload: Dict[str, Any]) -> Any:
         return self.post("/strategy/config", json=payload)
 
     def risk_config(self) -> Any:
-        return self.get("/risk/config")
+        return self.get("/risk/config", default={})
 
     def risk_update(self, payload: Dict[str, Any]) -> Any:
         return self.post("/risk/config", json=payload)
@@ -321,7 +332,7 @@ class ApiClient:
         return self.post("/risk/killswitch/reset")
 
     def stream_status(self) -> Any:
-        return self.get("/stream/status")
+        return self.get("/stream/status", default={})
 
     def stream_start(self) -> Any:
         return self.post("/stream/start")
@@ -333,14 +344,14 @@ class ApiClient:
         return self.post("/orders/cancel_all")
 
     def account(self) -> Any:
-        return self._request_with_fallback("GET", ["/broker/account", "/alpaca/account"])
+        return self._request_with_fallback("GET", ["/broker/account", "/alpaca/account"], default={})
 
     def positions(self) -> Any:
         try:
-            return self.get("/broker/positions")
+            return self.get("/broker/positions", default=[])
         except HTTPError as exc:
             if exc.response is not None and exc.response.status_code in {404, 405}:
-                return self.get("/positions", live=True)
+                return self.get("/positions", default=[], live=True)
             raise
 
     def orders(self, *, status: Optional[str] = None, limit: Optional[int] = None) -> Any:
@@ -350,31 +361,38 @@ class ApiClient:
         if limit is not None:
             params["limit"] = limit
         try:
-            return self.get("/broker/orders", **params)
+            return self.get("/broker/orders", default=[], **params)
         except HTTPError as exc:
             if exc.response is not None and exc.response.status_code in {404, 405}:
                 fallback_params = dict(params) if params else {"live": True}
-                return self.get("/orders", **fallback_params)
+                return self.get("/orders", default=[], **fallback_params)
             raise
 
     def pnl_summary(self) -> Any:
-        return self.get("/pnl/summary")
+        return self.get("/pnl/summary", default={})
 
     def telemetry_metrics(self) -> Any:
-        return self.get("/telemetry/metrics")
+        return self.get("/telemetry/metrics", default={})
 
     def telemetry_trades(self) -> Any:
-        return self.get("/telemetry/trades")
+        return self.get("/telemetry/trades", default=[])
 
     def exposure(self) -> Any:
-        return self.get("/telemetry/exposure")
+        return self.get("/telemetry/exposure", default={})
 
-    def _request_with_fallback(self, method: str, paths: Sequence[str], **kwargs: Any) -> Any:
+    def _request_with_fallback(
+        self,
+        method: str,
+        paths: Sequence[str],
+        *,
+        default: Any = None,
+        **kwargs: Any,
+    ) -> Any:
         last_exc: Optional[Exception] = None
         for candidate in paths:
             try:
                 if method.upper() == "GET":
-                    return self.get(candidate, **kwargs)
+                    return self.get(candidate, default=default, **kwargs)
                 return self.post(candidate, **kwargs)
             except HTTPError as exc:
                 status = exc.response.status_code if exc.response is not None else None
@@ -388,6 +406,8 @@ class ApiClient:
                 break
         if last_exc:
             raise last_exc
+        if default is not None:
+            return default
         raise RuntimeError("No request paths provided")
 
 

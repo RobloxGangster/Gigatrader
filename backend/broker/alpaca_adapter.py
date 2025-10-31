@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from functools import partial
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
@@ -20,6 +21,34 @@ class AlpacaBrokerAdapter:
 
     def __init__(self, key_id: str, secret_key: str, *, paper: bool = True) -> None:
         self.client = TradingClient(key_id, secret_key, paper=paper)
+
+    async def get_clock(self) -> Dict[str, Any]:
+        """Return the Alpaca trading clock with normalised timestamps."""
+
+        loop = asyncio.get_running_loop()
+        clock = await loop.run_in_executor(None, self.client.get_clock)
+
+        def _as_iso(value: Optional[Any]) -> Optional[str]:
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                if value.tzinfo is None:
+                    value = value.replace(tzinfo=timezone.utc)
+                return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            if hasattr(value, "isoformat"):
+                try:
+                    raw = value.isoformat()  # type: ignore[call-arg]
+                    return raw.replace("+00:00", "Z")
+                except Exception:  # pragma: no cover - defensive conversion
+                    return None
+            return str(value)
+
+        return {
+            "is_open": bool(getattr(clock, "is_open", False)),
+            "next_open": _as_iso(getattr(clock, "next_open", None)),
+            "next_close": _as_iso(getattr(clock, "next_close", None)),
+            "timestamp": _as_iso(getattr(clock, "timestamp", None)),
+        }
 
     async def place_order(
         self,

@@ -328,8 +328,10 @@ async def health() -> Dict[str, Any]:
     except Exception:  # pragma: no cover - defensive runtime flag guard
         flags = None
 
+    orchestrator_status_obj = None
     try:
-        orchestrator_snapshot = get_orchestrator_status()
+        orchestrator_status_obj = get_orchestrator_status()
+        orchestrator_snapshot = orchestrator_status_obj.model_dump()
     except Exception as exc:  # pragma: no cover - defensive health guard
         orchestrator_snapshot = {"state": "unknown", "error": str(exc)}
     try:
@@ -344,10 +346,17 @@ async def health() -> Dict[str, Any]:
     paper_mode_flag = bool(getattr(flags, "paper_trading", profile_value != "live"))
 
     orchestrator_state = str(orchestrator_snapshot.get("state", "stopped"))
-    kill_label = orchestrator_snapshot.get("kill_switch") or (
-        "Triggered" if orchestrator_snapshot.get("kill_switch_engaged") else "Standby"
-    )
     kill_reason = orchestrator_snapshot.get("kill_switch_reason")
+    kill_engaged = bool(orchestrator_snapshot.get("kill_switch_engaged"))
+    kill_can_reset = bool(orchestrator_snapshot.get("kill_switch_can_reset", True))
+    kill_label = "Triggered" if kill_engaged else "Standby"
+    if orchestrator_status_obj is not None:
+        kill_reason = orchestrator_status_obj.kill_switch.reason
+        kill_engaged = orchestrator_status_obj.kill_switch.engaged
+        kill_can_reset = orchestrator_status_obj.kill_switch.can_reset
+        kill_label = "Triggered" if kill_engaged else "Standby"
+        if kill_engaged and kill_reason:
+            kill_label = f"Triggered ({kill_reason})"
 
     payload: Dict[str, Any] = {
         "status": "ok",
@@ -357,9 +366,9 @@ async def health() -> Dict[str, Any]:
         "broker": broker_value,
         "orchestrator_state": orchestrator_state,
         "kill_switch": kill_label,
-        "kill_switch_engaged": bool(orchestrator_snapshot.get("kill_switch_engaged", False)),
+        "kill_switch_engaged": kill_engaged,
         "kill_switch_reason": kill_reason,
-        "kill_switch_can_reset": bool(orchestrator_snapshot.get("kill_switch_can_reset", True)),
+        "kill_switch_can_reset": kill_can_reset,
         "can_trade": bool(orchestrator_snapshot.get("can_trade", False)),
         "trade_guard_reason": orchestrator_snapshot.get("trade_guard_reason"),
         "dry_run": dry_run_flag,

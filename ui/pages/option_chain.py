@@ -28,7 +28,13 @@ def _load_chain(api: BrokerAPI, symbol: str, expiry: str | None) -> OptionChain:
         raise TypeError(
             f"options_chain returned non-mapping type: {type(payload)}"
         )
-    return OptionChain(**payload)
+    data = dict(payload)
+    if not data:
+        data = {"symbol": symbol, "rows": []}
+    else:
+        data.setdefault("symbol", symbol)
+        data.setdefault("rows", [])
+    return OptionChain(**data)
 
 
 def _chain_dataframe(
@@ -103,7 +109,8 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     st.markdown('<div data-testid="option-chain-root"></div>', unsafe_allow_html=True)
     backend_guard = ApiClient()
     if not require_backend(backend_guard):
-        st.stop()
+        st.caption("Option Chain requires the backend service to be online.")
+        return
     default_symbol = (state.selected_symbol or "AAPL").upper()
     symbol_input = st.text_input("Underlying", value=default_symbol, key="oc_symbol")
     symbol = symbol_input.strip().upper() or default_symbol

@@ -62,6 +62,8 @@ class EquityStrategy:
             else _env_int("STRAT_MAX_POS_PER_SYMBOL", 1)
         )
         self.disable_in_choppy = _env_bool("STRAT_REGIME_DISABLE_CHOPPY", True)
+        self.enable_shorts = _env_bool("ENABLE_SHORTS", False)
+        self.short_rsi_max = max(0, 100 - int(self.min_rsi))
         self._time = time_fn or time.time
         self.last_trade_ts: dict[str, float] = {}
         self.open_positions: dict[str, int] = {}
@@ -104,6 +106,21 @@ class EquityStrategy:
                 limit_price=bar.close,
                 asset_class="equity",
                 note="ORB+momentum",
+            )
+        if breakout == -1 and self.enable_shorts:
+            if senti is None or senti > -abs(self.min_senti):
+                return None
+            if rsi_value > self.short_rsi_max:
+                return None
+            self.last_trade_ts[symbol] = now
+            self.open_positions[symbol] = self.open_positions.get(symbol, 0) + 1
+            return OrderPlan(
+                symbol=symbol,
+                side="sell",
+                qty=10,
+                limit_price=bar.close,
+                asset_class="equity",
+                note="ORB-short",
             )
         return None
 

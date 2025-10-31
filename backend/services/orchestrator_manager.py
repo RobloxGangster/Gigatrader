@@ -8,13 +8,22 @@ import traceback
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict
 
-from backend.models.orchestrator import OrchestratorStatus
+from backend.models.orchestrator import (
+    BrokerProfile,
+    KillSwitchStatus,
+    OrchestratorStatus,
+)
 
 
 log = logging.getLogger(__name__)
 
 
-_state = OrchestratorStatus()
+_state = OrchestratorStatus(
+    state="stopped",
+    transition=None,
+    kill_switch=KillSwitchStatus(engaged=False),
+    broker=BrokerProfile(),
+)
 _lock = threading.Lock()
 _worker_thread: threading.Thread | None = None
 _stop_event = threading.Event()
@@ -66,7 +75,7 @@ def start(trading_entrypoint: Callable[[Callable[[], bool]], None]) -> Dict[str,
             transition="starting",
             running=True,
             last_error=None,
-            start_attempt_ts=_utcnow(),
+            start_attempt_ts=_utcnow().isoformat(),
             last_shutdown_reason=None,
         )
         _last_error_stack = None
