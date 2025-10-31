@@ -16,7 +16,6 @@ from requests import HTTPError
 import streamlit as st
 
 from .config import api_base_url
-from ui.lib.api_client import ApiClient
 from ui.state import (
     EquityPoint,
     Greeks,
@@ -31,7 +30,14 @@ from ui.state import (
     RunInfo,
 )
 
-ENV_BACKEND_BASE = os.getenv("BACKEND_BASE", "http://127.0.0.1:8000")
+def _resolve_env_backend_base() -> str:
+    value = os.getenv("BACKEND_BASE")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "http://127.0.0.1:8000"
+
+
+ENV_BACKEND_BASE = _resolve_env_backend_base()
 _FALLBACK_SESSION_STATE: Dict[str, Any] = {}
 
 
@@ -58,6 +64,7 @@ def ensure_backend_base() -> None:
         current = state.get("backend_base")
         if not isinstance(current, str) or not current.strip():
             state["backend_base"] = ENV_BACKEND_BASE
+
 from ui.utils.runtime import get_runtime_flags
 
 _FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "fixtures"
@@ -333,12 +340,14 @@ class RealAPI:
     def __init__(
         self,
         base_url: Optional[str] = None,
-        api_client: Optional[ApiClient] = None,
+        api_client: Optional["ApiClient"] = None,
     ) -> None:
         base_candidate = base_url or api_base_url()
         if api_client is not None and base_url is None:
             self.client = api_client
         else:
+            from ui.lib.api_client import ApiClient
+
             self.client = ApiClient(base=base_candidate, timeout=_DEFAULT_TIMEOUT)
         if self.client.timeout < _DEFAULT_TIMEOUT:
             self.client.timeout = _DEFAULT_TIMEOUT
