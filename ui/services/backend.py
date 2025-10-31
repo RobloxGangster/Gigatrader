@@ -9,10 +9,11 @@ import urllib.parse
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol
+from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Protocol
 
 from pydantic import BaseModel, Field
 from requests import HTTPError
+import streamlit as st
 
 from .config import api_base_url
 from ui.lib.api_client import ApiClient
@@ -29,6 +30,34 @@ from ui.state import (
     RiskSnapshot,
     RunInfo,
 )
+
+ENV_BACKEND_BASE = os.getenv("BACKEND_BASE", "http://127.0.0.1:8000")
+_FALLBACK_SESSION_STATE: Dict[str, Any] = {}
+
+
+def _session_state() -> MutableMapping[str, Any]:
+    try:
+        return st.session_state
+    except (RuntimeError, AttributeError):  # pragma: no cover - streamlit runtime guard
+        return _FALLBACK_SESSION_STATE
+
+
+def get_api_base() -> str:
+    state = _session_state()
+    value = state.get("backend_base")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return ENV_BACKEND_BASE
+
+
+def ensure_backend_base() -> None:
+    state = _session_state()
+    if "backend_base" not in state:
+        state["backend_base"] = ENV_BACKEND_BASE
+    else:
+        current = state.get("backend_base")
+        if not isinstance(current, str) or not current.strip():
+            state["backend_base"] = ENV_BACKEND_BASE
 from ui.utils.runtime import get_runtime_flags
 
 _FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "fixtures"

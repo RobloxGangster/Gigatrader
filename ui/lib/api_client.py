@@ -85,8 +85,13 @@ class ApiClient:
         bases: Optional[Iterable[Optional[str]]] = None,
         timeout: float = 10.0,
     ) -> None:
+        from ui.services import backend as backend_services
+
+        backend_services.ensure_backend_base()
+        primary = base_url or base or backend_services.get_api_base()
+
         self.timeout = timeout
-        self.base_url = self._resolve_base_url(base_url or base, bases)
+        self.base_url = self._resolve_base_url(primary, bases)
         self._last_error: Optional[str] = None
 
     # -------------------------
