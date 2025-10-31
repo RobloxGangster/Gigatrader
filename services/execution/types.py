@@ -24,6 +24,8 @@ class ExecIntent:
     option_symbol: Optional[str] = None
     submit_side: Optional[Side] = None
     meta: Dict[str, Any] = field(default_factory=dict)
+    time_in_force: Optional[str] = None
+    order_type: Optional[str] = None
 
     def idempotency_key(self) -> str:
         """Stable key describing the unique semantics of the intent."""
@@ -36,6 +38,10 @@ class ExecIntent:
             self.asset_class,
             self.client_tag or "",
         ]
+        if self.time_in_force:
+            parts.append(self.time_in_force.lower())
+        if self.order_type:
+            parts.append(self.order_type.lower())
         if self.option_symbol:
             parts.append(self.option_symbol)
         return "|".join(parts)

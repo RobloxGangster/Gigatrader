@@ -39,6 +39,7 @@ def test_reset_kill_switch_allows_transitional_state(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["state"] == "stopping"
+    assert payload["state"] == "stopped"
+    assert payload["transition"] == "stopping"
     assert payload["kill_switch_engaged"] is False
     assert stub.reset_calls == ["api.reset"]

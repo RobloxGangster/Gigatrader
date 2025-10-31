@@ -11,7 +11,10 @@ from backend.services.orchestrator import (
     get_last_order_attempt,
     get_orchestrator_status,
 )
-from backend.models.orchestrator import OrchestratorStatus as OrchestratorStatusModel, OrchState
+from backend.models.orchestrator import (
+    OrchestratorStatus as OrchestratorStatusModel,
+    PublicState,
+)
 from backend.services.orchestrator_manager import orchestrator_manager
 from backend.services.orchestrator_runner import run_trading_loop
 
@@ -34,14 +37,22 @@ class OrchestratorStatus(OrchestratorStatusModel):
 def _build_status(snapshot: dict) -> OrchestratorStatus:
     payload = dict(snapshot)
     raw_state = str(snapshot.get("state") or "stopped")
-    allowed: set[str] = {"starting", "running", "stopping", "stopped"}
-    coerced_state: OrchState
+    allowed: set[str] = {"running", "stopped"}
+    coerced_state: PublicState
     if raw_state in allowed:
         coerced_state = raw_state  # type: ignore[assignment]
     else:
         coerced_state = "running" if bool(snapshot.get("running")) else "stopped"
     payload["state"] = coerced_state
     payload["running"] = bool(snapshot.get("running"))
+    if "transition" not in payload:
+        transition = snapshot.get("transition")
+        if isinstance(transition, str):
+            payload["transition"] = transition
+        elif raw_state in {"starting", "stopping"}:
+            payload["transition"] = raw_state
+    if "phase" not in payload:
+        payload["phase"] = snapshot.get("phase") or raw_state
     payload["last_error"] = snapshot.get("last_error")
     payload["thread_alive"] = bool(snapshot.get("thread_alive"))
     payload["last_heartbeat"] = snapshot.get("last_heartbeat")

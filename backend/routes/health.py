@@ -64,7 +64,7 @@ async def health(stream: StreamService = Depends(get_stream_manager)) -> Dict[st
     except Exception as exc:  # pragma: no cover - defensive guard
         orch_snapshot = {"state": "unknown", "error": str(exc)}
 
-    orchestrator_state = str(orch_snapshot.get("state", "stopped")).title()
+    orchestrator_state = str(orch_snapshot.get("phase") or orch_snapshot.get("state", "stopped")).title()
     kill_label = orch_snapshot.get("kill_switch")
     kill_reason = orch_snapshot.get("kill_switch_reason")
     if not isinstance(kill_label, str) or not kill_label:
@@ -88,6 +88,8 @@ async def health(stream: StreamService = Depends(get_stream_manager)) -> Dict[st
         "stream": stream_info,
         "orchestrator_state": orchestrator_state,
         "orchestrator": orch_snapshot,
+        "orchestrator_transition": orch_snapshot.get("transition"),
+        "orchestrator_phase": orch_snapshot.get("phase"),
         "kill_switch": kill_label,
         "kill_switch_engaged": bool(orch_snapshot.get("kill_switch_engaged")),
         "kill_switch_reason": kill_reason,
@@ -101,5 +103,11 @@ async def health(stream: StreamService = Depends(get_stream_manager)) -> Dict[st
 
     if adapter is not None:
         payload["broker_headers"] = getattr(adapter, "last_headers", None)
+
+    payload["will_trade_at_open"] = bool(orch_snapshot.get("will_trade_at_open"))
+    payload["preopen_queue_count"] = int(orch_snapshot.get("preopen_queue_count") or 0)
+    payload["last_decision_at"] = orch_snapshot.get("last_decision_at") or orch_snapshot.get(
+        "last_decision_ts"
+    )
 
     return payload

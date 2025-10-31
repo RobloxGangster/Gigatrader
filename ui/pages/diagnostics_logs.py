@@ -13,7 +13,6 @@ import requests
 import streamlit as st
 
 from ui.lib.api_client import ApiClient, build_url
-from ui.lib.refresh import safe_autorefresh, should_rerender_from_polyfill
 
 STATE_KEY = "__diagnostics_state__"
 DEFAULT_LINES = 200
@@ -110,22 +109,14 @@ def render() -> None:
         else:
             st.warning("Unable to create repro bundle.")
 
-    controls = st.columns([1, 1, 1, 2])
+    controls = st.columns([1, 1, 2])
     with controls[0]:
         run_clicked = st.button(
             "Run Diagnostics",
             type="primary",
             help="Fetch /health, /pacing, and the latest log tail.",
         )
-    st.session_state.setdefault("diag.autorefresh", False)
-    previous_auto = bool(state.get("auto_enabled", False))
     with controls[1]:
-        auto_enabled = st.toggle(
-            "Auto-refresh logs",
-            value=previous_auto,
-            help="Refresh the log table every five seconds without resetting state.",
-        )
-    with controls[2]:
         limit = int(
             st.number_input(
                 "Lines",
@@ -135,20 +126,14 @@ def render() -> None:
                 step=50,
             )
         )
-    with controls[3]:
+    with controls[2]:
         filter_text = st.text_input(
             "Filter (contains)",
             value=str(state.get("filter", "")),
             placeholder="error, worker, order id …",
         )
 
-    state["auto_enabled"] = auto_enabled
-    st.session_state["diag.autorefresh"] = auto_enabled
     state["filter"] = filter_text
-
-    if auto_enabled:
-        safe_autorefresh(interval_ms=REFRESH_INTERVAL_MS, key="diagnostics.autorefresh.tick")
-        should_rerender_from_polyfill()
 
     state_limit = state.get("limit", DEFAULT_LINES)
     if state_limit != limit:
@@ -195,15 +180,13 @@ def render() -> None:
     now = time.time()
     if run_clicked and backend_up:
         _run_full_diagnostics(client, state, limit)
-    elif auto_enabled and backend_up:
+    elif backend_up and state.get("auto_enabled"):
         last_auto = float(state.get("last_auto_refresh", 0.0) or 0.0)
-        if not previous_auto or now - last_auto >= interval_sec:
+        if now - last_auto >= interval_sec:
             state["last_auto_refresh"] = now
             _fetch_logs(client, state, limit)
             _fetch_execution_tail(client, state, limit)
             _fetch_telemetry(client, state)
-    elif previous_auto and not auto_enabled:
-        state["last_auto_refresh"] = 0.0
 
     health_error = state.get("health_error")
     pacing_error = state.get("pacing_error")
@@ -291,9 +274,6 @@ def render() -> None:
         status_parts.append(f"Logs updated @ {logs_ts}")
     status_parts.append(f"Endpoint: {client.base()}")
     st.caption(" · ".join(status_parts))
-
-    if auto_enabled and "PYTEST_CURRENT_TEST" not in os.environ:
-        should_rerender_from_polyfill()
 
 
 def _render_failure(payload: Dict[str, Any], client: ApiClient) -> None:

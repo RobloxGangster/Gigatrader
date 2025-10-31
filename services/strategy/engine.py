@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional
 
+from backend.services.orchestrator import record_decision_cycle
+from core.market_hours import market_is_open, seconds_until_open
 from services.execution.engine import ExecutionEngine
 from services.execution.types import ExecIntent
 from services.gateway.options import OptionGateway
@@ -61,6 +64,11 @@ class StrategyEngine:
         self.equity_strategies: List[EquityStrategy] = list(equity_strategies or [EquityStrategy()])
         self.option_strategies: List[OptionStrategy] = list(option_strategies or [OptionStrategy()])
         self.latest_sentiment: Dict[str, float] = {}
+        self.allow_preopen = _env_bool("ALLOW_PREOPEN", True)
+        self.preopen_minutes = _env_int("PREOPEN_PLACE_MINUTES", 5)
+        self.default_open_kind = (
+            os.getenv("DEFAULT_OPEN_ORDER_KIND", "market").strip().lower() or "market"
+        )
 
     def register_equity_strategy(self, strategy: EquityStrategy) -> None:
         self.equity_strategies.append(strategy)
@@ -86,21 +94,87 @@ class StrategyEngine:
             if senti_mag is None or senti_mag < self._senti_min:
                 return
 
+        total_signals = 0
+        orders_submitted = 0
+        preopen_orders = 0
+        now = datetime.now(timezone.utc)
+        market_open = market_is_open(now)
+        will_trade_at_open = False
+        seconds_to_open = seconds_until_open(now)
+        preopen_window = max(0, self.preopen_minutes) * 60
+        if (
+            not market_open
+            and self.allow_preopen
+            and seconds_to_open > 0
+            and seconds_to_open <= preopen_window
+        ):
+            will_trade_at_open = True
+
         if self._equity_enabled:
             for strategy in self.equity_strategies:
                 plan = strategy.on_bar(normalized_symbol, bar, senti, regime)
                 if plan is None:
                     continue
-                await self._route_equity_plan(plan)
+                total_signals += 1
+                tif, order_type = self._resolve_order_params(
+                    market_open=market_open,
+                    will_trade_at_open=will_trade_at_open,
+                    plan=plan,
+                )
+                if will_trade_at_open and not market_open:
+                    preopen_orders += 1
+                await self._route_equity_plan(
+                    plan,
+                    time_in_force=tif,
+                    order_type=order_type,
+                )
+                orders_submitted += 1
 
         if self._option_enabled:
             for strategy in self.option_strategies:
                 plan = strategy.on_bar(normalized_symbol, bar, senti, regime)
                 if plan is None:
                     continue
+                total_signals += 1
                 await self._route_option_plan(plan)
+                orders_submitted += 1
 
-    async def _route_equity_plan(self, plan: OrderPlan) -> None:
+        record_decision_cycle(
+            will_trade_at_open=will_trade_at_open,
+            signals=total_signals,
+            orders=orders_submitted,
+            preopen_queue=preopen_orders,
+        )
+
+    def _resolve_order_params(
+        self,
+        *,
+        market_open: bool,
+        will_trade_at_open: bool,
+        plan: OrderPlan,
+    ) -> tuple[str | None, str | None]:
+        if market_open or not will_trade_at_open:
+            return None, None
+        tif = "opg"
+        order_type = None
+        if plan.limit_price is not None:
+            order_type = "limit"
+        elif self.default_open_kind == "limit":
+            if plan.limit_price is not None:
+                order_type = "limit"
+            else:
+                order_type = "market"
+        else:
+            order_type = "market"
+        return tif, order_type
+
+    async def _route_equity_plan(
+        self,
+        plan: OrderPlan,
+        *,
+        time_in_force: str | None = None,
+        order_type: str | None = None,
+    ) -> None:
         side = "buy" if str(plan.side).lower() == "buy" else "sell"
         intent = ExecIntent(
             symbol=plan.symbol,
@@ -111,6 +185,8 @@ class StrategyEngine:
             client_tag=f"eq:{plan.note}" if plan.note else "eq:auto",
             take_profit_pct=plan.take_profit_pct,
             stop_loss_pct=plan.stop_loss_pct,
+            time_in_force=time_in_force,
+            order_type=order_type,
         )
         await self.exec.submit(intent)
 

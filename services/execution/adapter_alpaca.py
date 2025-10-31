@@ -91,7 +91,11 @@ class AlpacaAdapter:
             )
 
             side = OrderSide(payload["side"].upper())
-            time_in_force = TimeInForce.DAY
+            tif_raw = str(payload.get("time_in_force") or payload.get("tif") or "day").upper()
+            try:
+                time_in_force = TimeInForce(tif_raw)
+            except ValueError as exc:
+                raise ValueError(f"unsupported_time_in_force:{tif_raw.lower()}") from exc
             qty = payload["qty"]
             symbol = payload["symbol"]
             limit_price = payload.get("limit_price")
@@ -100,7 +104,14 @@ class AlpacaAdapter:
                 AlpacaAssetClass.OPTION if asset_class == "option" else AlpacaAssetClass.US_EQUITY
             )
 
-            order_type = OrderType.LIMIT if limit_price is not None else OrderType.MARKET
+            order_type_raw = payload.get("type") or payload.get("order_type")
+            if order_type_raw:
+                try:
+                    order_type = OrderType(order_type_raw.upper())
+                except ValueError as exc:
+                    raise ValueError(f"unsupported_order_type:{order_type_raw}") from exc
+            else:
+                order_type = OrderType.LIMIT if limit_price is not None else OrderType.MARKET
             req_cls = LimitOrderRequest if order_type == OrderType.LIMIT else MarketOrderRequest
             kwargs: Dict[str, Any] = {
                 "symbol": symbol,

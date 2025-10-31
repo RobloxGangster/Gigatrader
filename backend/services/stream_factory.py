@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol
@@ -142,16 +143,21 @@ def make_stream_service(flags: RuntimeFlags | None = None) -> StreamService:
     cfg = flags or get_runtime_flags()
     source = (cfg.market_data_source or "mock").lower()
 
-    if cfg.mock_mode or source == "mock":
-        log.info("Stream source selected: mock")
+    if cfg.mock_mode:
+        log.info("Stream source selected: mock (mock_mode=true)")
         return MockStreamService()
+
+    if source == "mock":
+        raise RuntimeError(
+            "Mock stream selected while MOCK_MODE=false; update MARKET_DATA_SOURCE or enable mock mode."
+        )
 
     if source.startswith("alpaca"):
         healthy, err = _alpaca_env_health()
+        profile = getattr(cfg, "profile", "paper")
         if not healthy:
             detail = err or "missing credentials"
-            raise RuntimeError(f"Alpaca market data configuration invalid: {detail}")
-        profile = getattr(cfg, "profile", "paper")
+            log.warning("Stream source alpaca unhealthy: %s", detail)
         log.info("Stream source selected: alpaca (profile=%s)", profile)
         return AlpacaStreamService(profile=profile)
 

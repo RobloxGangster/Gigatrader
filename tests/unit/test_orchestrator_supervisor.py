@@ -94,6 +94,7 @@ def test_status_reflects_market_state(tmp_path, monkeypatch) -> None:
     try:
         snapshot = supervisor.status()
         assert snapshot["market_state"] == "closed"
-        assert snapshot["state"] == "waiting_market_open"
+        assert snapshot["state"] == "stopped"
+        assert snapshot.get("phase") == "waiting_market_open"
     finally:
         orchestrator_mod._CURRENT_SUPERVISOR = None

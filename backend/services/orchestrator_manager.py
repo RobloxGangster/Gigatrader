@@ -61,7 +61,9 @@ def start(trading_entrypoint: Callable[[Callable[[], bool]], None]) -> Dict[str,
 
         _stop_event.clear()
         _update_state(
-            state="starting",
+            state="stopped",
+            phase="starting",
+            transition="starting",
             running=True,
             last_error=None,
             start_attempt_ts=_utcnow(),
@@ -75,7 +77,12 @@ def start(trading_entrypoint: Callable[[Callable[[], bool]], None]) -> Dict[str,
             global _worker_thread, _thread_started_at, _last_error_stack, _last_error_at
             try:
                 with _lock:
-                    _update_state(state="running", running=True)
+                    _update_state(
+                        state="running",
+                        running=True,
+                        phase="running",
+                        transition=None,
+                    )
                     _state.restart_count += 1
                     _thread_started_at = _utcnow()
                 trading_entrypoint(lambda: _stop_event.is_set())
@@ -88,7 +95,12 @@ def start(trading_entrypoint: Callable[[Callable[[], bool]], None]) -> Dict[str,
                     _last_error_at = _utcnow()
             finally:
                 with _lock:
-                    _update_state(state="stopped", running=False)
+                    _update_state(
+                        state="stopped",
+                        running=False,
+                        phase="stopped",
+                        transition=None,
+                    )
                     _thread_started_at = None
                     if _state.last_shutdown_reason is None:
                         _state.last_shutdown_reason = (
@@ -113,7 +125,12 @@ def stop(reason: str = "requested_stop") -> Dict[str, Any]:
             _state.running = False
             return _snapshot_locked()
 
-        _update_state(state="stopping", running=False)
+        _update_state(
+            state="stopped",
+            running=False,
+            phase="stopping",
+            transition="stopping",
+        )
         if reason:
             _state.last_shutdown_reason = reason
         _stop_event.set()
