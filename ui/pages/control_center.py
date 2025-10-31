@@ -1003,6 +1003,15 @@ def _load_remote_state(
 
     if not backend_up:
         data["health_unreachable"] = True
+        truthy = {"1", "true", "yes", "on"}
+        env_mock_flag = (
+            str(os.environ.get("MOCK_MODE") or os.environ.get("MOCK_MARKET") or "")
+            .strip()
+            .lower()
+            in truthy
+        )
+        if env_mock_flag:
+            data["account"] = {"mock_mode": True}
         return data
 
     try:
@@ -1222,9 +1231,22 @@ def render(
     render_backend_process_panel()
 
     # Probe backend: we require /health AND /broker/status to both succeed.
-    is_up, health_info, err_msg = probe_backend(BACKEND_URL, timeout_sec=3.0)
+    truthy_values = {"1", "true", "yes", "on"}
+    initial_mock_flag = (
+        str(os.environ.get("MOCK_MODE") or os.environ.get("MOCK_MARKET") or "")
+        .strip()
+        .lower()
+        in truthy_values
+    )
+
+    is_up, health_info, err_msg = probe_backend(
+        BACKEND_URL, timeout_sec=1.0 if initial_mock_flag else 3.0
+    )
 
     if not is_up:
+        if initial_mock_flag:
+            st.sidebar.info("Mock mode enabled")
+
         # backend either isn't running, or it crashed immediately, or it's missing keys, etc.
         st.error(
             "Backend is NOT reachable on 127.0.0.1:8000.\n\n"
@@ -1235,6 +1257,13 @@ def render(
         if err_msg:
             st.warning(f"Health probe error: {err_msg}")
         st.caption("Check backend logs or launch the trading service, then refresh.")
+
+        start_label = "Start Paper" if initial_mock_flag else "Start Trading"
+        start_col, stop_col = st.columns(2)
+        if start_col.button(start_label, key="cc_start_btn"):
+            st.info("Backend offline; launch the backend before starting trading.")
+        if stop_col.button("Stop", key="cc_stop_btn"):
+            st.info("Backend offline; nothing to stop yet.")
         return
 
     st.session_state["backend.health"] = health_info
@@ -1321,7 +1350,7 @@ def render(
     runtime_snapshot = data.get("runtime_flags", {}) if isinstance(data, dict) else {}
     broker_snapshot = data.get("broker", {}) if isinstance(data, dict) else {}
 
-    truthy = {"1", "true", "yes", "on"}
+    truthy = truthy_values
     env_profile_raw = os.environ.get("PROFILE") or os.environ.get("TRADING_MODE") or "paper"
     env_profile = "live" if str(env_profile_raw).lower() == "live" else "paper"
     env_broker = os.environ.get("BROKER") or os.environ.get("TRADING_BROKER") or "alpaca"
