@@ -10,8 +10,12 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+try:
+    from pydantic import BaseModel  # type: ignore
+except Exception:  # pragma: no cover
+    BaseModel = object  # type: ignore[assignment]
 
 from backend.routers import (
     audit,
@@ -452,21 +456,104 @@ def _format_ts(ts: Optional[float]) -> Optional[str]:
 
 
 @app.get("/status")
-def status():
-    snapshot = get_orchestrator().status()
-    kill_switch = get_kill_switch()
-    return {
-        "running": snapshot.get("running"),
+def status() -> Dict[str, Any]:
+    """Return the orchestrator status in a dict-safe payload for the UI."""
+
+    try:
+        raw_snapshot = get_orchestrator_status()
+    except Exception:  # pragma: no cover - defensive status guard
+        raw_snapshot = None
+
+    if isinstance(raw_snapshot, BaseModel):
+        snapshot: Dict[str, Any] = (
+            raw_snapshot.model_dump() if hasattr(raw_snapshot, "model_dump") else raw_snapshot.dict()
+        )
+    elif isinstance(raw_snapshot, dict):
+        snapshot = raw_snapshot
+    else:
+        encoded = jsonable_encoder(raw_snapshot) if raw_snapshot is not None else {}
+        snapshot = encoded if isinstance(encoded, dict) else {}
+
+    state = str(snapshot.get("state") or "stopped")
+    transition = snapshot.get("transition")
+    phase = snapshot.get("phase") or state
+    running = state == "running"
+
+    kill_info = snapshot.get("kill_switch") if isinstance(snapshot.get("kill_switch"), dict) else None
+    if not isinstance(kill_info, dict):
+        kill_info = {
+            "engaged": bool(snapshot.get("kill_switch_engaged", False)),
+            "reason": snapshot.get("kill_switch_reason"),
+            "can_reset": bool(snapshot.get("kill_switch_can_reset", True)),
+        }
+
+    will_trade_at_open = bool(snapshot.get("will_trade_at_open") or False)
+    preopen_queue_count = int(snapshot.get("preopen_queue_count") or 0)
+
+    runtime_settings = getattr(settings, "runtime", None)
+    broker_mode = getattr(runtime_settings, "broker_mode", "paper") if runtime_settings else "paper"
+    dry_run_flag = bool(getattr(runtime_settings, "dry_run", False)) if runtime_settings else False
+    broker_name = getattr(runtime_settings, "broker", "alpaca") if runtime_settings else "alpaca"
+    broker_profile = snapshot.get("broker")
+    if isinstance(broker_profile, dict):
+        broker_name = str(broker_profile.get("broker") or broker_name)
+
+    try:
+        halted = bool(get_kill_switch().engaged_sync())
+    except Exception:  # pragma: no cover - defensive kill switch guard
+        halted = bool(kill_info.get("engaged"))
+
+    payload: Dict[str, Any] = {
+        "state": state,
+        "transition": transition,
+        "phase": phase,
+        "running": running,
+        "will_trade_at_open": will_trade_at_open,
+        "preopen_queue_count": preopen_queue_count,
+        "broker": broker_name,
         "profile": snapshot.get("profile"),
-        "paper": settings.runtime.broker_mode != "live",
-        "broker": settings.runtime.broker,
-        "broker_mode": settings.runtime.broker_mode,
-        "dry_run": settings.runtime.dry_run,
-        "halted": kill_switch.engaged_sync(),
+        "paper": broker_mode != "live",
+        "broker_mode": broker_mode,
+        "dry_run": dry_run_flag,
+        "halted": halted,
         "last_run_id": snapshot.get("last_run_id"),
         "last_tick_ts": snapshot.get("last_tick_ts"),
-        "ok": True,
+        "ok": bool(snapshot.get("ok", True)),
+        "kill_switch": kill_info,
+        "kill_switch_engaged": bool(kill_info.get("engaged")),
+        "kill_switch_reason": kill_info.get("reason"),
+        "kill_switch_can_reset": bool(kill_info.get("can_reset", True)),
     }
+
+    for key in (
+        "thread_alive",
+        "start_attempt_ts",
+        "last_shutdown_reason",
+        "last_error",
+        "last_error_at",
+        "last_error_stack",
+        "last_heartbeat",
+        "uptime_secs",
+        "uptime_label",
+        "uptime",
+        "restart_count",
+        "can_trade",
+        "trade_guard_reason",
+        "market_data_source",
+        "market_state",
+        "mock_mode",
+        "manager",
+        "kill_switch_history",
+        "last_decision_at",
+        "last_decision_ts",
+        "last_decision_signals",
+        "last_decision_orders",
+        "last_error_ts",
+    ):
+        if key in snapshot and key not in payload:
+            payload[key] = snapshot.get(key)
+
+    return payload
 
 
 _register_compat_route("/status", status, ["GET"], tag="status")
