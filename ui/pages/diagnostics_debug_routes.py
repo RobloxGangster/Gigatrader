@@ -72,7 +72,7 @@ def render(_, session_state, state=None) -> None:
 
     df = pd.DataFrame(rows)
     df = df.sort_values(["ok", "route"], ascending=[False, True])
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.dataframe(df, hide_index=True, width="stretch")
 
     failing = [row for row in rows if not row.get("ok")]
     if failing:

@@ -297,7 +297,7 @@ def render() -> None:
 
     if table_rows:
         df = pd.DataFrame(table_rows, columns=["time", "level", "worker", "msg"])
-        st.dataframe(df, use_container_width=True, height=360)
+        st.dataframe(df, width="stretch", height=360)
     else:
         st.info("No structured log entries available.")
 
@@ -397,7 +397,7 @@ def _render_telemetry_panel(state: Dict[str, Any]) -> None:
     if trades:
         st.subheader("Recent Telemetry Trades")
         trades_df = pd.DataFrame(trades)
-        st.dataframe(trades_df, use_container_width=True)
+        st.dataframe(trades_df, width="stretch")
     elif trades_error:
         st.info(f"Telemetry trades unavailable: {trades_error}")
     elif telemetry:

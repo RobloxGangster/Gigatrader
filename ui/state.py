@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Mapping, Optional
 
 from pydantic import (
     AliasChoices,
@@ -258,12 +258,33 @@ class ChainRow(BaseModelDecimal):
 class OptionChain(BaseModelDecimal):
     symbol: Optional[str] = None
     expiry: Optional[datetime] = None
-    rows: List[ChainRow]
+    contracts: List[ChainRow] = Field(default_factory=list)
+    rows: List[ChainRow] = Field(default_factory=list)
+    reason: Optional[str] = None
+    mock: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_contracts(cls, values):
+        if isinstance(values, dict):
+            contracts = values.get("contracts")
+            rows = values.get("rows")
+            if contracts is None and isinstance(rows, list):
+                values["contracts"] = rows
+            elif rows is None and isinstance(contracts, list):
+                values["rows"] = contracts
+        return values
 
     @model_validator(mode="after")
     def _populate_metadata(self):
-        if self.rows:
-            first = self.rows[0]
+        if not self.rows and self.contracts:
+            self.rows = list(self.contracts)
+        if not self.contracts and self.rows:
+            self.contracts = list(self.rows)
+
+        source = self.rows or self.contracts
+        if source:
+            first = source[0]
             if self.symbol is None and first.symbol is not None:
                 self.symbol = first.symbol
             if self.expiry is None and first.expiry is not None:
@@ -273,12 +294,24 @@ class OptionChain(BaseModelDecimal):
 
 class Greeks(BaseModelDecimal):
     contract: str
-    delta: Decimal
-    gamma: Decimal
-    theta: Decimal
-    vega: Decimal
-    rho: Decimal
-    updated_at: datetime
+    delta: Decimal = Field(default=Decimal("0"))
+    gamma: Decimal = Field(default=Decimal("0"))
+    theta: Decimal = Field(default=Decimal("0"))
+    vega: Decimal = Field(default=Decimal("0"))
+    rho: Decimal = Field(default=Decimal("0"))
+    updated_at: Optional[datetime] = None
+    reason: Optional[str] = None
+    mock: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _expand_nested(cls, values):
+        if isinstance(values, Mapping):
+            nested = values.get("greeks")
+            if isinstance(nested, Mapping):
+                for key in ("delta", "gamma", "theta", "vega", "rho"):
+                    values.setdefault(key, nested.get(key))
+        return values
 
 
 class LogEvent(BaseModelDecimal):

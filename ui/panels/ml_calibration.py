@@ -137,7 +137,7 @@ def render(
 
         chart = _build_reliability_chart(payload)
         if chart is not None:
-            st.plotly_chart(chart, use_container_width=True)
+            st.plotly_chart(chart, width="stretch")
         else:
             st.info("Plotly not available – showing tabular calibration details instead.")
 
@@ -154,4 +154,4 @@ def render(
         if table.empty:
             st.info("No calibration bins available for the requested window.")
         else:
-            st.dataframe(table, use_container_width=True)
+            st.dataframe(table, width="stretch")

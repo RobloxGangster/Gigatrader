@@ -73,7 +73,7 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     df = indicators.frame()
     if df is not None and not df.empty:
         st.subheader("Indicator Series")
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width="stretch")
         with pd.option_context("display.max_rows", None):
             try:
                 st.line_chart(df, height=240)

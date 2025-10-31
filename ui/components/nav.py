@@ -105,7 +105,7 @@ def render_quickbar(page_map: Dict[str, Tuple[str, Callable]], key: str = "nav_c
     for col, k in zip(cols, quick):
         with col:
             title = page_map[k][0]
-            if st.button(title, use_container_width=True, key=f"quick_{k}"):
+            if st.button(title, width="stretch", key=f"quick_{k}"):
                 if st.session_state.get(key) != k:
                     st.session_state[key] = k
                     st.rerun()

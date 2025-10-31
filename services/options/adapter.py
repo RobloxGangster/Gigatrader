@@ -117,9 +117,20 @@ def get_option_chain(symbol: str, as_of: Any) -> pd.DataFrame:
 
     as_of_ts = pd.to_datetime(as_of)
 
-    if _mock_mode_enabled():
-        raw = _load_mock_chain(symbol, as_of_ts)
-    else:
-        raise NotImplementedError("Live option chain retrieval is not implemented")
+    if not _mock_mode_enabled():
+        columns = [
+            "symbol",
+            "expiry",
+            "strike",
+            "side",
+            "iv",
+            "oi",
+            "volume",
+            "bid",
+            "ask",
+            "mid",
+        ]
+        return pd.DataFrame(columns=columns)
 
+    raw = _load_mock_chain(symbol, as_of_ts)
     return _filter_liquidity(raw)

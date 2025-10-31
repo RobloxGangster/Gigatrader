@@ -6,6 +6,10 @@ import asyncio
 import datetime as _dt
 from typing import List, Optional
 
+
+class OptionsConfigError(RuntimeError):
+    """Raised when option chain configuration is invalid."""
+
 from app.config import get_settings
 from services.options.chain import ChainSource, OptionContract
 
@@ -29,11 +33,16 @@ class AlpacaChainSource(ChainSource):
         if self._client is None:
             settings = get_settings()
             self._settings = settings
+            key = (settings.alpaca_key_id or "").strip()
+            secret = (settings.alpaca_secret_key or "").strip()
+            if not key or not secret:
+                raise OptionsConfigError(
+                    "Missing Alpaca credentials for option chain "
+                    "(ALPACA_KEY_ID/ALPACA_SECRET_KEY)."
+                )
             from alpaca.data.historical import OptionHistoricalDataClient
 
-            self._client = OptionHistoricalDataClient(
-                settings.alpaca_key_id, settings.alpaca_secret_key
-            )
+            self._client = OptionHistoricalDataClient(key, secret)
         return self._client
 
     async def fetch(self, underlying: str) -> List[OptionContract]:

@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import logging
-import logging
 from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 import pandas as pd
 
-from services.options.adapter import get_option_chain as load_option_chain
-from services.options.alpaca_chain import AlpacaChainSource
+from services.options.alpaca_chain import AlpacaChainSource, OptionsConfigError
 from services.options.chain import ChainSource, OptionContract
 
 
@@ -45,25 +43,46 @@ class OptionGateway:
     async def chain(self, symbol: str) -> Dict[str, Any]:
         """Return an option chain payload shaped for ``ui.state.OptionChain``."""
 
+        normalized_symbol = (symbol or "").strip().upper()
         try:
-            contracts = await self._chain_source.fetch(symbol)
+            contracts = await self._chain_source.fetch(normalized_symbol)
+        except OptionsConfigError as exc:
+            logger.warning("option chain unavailable due to configuration", exc_info=exc)
+            return self._empty_chain(normalized_symbol, reason=str(exc))
+        except NotImplementedError as exc:  # pragma: no cover - optional dependency path
+            logger.warning("option chain source not implemented", exc_info=exc)
+            return self._empty_chain(normalized_symbol, reason=str(exc))
         except Exception as exc:  # noqa: BLE001 - network failure fallback
-            logger.warning("option chain fetch failed; falling back to mock", exc_info=exc)
-            return self._mock_chain(symbol)
-
-        if not contracts:
-            return self._mock_chain(symbol)
+            logger.warning("option chain fetch failed", exc_info=exc)
+            return self._empty_chain(normalized_symbol, reason=str(exc))
 
         rows = [self._contract_to_row(contract) for contract in contracts]
-        return {"symbol": symbol.upper(), "rows": rows}
+        if not rows:
+            return self._empty_chain(normalized_symbol, reason="no contracts returned")
+
+        return {
+            "symbol": normalized_symbol,
+            "contracts": rows,
+            "rows": rows,
+            "mock": False,
+        }
 
     async def greeks(self, contract: str) -> Dict[str, Any]:
         symbol, expiry, strike, side = self._parse_contract(contract)
         chain_payload = await self.chain(symbol)
-        rows: Iterable[Mapping[str, Any]] = chain_payload.get("rows", [])
+        rows: Iterable[Mapping[str, Any]] = (
+            chain_payload.get("rows")
+            or chain_payload.get("contracts")
+            or []
+        )
+        mock = bool(chain_payload.get("mock", False))
+        if not rows:
+            reason = chain_payload.get("reason") or "option chain unavailable"
+            return self._empty_greeks(contract, reason=reason, mock=mock)
+
         match = self._match_contract(rows, symbol, expiry, strike, side)
         if match is None:
-            raise ValueError(f"Option contract not found: {contract}")
+            return self._empty_greeks(contract, reason="contract not found", mock=mock)
 
         delta = _coerce_float(match.get("delta")) or 0.0
         gamma = _coerce_float(match.get("gamma")) or 0.0
@@ -71,15 +90,21 @@ class OptionGateway:
         vega = _coerce_float(match.get("vega")) or 0.0
         rho = _coerce_float(match.get("rho")) or 0.0
 
-        return {
-            "contract": contract,
+        greeks_map = {
             "delta": delta,
             "gamma": gamma,
             "theta": theta,
             "vega": vega,
             "rho": rho,
+        }
+        payload = {
+            "contract": contract,
+            "greeks": greeks_map,
+            "mock": mock,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+        payload.update(greeks_map)
+        return payload
 
     def _contract_to_row(self, contract: OptionContract) -> Dict[str, Any]:
         raw_greeks: Mapping[str, Any] | None = None
@@ -106,39 +131,24 @@ class OptionGateway:
             "is_liquid": bool(contract.bid and contract.ask and contract.oi),
         }
 
-    def _mock_chain(self, symbol: str) -> Dict[str, Any]:
-        as_of = datetime.now(timezone.utc)
-        try:
-            frame = load_option_chain(symbol, as_of)
-        except Exception as exc:  # noqa: BLE001 - fixtures missing
-            logger.error("failed to load mock option chain", exc_info=exc)
-            return {"symbol": symbol.upper(), "rows": []}
+    def _empty_chain(self, symbol: str, reason: Optional[str] = None) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "symbol": symbol.upper(),
+            "contracts": [],
+            "rows": [],
+            "mock": False,
+        }
+        if reason:
+            payload["reason"] = reason
+        return payload
 
-        records = frame.to_dict(orient="records")
-        rows = []
-        for record in records:
-            option_type = record.get("option_type") or record.get("type")
-            rows.append(
-                {
-                    "symbol": record.get("symbol") or symbol.upper(),
-                    "strike": _coerce_float(record.get("strike")),
-                    "bid": _coerce_float(record.get("bid")),
-                    "ask": _coerce_float(record.get("ask")),
-                    "mid": _coerce_float(record.get("mid")),
-                    "iv": _coerce_float(record.get("iv")),
-                    "delta": _coerce_float(record.get("delta")),
-                    "gamma": _coerce_float(record.get("gamma")),
-                    "theta": _coerce_float(record.get("theta")),
-                    "vega": _coerce_float(record.get("vega")),
-                    "rho": _coerce_float(record.get("rho")),
-                    "oi": record.get("oi"),
-                    "volume": record.get("volume"),
-                    "expiry": _expiry_to_str(record.get("expiry")),
-                    "option_type": option_type,
-                    "is_liquid": bool(record.get("oi")) and bool(record.get("volume")),
-                }
-            )
-        return {"symbol": symbol.upper(), "rows": rows}
+    def _empty_greeks(
+        self, contract: str, *, reason: Optional[str] = None, mock: bool = False
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"contract": contract, "greeks": {}, "mock": mock}
+        if reason:
+            payload["reason"] = reason
+        return payload
 
     @staticmethod
     def _parse_contract(contract: str) -> Tuple[str, Optional[str], Optional[float], Optional[str]]:
