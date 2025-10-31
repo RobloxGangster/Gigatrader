@@ -13,7 +13,8 @@ import streamlit as st
 
 from ui.components.badges import status_pill
 from ui.components.tables import render_table
-from ui.lib.api_client import ApiClient
+from ui.lib.api_client import ApiClient, rebind_to_detected_backend
+from ui.lib.refresh import safe_autorefresh
 from ui.state import AppSessionState, update_session_state
 from ui.utils.format import fmt_currency, fmt_pct, fmt_signed_currency
 from ui.utils.num import to_float
@@ -1216,8 +1217,29 @@ def render(
     resolved_base = api.base()
     st.caption(f"Resolved API: {resolved_base}")
     st.sidebar.caption(f"Resolved API: {resolved_base}")
-    if st.button("Refresh", key="cc_manual_refresh"):
-        st.session_state["__cc_force_poll"] = True
+
+    rebound_key = "__cc_rebound_base__"
+    rebound_base = st.session_state.pop(rebound_key, None)
+    if rebound_base:
+        st.success(f"Re-bound to backend: {rebound_base}")
+
+    col_fix, col_live = st.columns([1, 1])
+    with col_fix:
+        if st.button("Fix API Base", help="Auto-detect and bind to the running backend"):
+            new_base = rebind_to_detected_backend()
+            st.session_state[rebound_key] = new_base
+            st.experimental_rerun()
+        if st.button("Refresh", key="cc_manual_refresh"):
+            st.session_state["__cc_force_poll"] = True
+    with col_live:
+        live_toggle = st.toggle(
+            "Live telemetry",
+            value=st.session_state.get("__cc_live_telemetry", True),
+            key="__cc_live_telemetry",
+            help="Auto-refresh telemetry metrics every 5 seconds",
+        )
+        if live_toggle:
+            safe_autorefresh(interval_ms=5000, key="telemetry_refresh")
 
     col_start, col_stop = st.columns([1, 1])
     with col_start:
@@ -1246,8 +1268,9 @@ def render(
         in truthy_values
     )
 
+    probe_target = resolved_base or BACKEND_URL
     is_up, health_info, err_msg = probe_backend(
-        BACKEND_URL, timeout_sec=1.0 if initial_mock_flag else 3.0
+        probe_target, timeout_sec=1.0 if initial_mock_flag else 3.0
     )
 
     if not is_up:
@@ -1256,7 +1279,7 @@ def render(
 
         # backend either isn't running, or it crashed immediately, or it's missing keys, etc.
         st.error(
-            "Backend is NOT reachable on 127.0.0.1:8000.\n\n"
+            f"Backend is NOT reachable on {probe_target}.\n\n"
             "Orders cannot be submitted, Alpaca account cannot be queried."
         )
 
