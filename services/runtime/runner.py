@@ -9,13 +9,21 @@ import random
 import signal
 import sys
 import time
+from datetime import datetime, timezone
 from contextlib import suppress
 from typing import Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
+from backend.broker.adapter import get_broker
+from backend.services.orchestrator import (
+    drain_preopen_queue,
+    set_preopen_window_active,
+)
 from core.runtime_flags import get_runtime_flags
 from services.execution.engine import ExecutionEngine
+from services.execution.option_exit_watcher import OptionExitWatcher
+from services.execution.types import ExecIntent
 from services.gateway.options import OptionGateway
 from services.market.loop import MarketLoop
 from services.risk.engine import RiskManager
@@ -135,6 +143,22 @@ class Runner:
             ready_cb=self._ready_status,
         )
         self._tasks: List[asyncio.Task[None]] = []
+        self.option_exit_enabled = self._env_bool("ENABLE_OPTION_EXITS", False)
+        self.opt_tp_pct = float(os.getenv("OPT_TP_PCT", "25") or 25)
+        self.opt_sl_pct = float(os.getenv("OPT_SL_PCT", "10") or 10)
+        self.option_exit_poll = float(os.getenv("OPTION_EXIT_POLL_SEC", "45") or 45)
+        self.option_exit_watcher: OptionExitWatcher | None = None
+        if self.option_exit_enabled:
+            chain_source = getattr(self.opt_gateway, "chain", None)
+            self.option_exit_watcher = OptionExitWatcher(
+                state=self.state,
+                exec_engine=self.exec,
+                chain_source=chain_source,
+                poll_interval=self.option_exit_poll,
+                tp_pct=self.opt_tp_pct,
+                sl_pct=self.opt_sl_pct,
+                cache_ttl=max(self.option_exit_poll, 30.0),
+            )
 
     # ------------------------------------------------------------------
     # Readiness & health helpers
@@ -287,6 +311,149 @@ class Runner:
         except Exception as exc:  # pragma: no cover - runtime dependent
             self.log.error("execution.updates.error", extra=with_trace({"error": str(exc)}))
 
+    async def _wait_with_shutdown(self, timeout: float) -> None:
+        try:
+            await asyncio.wait_for(self.shutdown.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return
+
+    def _parse_clock_ts(self, value: object | None) -> Optional[datetime]:
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc)
+        if isinstance(value, str):
+            try:
+                normalized = value.replace("Z", "+00:00")
+                dt_value = datetime.fromisoformat(normalized)
+            except ValueError:
+                return None
+            if dt_value.tzinfo is None:
+                dt_value = dt_value.replace(tzinfo=timezone.utc)
+            return dt_value.astimezone(timezone.utc)
+        return None
+
+    def _update_preopen_window(
+        self,
+        *,
+        is_open: bool,
+        now_dt: Optional[datetime],
+        next_open_dt: Optional[datetime],
+    ) -> None:
+        if not self.strategy.allow_preopen:
+            set_preopen_window_active(False)
+            return
+        if is_open or now_dt is None or next_open_dt is None:
+            set_preopen_window_active(False)
+            return
+        seconds_to_open = (next_open_dt - now_dt).total_seconds()
+        if seconds_to_open <= 0:
+            set_preopen_window_active(False)
+            return
+        window_secs = max(0, int(self.strategy.preopen_minutes)) * 60
+        active = seconds_to_open <= window_secs
+        set_preopen_window_active(active)
+
+    async def _submit_preopen_orders(self) -> None:
+        intents = await drain_preopen_queue()
+        if not intents:
+            return
+        self.log.info(
+            "preopen.submit",
+            extra=with_trace({"count": len(intents)}),
+        )
+        for intent in intents:
+            exec_intent = ExecIntent(
+                symbol=intent.symbol,
+                side=intent.side,
+                qty=float(intent.qty),
+                limit_price=intent.limit_price,
+                asset_class="equity",
+                client_tag=intent.client_order_id or f"preopen:{intent.symbol}",
+                time_in_force="opg",
+                order_type=intent.order_kind,
+            )
+            attempts = 0
+            while attempts < 2:
+                try:
+                    await self.exec.submit(exec_intent)
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    attempts += 1
+                    if attempts >= 2:
+                        self.log.error(
+                            "preopen.submit.failed",
+                            extra=with_trace({"symbol": intent.symbol, "error": str(exc)}),
+                        )
+                    else:
+                        await asyncio.sleep(1.0)
+
+    async def _preopen_coordinator(self) -> None:
+        if self.mock_market or not self.strategy.allow_preopen:
+            set_preopen_window_active(False)
+            return
+        try:
+            adapter = get_broker()
+        except Exception as exc:  # pragma: no cover - depends on runtime config
+            self.log.warning(
+                "preopen.disabled",
+                extra=with_trace({"error": str(exc)}),
+            )
+            set_preopen_window_active(False)
+            return
+
+        poll_raw = os.getenv("PREOPEN_CLOCK_POLL_SEC", "20")
+        try:
+            poll_interval = float(poll_raw)
+        except ValueError:
+            poll_interval = 20.0
+        poll_interval = min(30.0, max(15.0, poll_interval))
+
+        last_is_open: Optional[bool] = None
+        while not self.shutdown.is_set():
+            try:
+                clock = await adapter.get_clock()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - network failures live only
+                self.log.error(
+                    "preopen.clock.error",
+                    extra=with_trace({"error": str(exc)}),
+                )
+                await self._wait_with_shutdown(poll_interval)
+                continue
+
+            is_open = bool(clock.get("is_open"))
+            now_dt = self._parse_clock_ts(clock.get("timestamp"))
+            next_open_dt = self._parse_clock_ts(clock.get("next_open"))
+            self._update_preopen_window(
+                is_open=is_open,
+                now_dt=now_dt,
+                next_open_dt=next_open_dt,
+            )
+
+            if is_open and last_is_open is False:
+                await self._submit_preopen_orders()
+
+            last_is_open = is_open
+            await self._wait_with_shutdown(poll_interval)
+
+    async def _option_exit_task(self) -> None:
+        watcher = self.option_exit_watcher
+        if watcher is None:
+            return
+        try:
+            await watcher.run(self.shutdown)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - runtime guard
+            self.log.error(
+                "option_exit.task_failed",
+                extra=with_trace({"error": str(exc)}),
+            )
+
     def _install_signals(self) -> None:
         loop = asyncio.get_running_loop()
         if sys.platform == "win32":  # pragma: no cover - Windows CI not in scope
@@ -339,6 +506,10 @@ class Runner:
         if self.market_loop:
             self._tasks.append(asyncio.create_task(self._market_task(), name="market"))
         self._tasks.append(asyncio.create_task(self._exec_updates_task(), name="exec_updates"))
+        if not self.mock_market and self.strategy.allow_preopen:
+            self._tasks.append(asyncio.create_task(self._preopen_coordinator(), name="preopen"))
+        if self.option_exit_watcher is not None:
+            self._tasks.append(asyncio.create_task(self._option_exit_task(), name="option_exit"))
 
         try:
             await self.shutdown.wait()

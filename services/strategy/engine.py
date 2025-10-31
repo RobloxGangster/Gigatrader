@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
 import os
 from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional
 
-from backend.services.orchestrator import record_decision_cycle
+from backend.services.orchestrator import queue_preopen_intent, record_decision_cycle
 from core.market_hours import market_is_open, seconds_until_open
 from services.execution.engine import ExecutionEngine
+from services.execution.preopen_queue import PreopenIntent
 from services.execution.types import ExecIntent
 from services.gateway.options import OptionGateway
-from services.risk.state import StateProvider
+from services.risk.state import Position, StateProvider
 from services.strategy.equities import EquityStrategy
 from services.strategy.options_strat import OptionStrategy
 from services.strategy.regime import RegimeDetector
@@ -32,6 +35,16 @@ def _env_int(name: str, default: int) -> int:
         return default
     try:
         return int(value)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
     except ValueError:
         return default
 
@@ -69,6 +82,17 @@ class StrategyEngine:
         self.default_open_kind = (
             os.getenv("DEFAULT_OPEN_ORDER_KIND", "market").strip().lower() or "market"
         )
+        self.enable_dynamic_sizing = _env_bool("ENABLE_DYNAMIC_SIZING", False)
+        self.per_trade_risk_pct = _env_float("PER_TRADE_RISK_PCT", 1.0)
+        self.enable_trailing = _env_bool("ENABLE_TRAILING", False)
+        self.trailing_be_pct = _env_float("TRAIL_BE_PCT", 0.5)
+        self.trailing_step_pct = max(0.0, _env_float("TRAIL_STEP_PCT", 0.25))
+        self.default_stop_pct = abs(_env_float("DEFAULT_SL_PCT", 0.5))
+        self.default_tp_pct = abs(_env_float("DEFAULT_TP_PCT", 1.0))
+        self.max_symbol_notional = abs(
+            _env_float("MAX_SYMBOL_NOTIONAL", _env_float("MAX_PORTFOLIO_NOTIONAL", 0.0))
+        )
+        self._trailing_state: Dict[str, Dict[str, float | bool]] = {}
 
     def register_equity_strategy(self, strategy: EquityStrategy) -> None:
         self.equity_strategies.append(strategy)
@@ -110,6 +134,14 @@ class StrategyEngine:
         ):
             will_trade_at_open = True
 
+        positions: Dict[str, Position] = {}
+        if self.enable_trailing:
+            try:
+                positions = self.state.get_positions()
+            except NotImplementedError:
+                positions = {}
+            await self._handle_trailing(normalized_symbol, bar.close, positions)
+
         if self._equity_enabled:
             for strategy in self.equity_strategies:
                 plan = strategy.on_bar(normalized_symbol, bar, senti, regime)
@@ -123,12 +155,15 @@ class StrategyEngine:
                 )
                 if will_trade_at_open and not market_open:
                     preopen_orders += 1
-                await self._route_equity_plan(
+                submitted = await self._route_equity_plan(
                     plan,
+                    market_open=market_open,
                     time_in_force=tif,
                     order_type=order_type,
+                    current_price=bar.close,
                 )
-                orders_submitted += 1
+                if submitted:
+                    orders_submitted += 1
 
         if self._option_enabled:
             for strategy in self.option_strategies:
@@ -172,23 +207,191 @@ class StrategyEngine:
         self,
         plan: OrderPlan,
         *,
+        market_open: bool,
         time_in_force: str | None = None,
         order_type: str | None = None,
-    ) -> None:
+        current_price: float = 0.0,
+    ) -> bool:
         side = "buy" if str(plan.side).lower() == "buy" else "sell"
+        tif_value = (time_in_force or "").lower() if time_in_force else None
+        order_kind = order_type or ("limit" if plan.limit_price is not None else "market")
+        entry_price = plan.limit_price if plan.limit_price is not None else current_price
+        stop_pct = abs(plan.stop_loss_pct) if plan.stop_loss_pct is not None else self.default_stop_pct
+        take_pct = abs(plan.take_profit_pct) if plan.take_profit_pct is not None else self.default_tp_pct
+        qty = max(1, int(round(plan.qty)))
+        if self.enable_dynamic_sizing:
+            qty = self._dynamic_quantity(entry_price, stop_pct, fallback_qty=qty)
+        plan.stop_loss_pct = stop_pct
+        plan.take_profit_pct = take_pct
+        if self.enable_trailing:
+            self._arm_trailing(plan.symbol, 1 if side == "buy" else -1, entry_price, stop_pct)
+
+        if tif_value == "opg" and not market_open:
+            preopen_intent = PreopenIntent(
+                symbol=plan.symbol,
+                side=side,
+                qty=qty,
+                order_kind=order_kind,
+                limit_price=plan.limit_price,
+            )
+            await queue_preopen_intent(preopen_intent)
+            return False
+
         intent = ExecIntent(
             symbol=plan.symbol,
             side=side,
-            qty=plan.qty,
+            qty=float(qty),
             limit_price=plan.limit_price,
             asset_class="equity",
             client_tag=f"eq:{plan.note}" if plan.note else "eq:auto",
-            take_profit_pct=plan.take_profit_pct,
-            stop_loss_pct=plan.stop_loss_pct,
+            take_profit_pct=take_pct,
+            stop_loss_pct=stop_pct,
             time_in_force=time_in_force,
-            order_type=order_type,
+            order_type=order_kind if order_type else None,
         )
         await self.exec.submit(intent)
+        return True
+
+    def _dynamic_quantity(self, entry_price: float, stop_pct: float, *, fallback_qty: int) -> int:
+        if entry_price <= 0 or stop_pct <= 0:
+            return fallback_qty
+        equity = None
+        try:
+            equity = self.state.get_account_equity()
+        except Exception:
+            equity = None
+        if equity is None or equity <= 0:
+            return fallback_qty
+        per_trade_risk = max(0.0, self.per_trade_risk_pct) / 100.0 * equity
+        per_share_risk = entry_price * (stop_pct / 100.0)
+        if per_share_risk <= 0:
+            return fallback_qty
+        qty = math.floor(per_trade_risk / per_share_risk)
+        if qty <= 0:
+            qty = 1
+        max_notional = self.max_symbol_notional
+        if max_notional > 0:
+            qty = min(qty, int(max_notional // entry_price) if entry_price > 0 else qty)
+        return max(1, qty)
+
+    def _arm_trailing(
+        self,
+        symbol: str,
+        direction: int,
+        entry_price: float,
+        stop_pct: float,
+    ) -> None:
+        if not self.enable_trailing or entry_price <= 0 or stop_pct <= 0:
+            return
+        base_stop = -abs(stop_pct) if direction > 0 else abs(stop_pct)
+        self._trailing_state[symbol] = {
+            "direction": float(direction),
+            "entry": float(entry_price),
+            "last_stop_pct": float(base_stop),
+            "breakeven": False,
+            "exiting": False,
+        }
+
+    async def _handle_trailing(
+        self,
+        symbol: str,
+        price: float,
+        positions: Dict[str, Position],
+    ) -> None:
+        state = self._trailing_state.get(symbol)
+        position = positions.get(symbol)
+        if position is None or math.isclose(position.qty, 0.0, abs_tol=1e-9):
+            if state is not None:
+                self._trailing_state.pop(symbol, None)
+            return
+        direction = 1.0 if position.qty > 0 else -1.0
+        entry_price = self._position_entry_price(position)
+        if entry_price <= 0 or price <= 0:
+            return
+        if state is None:
+            self._arm_trailing(symbol, int(direction), entry_price, self.default_stop_pct)
+            state = self._trailing_state.get(symbol)
+            if state is None:
+                return
+        if float(state.get("direction", direction)) != direction:
+            self._arm_trailing(symbol, int(direction), entry_price, self.default_stop_pct)
+            state = self._trailing_state.get(symbol)
+            if state is None:
+                return
+        state["entry"] = entry_price
+        stop_pct = float(state.get("last_stop_pct", -self.default_stop_pct))
+        breakeven = bool(state.get("breakeven", False))
+        gain_pct = (price - entry_price) / entry_price * 100.0 * direction
+        if not breakeven and gain_pct >= self.trailing_be_pct:
+            breakeven = True
+            stop_pct = 0.0
+        if breakeven:
+            extra = gain_pct - self.trailing_be_pct
+            if extra >= self.trailing_step_pct > 0:
+                steps = math.floor(extra / self.trailing_step_pct)
+                target_pct = self.trailing_be_pct + max(0, steps - 1) * self.trailing_step_pct
+                target_pct = max(0.0, target_pct)
+                if target_pct > stop_pct:
+                    stop_pct = target_pct
+        state["breakeven"] = breakeven
+        state["last_stop_pct"] = stop_pct
+        stop_price = entry_price * (1.0 + direction * stop_pct / 100.0)
+        exiting = bool(state.get("exiting", False))
+        should_exit = (direction > 0 and price <= stop_price) or (
+            direction < 0 and price >= stop_price
+        )
+        if should_exit and not exiting:
+            await self._submit_trailing_exit(symbol, position, direction)
+            state["exiting"] = True
+        elif not should_exit:
+            state["exiting"] = False
+
+    async def _submit_trailing_exit(
+        self,
+        symbol: str,
+        position: Position,
+        direction: float,
+    ) -> None:
+        qty = abs(float(position.qty))
+        if qty <= 0:
+            return
+        side = "sell" if direction > 0 else "buy"
+        intent = ExecIntent(
+            symbol=symbol,
+            side=side,
+            qty=qty,
+            asset_class="equity",
+            order_type="market",
+            client_tag=f"trail-exit:{symbol.lower()}",
+        )
+        attempts = 0
+        while attempts < 2:
+            try:
+                result = await self.exec.submit(intent)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                attempts += 1
+                if attempts >= 2:
+                    break
+                await asyncio.sleep(0.5)
+                continue
+            if result.accepted:
+                break
+            attempts += 1
+            if attempts >= 2:
+                break
+            await asyncio.sleep(0.25)
+
+    @staticmethod
+    def _position_entry_price(position: Position) -> float:
+        qty = abs(float(position.qty))
+        if qty <= 1e-9:
+            return 0.0
+        try:
+            return abs(float(position.notional)) / qty
+        except (TypeError, ValueError):
+            return 0.0
 
     async def _route_option_plan(self, plan: OrderPlan) -> None:
         side = "buy" if str(plan.side).lower() == "buy" else "sell"

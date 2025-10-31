@@ -88,7 +88,9 @@ class RuntimeFlags(BaseModel):
     def broker_mode(self) -> Literal["mock", "paper", "live"]:
         if self.mock_mode:
             return "mock"
-        return "paper" if self.paper_trading else "live"
+        if str(self.broker).lower() == "alpaca":
+            return "paper" if self.paper_trading else "live"
+        return "mock"
 
 
 _SIGNATURE_KEYS = (
@@ -190,9 +192,8 @@ def _build_runtime_flags() -> RuntimeFlags:
     # Normalise broker setting – if mock_mode is forced we always report mock.
     broker_normalized: Broker = "alpaca"
     lowered = broker.lower()
-    if mock_mode or lowered == "mock":
+    if lowered == "mock":
         broker_normalized = "mock"
-        mock_mode = True
     elif lowered == "alpaca":
         broker_normalized = "alpaca"
 
@@ -266,12 +267,45 @@ def require_alpaca_keys() -> None:
         )
 
 
+def require_live_alpaca_or_fail() -> None:
+    """Ensure live Alpaca credentials are present when live mode is requested."""
+
+    mock_mode_env = parse_bool(os.getenv("MOCK_MODE"), default=False)
+    if mock_mode_env:
+        return
+
+    missing: list[str] = []
+    key_id = (
+        os.getenv("ALPACA_KEY_ID")
+        or os.getenv("ALPACA_API_KEY_ID")
+        or os.getenv("APCA_API_KEY_ID")
+    )
+    secret_key = (
+        os.getenv("ALPACA_SECRET_KEY")
+        or os.getenv("ALPACA_API_SECRET_KEY")
+        or os.getenv("APCA_API_SECRET_KEY")
+    )
+
+    if not key_id:
+        missing.append("ALPACA_KEY_ID")
+    if not secret_key:
+        missing.append("ALPACA_SECRET_KEY")
+
+    if missing:
+        joined = ", ".join(sorted(set(missing)))
+        raise RuntimeError(
+            "Live Alpaca mode requires credentials; set the following environment "
+            f"variables: {joined}"
+        )
+
+
 __all__ = [
     "Broker",
     "RuntimeFlags",
     "get_runtime_flags",
     "parse_bool",
     "refresh_runtime_flags",
+    "require_live_alpaca_or_fail",
     "require_alpaca_keys",
     "runtime_flags_from_env",
 ]

@@ -42,7 +42,7 @@ def seconds_until_open(now: datetime | None = None) -> float:
         candidate = local + timedelta(days=days_ahead)
         if candidate.weekday() < 5:
             open_dt = datetime.combine(candidate.date(), _OPEN_TIME, tzinfo=_EASTERN)
-            if candidate <= open_dt:
+            if local <= open_dt:
                 delta = open_dt - local
                 return max(delta.total_seconds(), 0.0)
         days_ahead += 1

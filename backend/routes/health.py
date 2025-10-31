@@ -59,17 +59,25 @@ async def health(stream: StreamService = Depends(get_stream_manager)) -> Dict[st
         stream_source = f"error:{exc}"
 
     orch_snapshot: Dict[str, Any]
+    orch_status_obj = None
     try:
-        orch_snapshot = get_orchestrator_status()
+        orch_status_obj = get_orchestrator_status()
+        orch_snapshot = orch_status_obj.model_dump()
     except Exception as exc:  # pragma: no cover - defensive guard
         orch_snapshot = {"state": "unknown", "error": str(exc)}
 
     orchestrator_state = str(orch_snapshot.get("phase") or orch_snapshot.get("state", "stopped")).title()
-    kill_label = orch_snapshot.get("kill_switch")
     kill_reason = orch_snapshot.get("kill_switch_reason")
-    if not isinstance(kill_label, str) or not kill_label:
-        engaged = bool(orch_snapshot.get("kill_switch_engaged"))
-        kill_label = "Triggered" if engaged else "Standby"
+    kill_engaged = bool(orch_snapshot.get("kill_switch_engaged"))
+    kill_can_reset = bool(orch_snapshot.get("kill_switch_can_reset", True))
+    kill_label = "Triggered" if kill_engaged else "Standby"
+    if orch_status_obj is not None:
+        kill_reason = orch_status_obj.kill_switch.reason
+        kill_engaged = orch_status_obj.kill_switch.engaged
+        kill_can_reset = orch_status_obj.kill_switch.can_reset
+        kill_label = "Triggered" if kill_engaged else "Standby"
+        if kill_engaged and kill_reason:
+            kill_label = f"Triggered ({kill_reason})"
 
     ok = True
     if broker_error:
@@ -91,9 +99,9 @@ async def health(stream: StreamService = Depends(get_stream_manager)) -> Dict[st
         "orchestrator_transition": orch_snapshot.get("transition"),
         "orchestrator_phase": orch_snapshot.get("phase"),
         "kill_switch": kill_label,
-        "kill_switch_engaged": bool(orch_snapshot.get("kill_switch_engaged")),
+        "kill_switch_engaged": kill_engaged,
         "kill_switch_reason": kill_reason,
-        "kill_switch_can_reset": bool(orch_snapshot.get("kill_switch_can_reset", True)),
+        "kill_switch_can_reset": kill_can_reset,
         "mock_mode": bool(getattr(flags, "mock_mode", False)),
         "dry_run": bool(getattr(flags, "dry_run", False)),
         "profile": getattr(flags, "profile", "paper"),

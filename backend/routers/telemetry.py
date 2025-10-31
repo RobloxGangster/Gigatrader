@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 from fastapi import APIRouter, Depends
 
+from backend.models.orchestrator import OrchestratorStatus
 from backend.routers.deps import (
     BrokerService,
     MetricsService,
@@ -109,35 +110,54 @@ def _normalize_position(raw: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _normalize_orchestrator(snapshot: Mapping[str, Any] | None) -> Dict[str, Any]:
-    if not isinstance(snapshot, Mapping):
-        snapshot = {}
-    state_raw = str(snapshot.get("state") or "stopped").lower()
+def _normalize_orchestrator(
+    snapshot: Mapping[str, Any] | OrchestratorStatus | None,
+) -> Dict[str, Any]:
+    kill_engaged = False
+    kill_reason = None
+    if isinstance(snapshot, OrchestratorStatus):
+        state_raw = snapshot.state.lower()
+        kill_engaged = snapshot.kill_switch.engaged
+        kill_reason = snapshot.kill_switch.reason
+        data = snapshot.model_dump()
+    elif isinstance(snapshot, Mapping):
+        data = snapshot
+        state_raw = str(data.get("state") or "stopped").lower()
+        kill_engaged = bool(data.get("kill_switch_engaged"))
+        kill_reason = data.get("kill_switch_reason")
+    else:
+        data = {}
+        state_raw = "stopped"
     state = "running" if state_raw == "running" else "stopped"
     if state_raw == "stopping":
         state = "stopped"
     payload = {
         "state": state,
-        "last_error": snapshot.get("last_error"),
-        "last_heartbeat": _as_iso(snapshot.get("last_heartbeat")),
-        "can_trade": bool(snapshot.get("can_trade")),
-        "trade_guard_reason": snapshot.get("trade_guard_reason"),
-        "kill_switch_engaged": bool(snapshot.get("kill_switch_engaged")),
-        "kill_switch_reason": snapshot.get("kill_switch_reason"),
+        "last_error": data.get("last_error"),
+        "last_heartbeat": _as_iso(data.get("last_heartbeat")),
+        "can_trade": bool(data.get("can_trade")),
+        "trade_guard_reason": data.get("trade_guard_reason"),
+        "kill_switch_engaged": kill_engaged,
+        "kill_switch_reason": kill_reason,
     }
     return payload
 
 
 def _normalize_risk(
     risk_snapshot: Mapping[str, Any] | None,
-    orch_snapshot: Mapping[str, Any] | None,
+    orch_snapshot: Mapping[str, Any] | OrchestratorStatus | None,
 ) -> Dict[str, Any]:
     if not isinstance(risk_snapshot, Mapping):
         risk_snapshot = {}
-    if not isinstance(orch_snapshot, Mapping):
-        orch_snapshot = {}
-    kill_engaged = bool(orch_snapshot.get("kill_switch_engaged"))
-    reason = orch_snapshot.get("kill_switch_reason")
+    if isinstance(orch_snapshot, OrchestratorStatus):
+        kill_engaged = orch_snapshot.kill_switch.engaged
+        reason = orch_snapshot.kill_switch.reason
+    elif isinstance(orch_snapshot, Mapping):
+        kill_engaged = bool(orch_snapshot.get("kill_switch_engaged"))
+        reason = orch_snapshot.get("kill_switch_reason")
+    else:
+        kill_engaged = False
+        reason = None
     daily_loss = _safe_float(risk_snapshot.get("daily_loss_limit"), default=0.0)
     max_notional = _safe_float(
         risk_snapshot.get("portfolio_notional") or risk_snapshot.get("max_portfolio_notional"),
@@ -245,8 +265,16 @@ def telemetry_metrics(
     except Exception:  # pragma: no cover - defensive broker guard
         raw_positions = []
 
+    orch_status_obj: OrchestratorStatus | None = None
     try:
-        orch_snapshot = orch.status()
+        status_raw = orch.status()
+        if isinstance(status_raw, OrchestratorStatus):
+            orch_status_obj = status_raw
+            orch_snapshot = status_raw.model_dump()
+        elif isinstance(status_raw, Mapping):
+            orch_snapshot = dict(status_raw)
+        else:
+            orch_snapshot = {}
     except Exception:
         orch_snapshot = {}
 
@@ -277,8 +305,8 @@ def telemetry_metrics(
         day_pl = 0.0
 
     positions = _coerce_positions(raw_positions if isinstance(raw_positions, Iterable) else [])
-    orchestrator_payload = _normalize_orchestrator(orch_snapshot)
-    risk_payload = _normalize_risk(risk_snapshot, orch_snapshot)
+    orchestrator_payload = _normalize_orchestrator(orch_status_obj or orch_snapshot)
+    risk_payload = _normalize_risk(risk_snapshot, orch_status_obj or orch_snapshot)
 
     return {
         "equity": equity or 0.0,

@@ -8,9 +8,11 @@ from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Optional
 
+from backend.models.orchestrator import BrokerProfile, KillSwitchStatus, OrchestratorStatus
 from core.kill_switch import KillSwitch
-from core.market_hours import market_is_open, market_state
+from core.market_hours import market_state
 from core.runtime_flags import get_runtime_flags
+from services.execution.preopen_queue import PreopenIntent, PreopenQueue
 
 
 _CURRENT_SUPERVISOR: "OrchestratorSupervisor" | None = None
@@ -26,6 +28,8 @@ _last_order_attempt: Dict[str, Any] = {
 }
 
 _decision_snapshot: Dict[str, Any] = {
+    "will_trade_signal": False,
+    "preopen_window_active": False,
     "will_trade_at_open": False,
     "preopen_queue_count": 0,
     "last_decision_at": None,
@@ -33,6 +37,9 @@ _decision_snapshot: Dict[str, Any] = {
     "last_signals": 0,
     "last_orders": 0,
 }
+
+_preopen_queue = PreopenQueue()
+_preopen_queue_count: int = 0
 
 
 def _iso_now() -> str:
@@ -87,14 +94,14 @@ def record_decision_cycle(
     iso_ts = ts.isoformat().replace("+00:00", "Z")
     _decision_snapshot.update(
         {
-            "will_trade_at_open": bool(will_trade_at_open),
-            "preopen_queue_count": max(0, int(preopen_queue)),
+            "will_trade_signal": bool(will_trade_at_open),
             "last_decision_at": ts,
             "last_decision_iso": iso_ts,
             "last_signals": max(0, int(signals)),
             "last_orders": max(0, int(orders)),
         }
     )
+    _sync_preopen_snapshot()
     log.info(
         "orchestrator.decision",
         extra={
@@ -109,6 +116,47 @@ def record_decision_cycle(
 def _decision_state_snapshot() -> Dict[str, Any]:
     payload = dict(_decision_snapshot)
     return payload
+
+
+def _sync_preopen_snapshot() -> None:
+    queue_count = max(0, int(_preopen_queue_count))
+    signal = bool(_decision_snapshot.get("will_trade_signal"))
+    window_active = bool(_decision_snapshot.get("preopen_window_active"))
+    _decision_snapshot["preopen_queue_count"] = queue_count
+    _decision_snapshot["will_trade_at_open"] = bool(queue_count) or (signal and window_active)
+
+
+def _set_preopen_queue_count(count: int) -> None:
+    global _preopen_queue_count
+    _preopen_queue_count = max(0, int(count))
+    _sync_preopen_snapshot()
+
+
+async def queue_preopen_intent(intent: PreopenIntent) -> None:
+    await _preopen_queue.enqueue(intent)
+    count = await _preopen_queue.count()
+    _set_preopen_queue_count(count)
+
+
+async def drain_preopen_queue() -> List[PreopenIntent]:
+    intents = await _preopen_queue.drain()
+    _set_preopen_queue_count(0)
+    return intents
+
+
+async def refresh_preopen_queue_count() -> int:
+    count = await _preopen_queue.count()
+    _set_preopen_queue_count(count)
+    return count
+
+
+def get_preopen_queue_count() -> int:
+    return max(0, int(_preopen_queue_count))
+
+
+def set_preopen_window_active(active: bool) -> None:
+    _decision_snapshot["preopen_window_active"] = bool(active)
+    _sync_preopen_snapshot()
 
 
 def can_execute_trade(
@@ -138,6 +186,7 @@ class OrchestratorSupervisor:
     def __init__(self, kill_switch: KillSwitch) -> None:
         self._kill_switch = kill_switch
         self._state: str = "stopped"
+        self._internal_state: str = "stopped"
         self._async_lock = asyncio.Lock()
         self._supervisor_task: asyncio.Task[None] | None = None
         self._stop_requested = False
@@ -155,7 +204,7 @@ class OrchestratorSupervisor:
         global _CURRENT_SUPERVISOR
         _CURRENT_SUPERVISOR = self
 
-    def status(self) -> dict[str, Any]:
+    def status(self) -> OrchestratorStatus:
         """Return a thread-safe status snapshot."""
 
         flags = get_runtime_flags()
@@ -167,7 +216,24 @@ class OrchestratorSupervisor:
                 (datetime.now(timezone.utc) - self._start_time).total_seconds(),
             )
         kill_snapshot = self._kill_switch_snapshot()
-        market_open = market_is_open()
+        kill_engaged = bool(kill_snapshot.get("engaged"))
+        kill_reason = (
+            kill_snapshot.get("reason") if isinstance(kill_snapshot.get("reason"), str) else None
+        )
+        kill_status = KillSwitchStatus(
+            engaged=kill_engaged,
+            reason=kill_reason,
+            can_reset=(not kill_engaged) or not self._is_hard_violation(kill_reason),
+        )
+        allowed_by_policy, base_guard_reason = can_execute_trade(
+            flags, kill_engaged, kill_reason=kill_reason
+        )
+        trade_guard_reason = self._trade_guard_reason or base_guard_reason
+        can_trade = bool(allowed_by_policy) and self._trade_guard_reason is None
+        broker_impl = (
+            "MockBrokerAdapter" if getattr(flags, "mock_mode", False) else "AlpacaBrokerAdapter"
+        )
+
         manager_state: str | None = None
         manager_thread_alive = False
         manager_snapshot: dict[str, Any] | None = None
@@ -180,90 +246,70 @@ class OrchestratorSupervisor:
                 manager_thread_alive = bool(manager_snapshot.get("thread_alive"))
         except Exception:  # pragma: no cover - defensive guard
             manager_snapshot = None
-        kill_engaged = bool(kill_snapshot.get("engaged"))
-        kill_reason = kill_snapshot.get("reason") if isinstance(kill_snapshot.get("reason"), str) else None
-        allowed_by_policy, base_guard_reason = can_execute_trade(
-            flags, kill_engaged, kill_reason=kill_reason
-        )
-        trade_guard_reason = self._trade_guard_reason or base_guard_reason
-        can_trade = bool(allowed_by_policy) and self._trade_guard_reason is None
-        broker_impl = (
-            "MockBrokerAdapter" if getattr(flags, "mock_mode", False) else "AlpacaBrokerAdapter"
-        )
-        uptime_label = f"{uptime:.2f}s"
-        kill_label = "Engaged" if kill_engaged else "Standby"
-        if kill_engaged and kill_reason:
-            kill_label = f"Engaged ({kill_reason})"
-        derived_state = self._state
-        if self._runtime_started:
-            if not market_open:
-                derived_state = "waiting_market_open"
-            elif derived_state in {"idle", "waiting_market_open"}:
-                derived_state = "running"
-        else:
-            if manager_state in {"idle", "waiting_market_open"}:
-                derived_state = manager_state
-            elif derived_state == "running":
-                derived_state = "idle" if market_open else "waiting_market_open"
-            elif derived_state == "stopped" and not kill_engaged and not market_open:
-                derived_state = "waiting_market_open"
-        if manager_state in {"idle", "waiting_market_open"}:
-            derived_state = manager_state
 
         thread_alive = self._runtime_started or manager_thread_alive
 
-        phase_value = derived_state
-        allowed_states = {"starting", "running", "stopping", "stopped"}
-        if derived_state not in allowed_states:
-            if self._stop_requested or manager_state == "stopping":
-                derived_state = "stopping"
-            elif thread_alive:
-                derived_state = "running" if self._runtime_started else "starting"
-            else:
-                derived_state = "stopped"
-
         decision_state = _decision_state_snapshot()
-        transition: str | None = None
-        public_state = "running" if derived_state == "running" else "stopped"
-        if derived_state in {"starting", "stopping"}:
-            transition = derived_state
-        return {
-            "state": public_state,
-            "phase": phase_value,
-            "transition": transition,
-            "running": public_state == "running",
-            "last_error": self._last_error,
-            "last_error_stack": self._last_error_stack,
-            "last_error_at": _iso_dt(self._last_error_at),
-            "last_heartbeat": heartbeat,
-            "uptime_secs": uptime,
-            "uptime": uptime_label,
-            "restart_count": self._restart_count,
-            "thread_alive": thread_alive,
-            "start_attempt_ts": _iso_dt(self._start_attempt_ts),
-            "last_shutdown_reason": self._last_shutdown_reason,
-            "kill_switch": kill_label,
-            "kill_switch_engaged": kill_engaged,
-            "kill_switch_reason": kill_reason,
-            "kill_switch_engaged_at": kill_snapshot.get("engaged_at"),
-            "kill_switch_can_reset": (not kill_engaged)
-            or not self._is_hard_violation(kill_reason),
-            "kill_switch_history": self.kill_switch_history(),
-            "can_trade": can_trade,
-            "trade_guard_reason": trade_guard_reason,
-            "market_data_source": getattr(flags, "market_data_source", "mock"),
-            "broker_impl": broker_impl,
-            "profile": getattr(flags, "profile", "paper"),
-            "dry_run": getattr(flags, "dry_run", False),
-            "mock_mode": getattr(flags, "mock_mode", False),
-            "market_state": market_state(),
-            "will_trade_at_open": bool(decision_state.get("will_trade_at_open")),
-            "preopen_queue_count": int(decision_state.get("preopen_queue_count") or 0),
-            "last_decision_at": decision_state.get("last_decision_at"),
-            "last_decision_ts": decision_state.get("last_decision_iso"),
-            "last_decision_signals": int(decision_state.get("last_signals") or 0),
-            "last_decision_orders": int(decision_state.get("last_orders") or 0),
-        }
+        queue_count = get_preopen_queue_count()
+        will_trade_flag = bool(decision_state.get("will_trade_at_open"))
+        last_decision_iso = decision_state.get("last_decision_iso")
+        last_decision_at = decision_state.get("last_decision_at")
+        if last_decision_iso:
+            last_decision_value = last_decision_iso
+        else:
+            last_decision_value = _iso_dt(last_decision_at)
+
+        public_state = "running" if self._internal_state == "running" else "stopped"
+        transition = (
+            self._internal_state if self._internal_state in {"starting", "stopping"} else None
+        )
+
+        broker_profile = BrokerProfile(
+            broker=str(getattr(flags, "broker", "alpaca")),
+            profile=str(getattr(flags, "profile", "paper")),
+            mode=getattr(flags, "broker_mode", "paper"),
+        )
+
+        status = OrchestratorStatus(
+            state=public_state,
+            transition=transition,
+            kill_switch=kill_status,
+            phase=self._state,
+            running=public_state == "running",
+            thread_alive=thread_alive,
+            start_attempt_ts=_iso_dt(self._start_attempt_ts),
+            last_shutdown_reason=self._last_shutdown_reason,
+            will_trade_at_open=will_trade_flag,
+            preopen_queue_count=queue_count,
+            broker=broker_profile,
+            last_error=self._last_error,
+            last_error_at=_iso_dt(self._last_error_at),
+            last_error_stack=self._last_error_stack,
+            last_heartbeat=heartbeat,
+            uptime_secs=uptime,
+            uptime_label=f"{uptime:.2f}s",
+            uptime=f"{uptime:.2f}s",
+            restart_count=self._restart_count,
+            can_trade=can_trade,
+            trade_guard_reason=trade_guard_reason,
+            market_data_source=getattr(flags, "market_data_source", "mock"),
+            market_state=market_state(),
+            mock_mode=bool(getattr(flags, "mock_mode", False)),
+            dry_run=bool(getattr(flags, "dry_run", False)),
+            profile=str(getattr(flags, "profile", "paper")),
+            broker_impl=broker_impl,
+            manager=manager_snapshot,
+            kill_switch_history=self.kill_switch_history(),
+            last_decision_at=last_decision_value,
+            last_decision_ts=last_decision_iso,
+            last_decision_signals=int(decision_state.get("last_signals") or 0),
+            last_decision_orders=int(decision_state.get("last_orders") or 0),
+            kill_switch_engaged=kill_engaged,
+            kill_switch_reason=kill_reason,
+            kill_switch_engaged_at=kill_snapshot.get("engaged_at"),
+            kill_switch_can_reset=kill_status.can_reset,
+        )
+        return status
 
     async def start(self) -> None:
         async with self._async_lock:
@@ -286,6 +332,7 @@ class OrchestratorSupervisor:
             loop = asyncio.get_running_loop()
             self._supervisor_task = loop.create_task(self._run_supervisor())
             self._state = "starting"
+            self._internal_state = "starting"
             log.info(
                 "orchestrator.start requested",
                 extra={"start_attempt": _iso_dt(self._start_attempt_ts)},
@@ -300,6 +347,7 @@ class OrchestratorSupervisor:
                 task.cancel()
             self._stop_requested = True
             self._state = "stopping"
+            self._internal_state = "stopping"
             self._last_shutdown_reason = "requested_stop"
             log.info("orchestrator.stop requested")
         if task:
@@ -307,6 +355,7 @@ class OrchestratorSupervisor:
                 await task
         async with self._async_lock:
             self._state = "stopped"
+            self._internal_state = "stopped"
             self._stop_requested = False
             self._runtime_started = False
             self._trade_guard_reason = None
@@ -339,8 +388,12 @@ class OrchestratorSupervisor:
             if self._state not in {"crashed", "error_startup"}:
                 if self._stop_requested and self._state != "stopped":
                     self._state = "stopped"
+                    self._internal_state = "stopped"
                 elif not self._stop_requested and self._state not in {"stopped", "stopping"}:
                     self._state = "stopped"
+                    self._internal_state = "stopped"
+            if self._internal_state not in {"starting", "running", "stopping", "stopped"}:
+                self._internal_state = "stopped"
             self.mark_tick()
             log.info("orchestrator.supervisor.stopped", extra={"state": self._state})
 
@@ -354,6 +407,7 @@ class OrchestratorSupervisor:
             )
             raise OrchestratorStartupError(f"kill_switch_engaged:{reason}")
         self._state = "running"
+        self._internal_state = "running"
         self._trade_guard_reason = None
         if self._start_time is None:
             self._start_time = datetime.now(timezone.utc)
@@ -373,6 +427,7 @@ class OrchestratorSupervisor:
             with suppress(asyncio.CancelledError):
                 await heartbeat_task
             self._runtime_started = False
+            self._internal_state = "stopped" if self._stop_requested else self._internal_state
             self.mark_tick()
 
     async def _heartbeat_loop(self) -> None:
@@ -467,6 +522,7 @@ class OrchestratorSupervisor:
         self._last_error_at = datetime.now(timezone.utc)
         if self._runtime_started:
             self._state = "crashed"
+            self._internal_state = "stopped"
             self._trade_guard_reason = "orchestrator_crashed"
             self._last_shutdown_reason = "crashed"
             self._restart_count += 1
@@ -474,6 +530,7 @@ class OrchestratorSupervisor:
             self._engage_kill_switch("orchestrator_crashed", requested_by="supervisor")
         else:
             self._state = "error_startup"
+            self._internal_state = "stopped"
             self._trade_guard_reason = "startup_failed"
             self._last_shutdown_reason = "startup_failed"
             log.error("orchestrator.worker.startup_failed", exc_info=exc)
@@ -493,6 +550,7 @@ class OrchestratorSupervisor:
         else:
             self._state = "error_startup"
             self._last_shutdown_reason = "startup_failed"
+        self._internal_state = "stopped"
         self._trade_guard_reason = guard_reason
         log.error("orchestrator.worker.startup_blocked", extra={"reason": message})
         self._stop_requested = True
@@ -502,6 +560,7 @@ class OrchestratorSupervisor:
         self._last_error_stack = None
         self._last_error_at = datetime.now(timezone.utc)
         self._state = "crashed"
+        self._internal_state = "stopped"
         self._trade_guard_reason = "orchestrator_crashed"
         self._last_shutdown_reason = "crashed"
         self._restart_count += 1
@@ -510,71 +569,98 @@ class OrchestratorSupervisor:
         self._stop_requested = True
 
 
-def get_orchestrator_status() -> Dict[str, Any]:
+def get_orchestrator_status() -> OrchestratorStatus:
     supervisor = _CURRENT_SUPERVISOR
     if supervisor is not None:
         try:
-            return supervisor.status()
+            snapshot = supervisor.status()
+            if isinstance(snapshot, OrchestratorStatus):
+                return snapshot
+            return OrchestratorStatus(**snapshot)
         except Exception:  # pragma: no cover - defensive snapshot guard
             log.exception("orchestrator.status_snapshot_failed")
     flags = get_runtime_flags()
     kill_info = KillSwitch().info_sync()
     kill_engaged = bool(kill_info.get("engaged"))
     kill_reason = kill_info.get("reason") if isinstance(kill_info.get("reason"), str) else None
+    kill_status = KillSwitchStatus(
+        engaged=kill_engaged,
+        reason=kill_reason,
+        can_reset=(not kill_engaged)
+        or not OrchestratorSupervisor._is_hard_violation(kill_info.get("reason")),
+    )
     allowed, guard_reason = can_execute_trade(
         flags, kill_engaged, kill_reason=kill_reason
     )
     broker_impl = (
         "MockBrokerAdapter" if getattr(flags, "mock_mode", False) else "AlpacaBrokerAdapter"
     )
-    kill_label = "Engaged" if kill_engaged else "Standby"
-    if kill_engaged and kill_reason:
-        kill_label = f"Engaged ({kill_reason})"
     decision_state = _decision_state_snapshot()
-    return {
-        "state": "stopped",
-        "phase": "stopped",
-        "transition": None,
-        "running": False,
-        "last_error": None,
-        "last_error_stack": None,
-        "last_error_at": None,
-        "last_heartbeat": None,
-        "uptime_secs": 0.0,
-        "uptime": "0.00s",
-        "restart_count": 0,
-        "thread_alive": False,
-        "start_attempt_ts": None,
-        "last_shutdown_reason": None,
-        "kill_switch": kill_label,
-        "kill_switch_engaged": kill_engaged,
-        "kill_switch_reason": kill_reason,
-        "kill_switch_engaged_at": kill_info.get("engaged_at"),
-        "kill_switch_can_reset": (not kill_engaged)
-        or not OrchestratorSupervisor._is_hard_violation(kill_info.get("reason")),
-        "kill_switch_history": [],
-        "can_trade": allowed,
-        "trade_guard_reason": guard_reason,
-        "market_data_source": getattr(flags, "market_data_source", "mock"),
-        "broker_impl": broker_impl,
-        "profile": getattr(flags, "profile", "paper"),
-        "dry_run": getattr(flags, "dry_run", False),
-        "mock_mode": getattr(flags, "mock_mode", False),
-        "market_state": market_state(),
-        "will_trade_at_open": bool(decision_state.get("will_trade_at_open")),
-        "preopen_queue_count": int(decision_state.get("preopen_queue_count") or 0),
-        "last_decision_at": decision_state.get("last_decision_at"),
-        "last_decision_ts": decision_state.get("last_decision_iso"),
-        "last_decision_signals": int(decision_state.get("last_signals") or 0),
-        "last_decision_orders": int(decision_state.get("last_orders") or 0),
-    }
+    queue_count = get_preopen_queue_count()
+    will_trade_flag = bool(decision_state.get("will_trade_at_open"))
+    last_decision_iso = decision_state.get("last_decision_iso")
+    if last_decision_iso:
+        last_decision_value = last_decision_iso
+    else:
+        last_decision_value = _iso_dt(decision_state.get("last_decision_at"))
+
+    broker_profile = BrokerProfile(
+        broker=str(getattr(flags, "broker", "alpaca")),
+        profile=str(getattr(flags, "profile", "paper")),
+        mode=getattr(flags, "broker_mode", "paper"),
+    )
+
+    return OrchestratorStatus(
+        state="stopped",
+        transition=None,
+        kill_switch=kill_status,
+        phase="stopped",
+        running=False,
+        thread_alive=False,
+        start_attempt_ts=None,
+        last_shutdown_reason=None,
+        will_trade_at_open=will_trade_flag,
+        preopen_queue_count=queue_count,
+        broker=broker_profile,
+        last_error=None,
+        last_error_at=None,
+        last_error_stack=None,
+        last_heartbeat=None,
+        uptime_secs=0.0,
+        uptime_label="0.00s",
+        uptime="0.00s",
+        restart_count=0,
+        can_trade=allowed,
+        trade_guard_reason=guard_reason,
+        market_data_source=getattr(flags, "market_data_source", "mock"),
+        market_state=market_state(),
+        mock_mode=bool(getattr(flags, "mock_mode", False)),
+        dry_run=bool(getattr(flags, "dry_run", False)),
+        profile=str(getattr(flags, "profile", "paper")),
+        broker_impl=broker_impl,
+        manager=None,
+        kill_switch_history=[],
+        last_decision_at=last_decision_value,
+        last_decision_ts=last_decision_iso,
+        last_decision_signals=int(decision_state.get("last_signals") or 0),
+        last_decision_orders=int(decision_state.get("last_orders") or 0),
+        kill_switch_engaged=kill_engaged,
+        kill_switch_reason=kill_reason,
+        kill_switch_engaged_at=kill_info.get("engaged_at"),
+        kill_switch_can_reset=kill_status.can_reset,
+    )
 
 
 __all__ = [
     "OrchestratorSupervisor",
     "can_execute_trade",
+    "drain_preopen_queue",
+    "get_preopen_queue_count",
     "record_decision_cycle",
     "get_last_order_attempt",
     "get_orchestrator_status",
+    "queue_preopen_intent",
     "record_order_attempt",
+    "refresh_preopen_queue_count",
+    "set_preopen_window_active",
 ]

@@ -4,6 +4,8 @@ import typing as _t
 
 import streamlit as st
 
+from ui.lib.refresh import safe_autorefresh
+
 
 def _get_attr(name: str) -> _t.Optional[_t.Callable[..., _t.Any]]:
     """Fetch a Streamlit attribute if it exists, else None."""
@@ -21,17 +23,9 @@ def safe_rerun() -> None:
 
 
 def auto_refresh(interval_ms: int, key: str) -> None:
-    """
-    Compatibility wrapper for st.autorefresh.
-    - Uses st.autorefresh when present (modern Streamlit).
-    - Otherwise, no-ops so pages don’t crash in environments without it.
-    """
+    """Compatibility shim that delegates to :func:`safe_autorefresh`."""
 
-    fn = _get_attr("autorefresh")
-    if fn:
-        # type: ignore[func-returns-value]
-        fn(interval=interval_ms, key=key)
-    # else: silent no-op
+    safe_autorefresh(interval_ms, key=key)
 
 
 __all__ = ["safe_rerun", "auto_refresh"]

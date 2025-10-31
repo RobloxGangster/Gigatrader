@@ -1,24 +1,21 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 
-from core.runtime_flags import get_runtime_flags, require_alpaca_keys
-
+from core.runtime_flags import get_runtime_flags, require_live_alpaca_or_fail
+from backend.models.orchestrator import OrchestratorStatus
 from backend.services.orchestrator import (
     get_last_order_attempt,
     get_orchestrator_status,
-)
-from backend.models.orchestrator import (
-    OrchestratorStatus as OrchestratorStatusModel,
-    PublicState,
 )
 from backend.services.orchestrator_manager import orchestrator_manager
 from backend.services.orchestrator_runner import run_trading_loop
 
 from .deps import get_orchestrator
+
 
 router = APIRouter()
 
@@ -30,71 +27,44 @@ class OrchestratorStartPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-class OrchestratorStatus(OrchestratorStatusModel):
-    model_config = ConfigDict(extra="allow")
+def _ensure_status(data: OrchestratorStatus | dict[str, Any]) -> OrchestratorStatus:
+    if isinstance(data, OrchestratorStatus):
+        return data
+    return OrchestratorStatus(**data)
 
 
-def _build_status(snapshot: dict) -> OrchestratorStatus:
-    payload = dict(snapshot)
-    raw_state = str(snapshot.get("state") or "stopped")
-    allowed: set[str] = {"running", "stopped"}
-    coerced_state: PublicState
-    if raw_state in allowed:
-        coerced_state = raw_state  # type: ignore[assignment]
-    else:
-        coerced_state = "running" if bool(snapshot.get("running")) else "stopped"
-    payload["state"] = coerced_state
-    payload["running"] = bool(snapshot.get("running"))
-    if "transition" not in payload:
-        transition = snapshot.get("transition")
-        if isinstance(transition, str):
-            payload["transition"] = transition
-        elif raw_state in {"starting", "stopping"}:
-            payload["transition"] = raw_state
-    if "phase" not in payload:
-        payload["phase"] = snapshot.get("phase") or raw_state
-    payload["last_error"] = snapshot.get("last_error")
-    payload["thread_alive"] = bool(snapshot.get("thread_alive"))
-    payload["last_heartbeat"] = snapshot.get("last_heartbeat")
-    payload["uptime_secs"] = float(snapshot.get("uptime_secs") or 0.0)
-    if "uptime" not in payload and snapshot.get("uptime_secs") is not None:
-        payload["uptime"] = f"{float(snapshot.get('uptime_secs') or 0.0):.2f}s"
-    payload["restart_count"] = int(snapshot.get("restart_count") or 0)
-    manager_status = snapshot.get("manager")
-    if manager_status is not None:
-        thread_alive = bool(manager_status.get("thread_alive"))
-        manager_state = str(
-            manager_status.get("state")
-            or ("running" if thread_alive else "stopped")
-        )
-        payload["manager"] = {
-            **manager_status,
-            "state": manager_state,
-            "thread_alive": thread_alive,
-        }
-        payload.setdefault("thread_alive", thread_alive)
-    return OrchestratorStatus(**payload)
+def _with_manager(
+    status: OrchestratorStatus, manager_snapshot: dict[str, Any] | None, **extra: Any
+) -> OrchestratorStatus:
+    update: dict[str, Any] = {"manager": manager_snapshot}
+    if manager_snapshot is not None and not status.thread_alive:
+        update["thread_alive"] = bool(manager_snapshot.get("thread_alive"))
+    if extra:
+        update.update(extra)
+    return status.model_copy(update=update)
 
 
 @router.get("/status", response_model=OrchestratorStatus)
 def orchestrator_status() -> OrchestratorStatus:
-    orch = get_orchestrator()
+    orchestrator = get_orchestrator()
     try:
-        snapshot = orch.status()
-        snapshot["manager"] = orchestrator_manager.get_status()
-        return _build_status(snapshot)
+        status = _ensure_status(orchestrator.status())
+        manager_snapshot = orchestrator_manager.get_status()
+        return _with_manager(status, manager_snapshot)
     except Exception as exc:  # noqa: BLE001 - surfaced to client
         raise HTTPException(status_code=500, detail=f"orchestrator_status: {exc}") from exc
 
 
 @router.post("/start", response_model=OrchestratorStatus)
-async def orchestrator_start(payload: OrchestratorStartPayload | None = None) -> OrchestratorStatus:
+async def orchestrator_start(
+    payload: OrchestratorStartPayload | None = None,
+) -> OrchestratorStatus:
     try:
         flags = get_runtime_flags()
         if not flags.mock_mode:
             try:
-                require_alpaca_keys()
-            except ValueError as exc:
+                require_live_alpaca_or_fail()
+            except RuntimeError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         orchestrator = get_orchestrator()
         arm_snapshot = orchestrator.safe_arm_trading(requested_by="api.start")
@@ -106,12 +76,11 @@ async def orchestrator_start(payload: OrchestratorStartPayload | None = None) ->
                 detail=f"kill switch engaged ({reason_label}); reset before starting",
             )
         manager_snapshot = orchestrator_manager.start(run_trading_loop)
-        snapshot = orchestrator.status()
-        snapshot["manager"] = manager_snapshot
-        snapshot["kill_switch_engaged"] = bool(snapshot.get("kill_switch_engaged"))
+        status = _ensure_status(orchestrator.status())
+        extra: dict[str, Any] = {}
         if payload and payload.preset:
-            snapshot["preset"] = payload.preset
-        return _build_status(snapshot)
+            extra["preset"] = payload.preset
+        return _with_manager(status, manager_snapshot, **extra)
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - surfaced to client
@@ -122,17 +91,12 @@ async def orchestrator_start(payload: OrchestratorStartPayload | None = None) ->
 async def orchestrator_stop() -> OrchestratorStatus:
     try:
         manager_snapshot = orchestrator_manager.stop("api.stop")
-        orchestrator = get_orchestrator()
-        snapshot = orchestrator.status()
-        snapshot["manager"] = manager_snapshot
-        return _build_status(snapshot)
+        status = _ensure_status(get_orchestrator().status())
+        return _with_manager(status, manager_snapshot)
     except Exception as exc:  # noqa: BLE001 - surfaced to client
-        orchestrator = get_orchestrator()
-        snapshot = orchestrator.status()
-        snapshot["manager"] = orchestrator_manager.get_status()
-        snapshot["ok"] = False
-        snapshot["error"] = f"orchestrator_stop: {exc}"
-        return _build_status(snapshot)
+        status = _ensure_status(get_orchestrator().status())
+        manager_snapshot = orchestrator_manager.get_status()
+        return _with_manager(status, manager_snapshot, ok=False, error=f"orchestrator_stop: {exc}")
 
 
 @router.post("/reset_kill_switch", response_model=OrchestratorStatus)
@@ -140,24 +104,30 @@ def orchestrator_reset_kill_switch() -> OrchestratorStatus:
     try:
         orchestrator = get_orchestrator()
         orchestrator.reset_kill_switch(requested_by="api.reset")
-        snapshot = orchestrator.status()
-        snapshot["manager"] = orchestrator_manager.get_status()
-        return _build_status(snapshot)
+        status = _ensure_status(orchestrator.status())
+        return _with_manager(status, orchestrator_manager.get_status())
     except Exception as exc:  # noqa: BLE001 - surfaced to client
-        orchestrator = get_orchestrator()
-        snapshot = orchestrator.status()
-        snapshot["manager"] = orchestrator_manager.get_status()
-        snapshot["ok"] = False
-        snapshot["error"] = f"orchestrator_reset_kill_switch: {exc}"
-        return _build_status(snapshot)
+        status = _ensure_status(get_orchestrator().status())
+        manager_snapshot = orchestrator_manager.get_status()
+        return _with_manager(
+            status,
+            manager_snapshot,
+            ok=False,
+            error=f"orchestrator_reset_kill_switch: {exc}",
+        )
 
 
 @router.get("/debug")
-async def orchestrator_debug() -> dict:
+async def orchestrator_debug() -> dict[str, Any]:
+    status = get_orchestrator_status()
     return {
         "status": {
-            **get_orchestrator_status(),
+            **status.model_dump(),
             "manager": orchestrator_manager.get_status(),
         },
         "last_order_attempt": get_last_order_attempt(),
     }
+
+
+__all__ = ["router", "orchestrator_status", "orchestrator_start"]
+

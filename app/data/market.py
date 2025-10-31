@@ -9,6 +9,8 @@ from typing import Any, Protocol
 
 import pandas as pd
 
+from core.runtime_flags import require_live_alpaca_or_fail
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,23 +92,35 @@ def _truthy(name: str) -> bool:
 
 
 def build_data_client(mock_mode: bool = False) -> IMarketDataClient:
-    if mock_mode or _truthy("MOCK_MODE"):
+    env_mock = _truthy("MOCK_MODE")
+    effective_mock = bool(mock_mode or env_mock)
+    if effective_mock:
         logger.info("market: MOCK_MODE -> MockDataClient")
         return MockDataClient()
+
+    require_live_alpaca_or_fail()
 
     api_key = os.getenv("APCA_API_KEY_ID", "").strip()
     api_secret = os.getenv("APCA_API_SECRET_KEY", "").strip()
 
-    if not api_key or not api_secret:
-        logger.info("market: alpaca creds missing -> mock")
-        return MockDataClient()
+    missing: list[str] = []
+    if not api_key:
+        missing.append("APCA_API_KEY_ID")
+    if not api_secret:
+        missing.append("APCA_API_SECRET_KEY")
+
+    if missing:
+        joined = ", ".join(missing)
+        raise RuntimeError(
+            "Live market data requires Alpaca API credentials; set the following "
+            f"environment variables: {joined}"
+        )
 
     try:
         logger.info("market: attempting AlpacaDataClient")
         return AlpacaDataClient()
     except Exception as exc:  # noqa: BLE001
-        logger.info("market: AlpacaDataClient unavailable (%s) -> mock", exc)
-        return MockDataClient()
+        raise RuntimeError(f"Failed to initialise AlpacaDataClient: {exc}") from exc
 
 
 def bars_to_df(bars: list[dict[str, Any]]) -> pd.DataFrame:

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol
 
 from pydantic import BaseModel, Field
+from requests import HTTPError
 
 from .config import api_base_url
 from ui.lib.api_client import ApiClient
@@ -321,6 +322,7 @@ class RealAPI:
         *,
         params: Optional[Dict[str, Any]] = None,
         json_payload: Optional[Dict[str, Any]] = None,
+        default: Any = None,
     ) -> Any:
         clean_path = "/" + path.lstrip("/")
         if params:
@@ -335,6 +337,11 @@ class RealAPI:
 
         try:
             response = self.client._request(method.upper(), clean_path, **request_kwargs)
+        except HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if method.upper() == "GET" and status in {404, 405}:
+                return default if default is not None else {}
+            raise BackendError(str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - defensive network guard
             raise BackendError(str(exc)) from exc
         parsed = self.client._parse_response(response)
@@ -343,13 +350,13 @@ class RealAPI:
         return parsed
 
     def broker_status(self) -> Dict[str, Any]:
-        payload = self._request("GET", "/broker/status")
+        payload = self._request("GET", "/broker/status", default={})
         if isinstance(payload, Mapping):
             return dict(payload)
         raise BackendError("Invalid broker status response")
 
     def get_status(self) -> Dict[str, Any]:
-        return self._request("GET", "/status")
+        return self._request("GET", "/status", default={})
 
     def start_paper(self, preset: Optional[str] = None) -> Dict[str, Any]:
         payload = {"preset": preset} if preset else None
@@ -366,12 +373,17 @@ class RealAPI:
         return self._request("POST", "/paper/flatten")
 
     def get_equity_curve(self, run_id: Optional[str] = None) -> List[EquityPoint]:
-        payload = self._request("GET", "/equity", params={"run_id": run_id} if run_id else None)
+        payload = self._request(
+            "GET",
+            "/equity",
+            params={"run_id": run_id} if run_id else None,
+            default=[],
+        )
         return [EquityPoint(**item) for item in payload]
 
     def get_risk_snapshot(self) -> RiskSnapshot:
         try:
-            payload = self._request("GET", "/risk")
+            payload = self._request("GET", "/risk", default={})
         except Exception:
             now = datetime.now(timezone.utc).isoformat()
             payload = {
@@ -415,7 +427,7 @@ class RealAPI:
         return RiskSnapshot(**payload)
 
     def get_orders(self) -> List[Order]:
-        payload = self._request("GET", "/orders", params={"live": True})
+        payload = self._request("GET", "/orders", params={"live": True}, default=[])
         normalized: List[Dict[str, Any]] = []
         for item in payload:
             rec = _normalize_order_shape(item)
@@ -448,23 +460,31 @@ class RealAPI:
         return [Order(**row) for row in normalized]
 
     def get_positions(self) -> List[Position]:
-        payload = self._request("GET", "/positions", params={"live": True})
+        payload = self._request("GET", "/positions", params={"live": True}, default=[])
         normalized = [_normalize_position_shape(item) for item in payload]
         return [Position(**item) for item in normalized]
 
     def get_account(self) -> Dict[str, Any]:
-        return self._request("GET", "/alpaca/account")
+        return self._request("GET", "/alpaca/account", default={})
 
     def options_chain(self, symbol: str, expiry: Optional[str] = None) -> Dict[str, Any]:
         payload = self._request(
-            "GET", "/options/chain", params={"symbol": symbol, "expiry": expiry}
+            "GET",
+            "/options/chain",
+            params={"symbol": symbol, "expiry": expiry},
+            default={},
         )
         if isinstance(payload, Mapping):
             return dict(payload)
         raise BackendError("Invalid option chain payload")
 
     def option_greeks(self, contract: str) -> Dict[str, Any]:
-        payload = self._request("GET", "/options/greeks", params={"contract": contract})
+        payload = self._request(
+            "GET",
+            "/options/greeks",
+            params={"contract": contract},
+            default={},
+        )
         if isinstance(payload, Mapping):
             return dict(payload)
         raise BackendError("Invalid option greeks payload")
@@ -476,7 +496,7 @@ class RealAPI:
             filters = {}
 
         try:
-            payload = self._request("GET", "/telemetry/trades")
+            payload = self._request("GET", "/telemetry/trades", default=[])
         except BackendError:
             payload = []
 
@@ -572,11 +592,16 @@ class RealAPI:
         return self._request("POST", "/strategy/params", json_payload=payload)
 
     def get_backtest_runs(self) -> List[RunInfo]:
-        payload = self._request("GET", "/backtests")
+        payload = self._request("GET", "/backtests", default=[])
         return [RunInfo(**item) for item in payload]
 
     def get_backtest_report(self, run_id: str) -> ReportSummary:
-        payload = self._request("GET", "/backtests/report", params={"run_id": run_id})
+        payload = self._request(
+            "GET",
+            "/backtests/report",
+            params={"run_id": run_id},
+            default={},
+        )
         return ReportSummary(**payload)
 
     def get_logs(self, tail: int, level: Optional[str] = None) -> List[LogEvent]:
@@ -586,24 +611,29 @@ class RealAPI:
         return [LogEvent(**item) for item in payload]
 
     def get_pacing_stats(self) -> PacingStats:
-        payload = self._request("GET", "/pacing")
+        payload = self._request("GET", "/pacing", default={})
         return PacingStats(**payload)
 
     def preview_signals(self, profile: str = "balanced", universe: Optional[List[str]] | None = None) -> Dict[str, Any]:
         params = {"profile": profile}
         if universe:
             params["universe"] = ",".join(universe)
-        return self._request("GET", "/signals/preview", params=params)
+        return self._request("GET", "/signals/preview", params=params, default={})
 
     def run_strategy_backtest(self, symbol: str, strategy: str, days: int) -> Dict[str, Any]:
         payload = {"symbol": symbol, "strategy": strategy, "days": days}
         return self._request("POST", "/backtest/run", json_payload=payload)
 
     def get_ml_status(self) -> Dict[str, Any]:
-        return self._request("GET", "/ml/status")
+        return self._request("GET", "/ml/status", default={})
 
     def get_ml_features(self, symbol: str) -> Dict[str, Any]:
-        return self._request("GET", "/ml/features", params={"symbol": symbol})
+        return self._request(
+            "GET",
+            "/ml/features",
+            params={"symbol": symbol},
+            default={},
+        )
 
     def ml_predict(self, symbol: str) -> Dict[str, Any]:
         return self._request("POST", "/ml/predict", params={"symbol": symbol})
@@ -613,7 +643,7 @@ class RealAPI:
         return self._request("POST", "/ml/train", json_payload=payload)
 
     def get_metrics(self) -> Dict[str, Any]:
-        payload = self._request("GET", "/telemetry/metrics")
+        payload = self._request("GET", "/telemetry/metrics", default={})
         if isinstance(payload, Mapping):
             return dict(payload)
         return {}
