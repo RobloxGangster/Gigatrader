@@ -422,17 +422,24 @@ def _render_status_header(
         )
 
     cols = st.columns(5)
+    run_state_lower = run_state.lower()
     run_state_display = run_state.replace("_", " ").title()
-    cols[0].metric("Profile", profile_label)
-    cols[1].metric("Broker", broker_label)
-    cols[2].metric("Run State", run_state_display)
-    cols[3].metric("Stream Source", stream_source)
-    cols[4].metric("Kill Switch", kill_switch_label)
+    profile_value = 1 if str(profile_label).strip().lower() == "live" else 0
+    broker_value = 1 if bool(broker_label) else 0
+    stream_value = 1 if str(stream_source).strip().lower() not in {"", "offline", "unknown"} else 0
+    kill_switch_delta = "ENGAGED" if kill_switch_engaged else "SAFE"
+    cols[0].metric("Profile", profile_value, str(profile_label or "Unknown"))
+    cols[1].metric("Broker", broker_value, str(broker_label or "Unknown"))
+    cols[2].metric("Run State", 1 if run_state_lower == "running" else 0, run_state_display)
+    cols[3].metric("Stream Source", stream_value, str(stream_source or "Unknown"))
+    cols[4].metric("Kill Switch", 1 if kill_switch_engaged else 0, kill_switch_delta)
 
     extra_cols = st.columns(3)
-    extra_cols[0].metric("Transition", str(transition_value or "—"))
+    transition_label = str(transition_value or "—")
+    has_transition = transition_label not in {"", "—"}
+    extra_cols[0].metric("Transition", 1 if has_transition else 0, transition_label)
     extra_cols[1].metric("Preopen Queue", preopen_queue)
-    extra_cols[2].metric("Will Trade At Open", "Yes" if will_trade_open else "No")
+    extra_cols[2].metric("Will Trade At Open", 1 if will_trade_open else 0, "Yes" if will_trade_open else "No")
     if last_decision_ts:
         st.caption(f"Last decision: {last_decision_ts}")
 
@@ -442,7 +449,7 @@ def _render_status_header(
         st.caption("Execution adapter offline while backend is stopped.")
         return
 
-    run_state_lower = run_state.lower()
+    # run_state_lower already computed above for metrics/determining trading pill state.
     if kill_switch_engaged:
         trading_label = "Trading Halted (Kill Switch)"
         trading_variant = "negative"

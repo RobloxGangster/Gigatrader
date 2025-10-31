@@ -28,6 +28,12 @@ NAV_ITEMS: List[Dict[str, str]] = [
         "render_name": "render",
     },
     {
+        "label": "Diagnostics / Debug Routes",
+        "slug": "diagnostics-debug-routes",
+        "import_path": "ui.pages.diagnostics_debug_routes",
+        "render_name": "render",
+    },
+    {
         "label": "Option Chain",
         "slug": "option-chain",
         "import_path": "ui.pages.option_chain",
@@ -142,10 +148,42 @@ class _DependencyResolutionError(RuntimeError):
     """Kept for backward compatibility; no longer raised for missing optional deps."""
 
 
+def _resolve_state() -> Tuple[Any, AppSessionState]:
+    """Return the raw Streamlit session state and the typed app state."""
+
+    session_state = st.session_state
+    app_state = session_state.get("app_state") if hasattr(session_state, "get") else None
+    if not isinstance(app_state, AppSessionState):
+        app_state = init_session_state()
+    return session_state, app_state
+
+
+def _resolve_api(session_state: Any) -> Optional[BrokerAPI]:
+    """Prefer cached API handle from state before creating a new backend client."""
+
+    api_candidate: Optional[BrokerAPI] = None
+    if hasattr(session_state, "get"):
+        api_candidate = session_state.get("api") or session_state.get("backend")
+    if api_candidate is not None:
+        return api_candidate
+    try:
+        api_candidate = get_backend()
+    except Exception:  # pragma: no cover - backend discovery may fail in UI tests
+        api_candidate = None
+    else:
+        if hasattr(session_state, "__setitem__"):
+            try:
+                session_state["api"] = api_candidate
+            except Exception:  # pragma: no cover - session state may be frozen
+                pass
+    return api_candidate
+
+
 def _build_injected_args(
     fn: Callable[..., Any],
-    state: AppSessionState,
-    api: BrokerAPI,
+    session_state: Any,
+    app_state: AppSessionState,
+    api: Optional[BrokerAPI],
 ) -> Tuple[List[Any], Dict[str, Any]]:
     """Return args/kwargs for ``fn`` while treating unknown params as optional."""
 
@@ -155,19 +193,23 @@ def _build_injected_args(
 
     for name, param in signature.parameters.items():
         if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-            # Renderer handles variadic parameters on its own.
             continue
 
-        injected: Any
+        injected: Any = None
         has_injected = False
 
         if name in {"_", "st", "streamlit"}:
             injected = st
             has_injected = True
-        elif name in {"state", "session_state", "session", "app_state"}:
-            injected = state
+        elif name in {"state", "app_state"} or param.annotation is AppSessionState:
+            injected = app_state
             has_injected = True
-        elif name in {"api", "backend", "client", "svc", "broker", "broker_api"}:
+        elif name in {"session_state", "session"}:
+            injected = session_state
+            has_injected = True
+        elif name in {"api", "backend", "client", "svc", "broker", "broker_api"} or (
+            param.annotation is BrokerAPI
+        ):
             injected = api
             has_injected = True
 
@@ -191,10 +233,9 @@ def _build_injected_args(
 def dispatch_render(fn: Callable[..., Any]) -> Any:
     """Invoke a page render function with adaptive dependency injection."""
 
-    state: AppSessionState = init_session_state()
-    api: BrokerAPI = get_backend()
-
-    args, kwargs = _build_injected_args(fn, state, api)
+    session_state, app_state = _resolve_state()
+    api = _resolve_api(session_state)
+    args, kwargs = _build_injected_args(fn, session_state, app_state, api)
     return fn(*args, **kwargs)
 
 
