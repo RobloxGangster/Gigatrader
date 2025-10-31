@@ -10,6 +10,8 @@ import streamlit as st
 from requests import HTTPError, Response
 from urllib.parse import urljoin
 
+from ui.services.backend import ensure_backend_base, get_api_base
+
 _DEFAULT_BASES: Sequence[Optional[str]] = (
     os.getenv("GT_API_BASE_URL"),
     "http://127.0.0.1:8000",
@@ -85,10 +87,8 @@ class ApiClient:
         bases: Optional[Iterable[Optional[str]]] = None,
         timeout: float = 10.0,
     ) -> None:
-        from ui.services import backend as backend_services
-
-        backend_services.ensure_backend_base()
-        primary = base_url or base or backend_services.get_api_base()
+        ensure_backend_base()
+        primary = base_url or base or get_api_base()
 
         self.timeout = timeout
         self.base_url = self._resolve_base_url(primary, bases)
