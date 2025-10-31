@@ -6,7 +6,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response
@@ -48,6 +48,7 @@ from core.broker_config import is_mock
 from core.runtime_flags import RuntimeFlags, get_runtime_flags
 from core.settings import get_settings
 from backend.schemas import OrderRequest, OrderResponse
+from backend.config.extended_universe import load_extended_tickers
 
 load_dotenv()
 
@@ -409,6 +410,11 @@ async def debug_runtime(flags: RuntimeFlags = Depends(get_runtime_flags)) -> Run
 @app.get("/version")
 def version() -> Dict[str, str]:
     return {"version": os.getenv("APP_VERSION", "dev")}
+
+
+@app.get("/universe/extended")
+def extended_universe() -> List[str]:
+    return load_extended_tickers() or []
 
 
 _register_compat_route("/health", health, ["GET"], tag="health")

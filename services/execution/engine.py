@@ -131,6 +131,8 @@ class ExecutionEngine:
             payload["time_in_force"] = intent.time_in_force
         if intent.order_type:
             payload["type"] = intent.order_type
+        if intent.meta.get("extended_hours"):
+            payload["extended_hours"] = True
         if intent.asset_class == "option" and intent.option_symbol:
             payload["symbol"] = intent.option_symbol
             payload["underlying_symbol"] = intent.symbol
