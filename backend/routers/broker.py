@@ -50,7 +50,7 @@ def broker_status(
 @router.get("/account")
 def account(service: BrokerService = Depends(get_broker)) -> Dict[str, Any]:
     try:
-        data = service.get_account()
+        data = service.get_account() or {}
         return data
     except AlpacaUnauthorized as exc:
         raise HTTPException(status_code=401, detail="alpaca_unauthorized") from exc
@@ -63,7 +63,8 @@ def account(service: BrokerService = Depends(get_broker)) -> Dict[str, Any]:
 @router.get("/positions")
 def positions(service: BrokerService = Depends(get_broker)) -> list[dict]:
     try:
-        return service.get_positions()
+        raw = service.get_positions()
+        return raw or []
     except AlpacaUnauthorized as exc:
         raise HTTPException(status_code=401, detail="alpaca_unauthorized") from exc
     except Exception as exc:  # noqa: BLE001
@@ -86,7 +87,7 @@ def orders(
             raw = service.get_orders(status=status, limit=limit)
         if raw and hasattr(AlpacaAdapter, "normalize_order"):
             return [AlpacaAdapter.normalize_order(order) for order in raw]
-        return raw
+        return raw or []
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except AlpacaUnauthorized as exc:
