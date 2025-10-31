@@ -33,3 +33,16 @@ def test_old_env_names(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = get_settings()
     assert settings.alpaca_key_id == "oldkey"
     assert settings.alpaca_secret_key == "oldsecret"
+
+
+def test_preferred_env_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ALPACA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("ALPACA_API_SECRET_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_API_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_API_SECRET", raising=False)
+    monkeypatch.setenv("ALPACA_KEY_ID", "newkey")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "newsecret")
+
+    settings = get_settings()
+    assert settings.alpaca_key_id == "newkey"
+    assert settings.alpaca_secret_key == "newsecret"

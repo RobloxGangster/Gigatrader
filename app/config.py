@@ -6,6 +6,16 @@ import os
 from dataclasses import dataclass
 from typing import List
 
+
+def _env_pick(*names: str, default: str | None = None) -> str | None:
+    """Return the first non-empty environment variable in *names*."""
+
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return default
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,6 +34,7 @@ class Settings:
 
     alpaca_key_id: str
     alpaca_secret_key: str
+    alpaca_base_url: str | None
     paper: bool
     data_feed: str
     smoke_symbols: List[str]
@@ -33,8 +44,14 @@ class Settings:
 def get_settings() -> Settings:
     """Load application settings from the environment."""
 
-    key = os.getenv("ALPACA_API_KEY_ID") or os.getenv("ALPACA_API_KEY", "")
-    secret = os.getenv("ALPACA_API_SECRET_KEY") or os.getenv("ALPACA_API_SECRET", "")
+    key = _env_pick("ALPACA_KEY_ID", "ALPACA_API_KEY_ID", "ALPACA_API_KEY", default="") or ""
+    secret = _env_pick(
+        "ALPACA_SECRET_KEY",
+        "ALPACA_API_SECRET_KEY",
+        "ALPACA_API_SECRET",
+        default="",
+    ) or ""
+    base_url = _env_pick("ALPACA_BASE_URL")
     if not key or not secret:
         raise RuntimeError(
             "Missing ALPACA_API_KEY_ID/ALPACA_API_KEY or "
@@ -61,6 +78,7 @@ def get_settings() -> Settings:
     return Settings(
         alpaca_key_id=key,
         alpaca_secret_key=secret,
+        alpaca_base_url=base_url,
         paper=paper,
         data_feed=data_feed,
         smoke_symbols=symbols,

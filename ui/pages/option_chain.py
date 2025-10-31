@@ -30,20 +30,26 @@ def _load_chain(api: BrokerAPI, symbol: str, expiry: str | None) -> OptionChain:
         )
     data = dict(payload)
     if not data:
-        data = {"symbol": symbol, "rows": []}
+        data = {"symbol": symbol, "contracts": [], "rows": []}
     else:
         data.setdefault("symbol", symbol)
-        data.setdefault("rows", [])
+        contracts = data.get("contracts")
+        rows = data.get("rows")
+        if isinstance(rows, list) and contracts is None:
+            data["contracts"] = rows
+        elif isinstance(contracts, list) and rows is None:
+            data["rows"] = contracts
+        data.setdefault("contracts", [])
+        data.setdefault("rows", data.get("contracts", []))
     return OptionChain(**data)
 
 
-def _chain_dataframe(
-    api: BrokerAPI, symbol: str, expiry: str | None, liquidity_only: bool
-) -> pd.DataFrame:
-    chain = _load_chain(api, symbol, expiry or None)
+def _chain_dataframe(chain: OptionChain, liquidity_only: bool) -> pd.DataFrame:
     rows = [row.model_dump() for row in chain.rows]
+    if not rows and getattr(chain, "contracts", None):
+        rows = [row.model_dump() for row in chain.contracts]
     df = pd.DataFrame(rows)
-    if liquidity_only:
+    if liquidity_only and not df.empty:
         df = df[df["is_liquid"]]
     return df
 
@@ -61,10 +67,10 @@ def _render_chain(df: pd.DataFrame, highlight_strategy: bool) -> None:
             return [color] * len(row)
 
         st.dataframe(
-            df.style.apply(highlight, axis=1), use_container_width=True
+            df.style.apply(highlight, axis=1), width="stretch"
         )
     else:
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width="stretch")
     st.caption("Strategy pick highlights the highest volume contract in view.")
     st.caption("OPTION_CHAIN_READY")
 
@@ -122,13 +128,18 @@ def render(api: BrokerAPI, state: AppSessionState) -> None:
     min_volume = st.slider("Min Volume", min_value=0, max_value=1000, value=50, step=25)
     highlight = st.toggle("Highlight strategy pick", value=True)
 
+    chain = OptionChain(symbol=symbol, contracts=[], rows=[])
     try:
-        df = _chain_dataframe(api, symbol, expiry or None, liquidity_only)
+        chain = _load_chain(api, symbol, expiry or None)
+        df = _chain_dataframe(chain, liquidity_only)
     except Exception as exc:  # noqa: BLE001 - guard backend failures
         st.error(f"Failed to load option chain for {symbol}: {exc}")
         df = pd.DataFrame()
     if not df.empty:
         df = df[(df["oi"] >= min_oi) & (df["volume"] >= min_volume)]
+
+    if getattr(chain, "reason", None):
+        st.info(chain.reason)
 
     _render_chain(df, highlight)
     _greeks_panel(api, symbol, expiry or None)

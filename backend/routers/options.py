@@ -16,7 +16,13 @@ async def chain(
         data = await gw.chain(symbol)
     except ValueError as exc:  # noqa: BLE001 - validation guard
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return data or {"symbol": symbol.upper(), "rows": []}
+    return data or {
+        "symbol": symbol.upper(),
+        "contracts": [],
+        "rows": [],
+        "mock": False,
+        "reason": "unavailable",
+    }
 
 
 @router.get("/greeks")
@@ -27,8 +33,8 @@ async def greeks(
     try:
         data = await gw.greeks(contract)
     except ValueError:
-        return {}
-    return data or {}
+        return {"contract": contract, "greeks": {}, "mock": False, "reason": "invalid contract"}
+    return data or {"contract": contract, "greeks": {}, "mock": False, "reason": "unavailable"}
 
 
 __all__ = ["router"]
